@@ -16,6 +16,10 @@
 #       Terminal instead.
 #   crates\clavren-server\src\admin_cli\enrolment.rs, the QR code failing to render
 #       only happens for data over ~2.9 KB; a setup address is under 200 bytes.
+#   xtask (the whole crate, left out with --exclude)
+#       it drives other programs on the real console: PowerShell, npm, cargo and the interactive
+#       create-admin; its decisions (dashboard staleness, admin listing, the local URL) have unit
+#       tests, its task dispatch has binary tests, and `cargo dev` is run by hand after changes.
 #   crates\clavren-server\src\startup.rs, axum::serve returning an error and the master-key read
 #   task being cancelled
 #       neither has a known trigger: serve only fails if the listening socket breaks, and the
@@ -31,5 +35,5 @@ Set-Location $root
 # cargo reports progress on stderr, which Windows PowerShell would otherwise treat as a failure;
 # the exit code below is what decides
 $ErrorActionPreference = 'Continue'
-cargo llvm-cov --workspace --show-missing-lines --fail-under-lines $MinLines
+cargo llvm-cov --workspace --exclude xtask --show-missing-lines --fail-under-lines $MinLines
 if ($LASTEXITCODE -ne 0) { throw "coverage is below $MinLines% of lines, or a test failed" }

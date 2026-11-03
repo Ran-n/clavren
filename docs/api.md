@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 19:43:36.881392 )
-[//]: # (+ Revised: 	2026/11/03 08:25:53.058713 )
+[//]: # (+ Revised: 	2026/11/03 15:25:08.317510 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # HTTP API
@@ -198,7 +198,7 @@ That header is believed only from the trusted proxies (localhost by default; see
 ### `POST /api/admin/session`: sign in
 
 ```json
-{ "username": "ran", "password": "…", "code": "123456" }
+{ "username": "alice", "password": "…", "code": "123456" }
 ```
 
 `code` is the current code from the authenticator app, or one of the recovery codes. Recovery
@@ -209,7 +209,7 @@ codes can be typed in any case, with or without dashes or spaces, and with `I`/`
 
 ```json
 {
-  "admin": { "id": "0190…", "username": "ran" },
+  "admin": { "id": "0190…", "username": "alice" },
   "csrf_token": "…",
   "expires_at": "2026-11-09T12:00:00Z"
 }
@@ -249,7 +249,7 @@ every old code stop working. The new codes are shown only this once.
 
 ### `POST /api/admin/account/totp/secret`: start moving to a new authenticator app
 
-`200 {"secret": "BASE32…", "uri": "otpauth://totp/Clavren:ran?…", "qr_svg": "<?xml …<svg …"}`: the
+`200 {"secret": "BASE32…", "uri": "otpauth://totp/Clavren:alice?…", "qr_svg": "<?xml …<svg …"}`: the
 URI also as an SVG QR code, for the dashboard to show. Nothing is stored yet: the old app keeps
 working until the new secret is confirmed.
 

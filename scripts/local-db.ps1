@@ -1,13 +1,13 @@
 # Starts (or stops) the local PostgreSQL cluster used for development and tests, in
 # target\local-postgres, listening on 127.0.0.1:55432 with passwordless local access. It never
 # touches any other PostgreSQL server on this machine. It holds:
-#   clavren_dev   the database `cargo run` uses (kept between runs)
+#   clavren_dev   the database `cargo dev` and `cargo run` use (kept between runs)
 #   test_*        one database per test, created and dropped by the test itself
 # Its data is disposable: fsync is off for speed, so a crash of the machine can lose it.
 #   .\scripts\local-db.ps1          create the cluster if needed and start it
 #   .\scripts\local-db.ps1 -Stop    stop it
 #   .\scripts\local-db.ps1 -Reset   stop it and delete it (and all development data)
-# `cargo run` and `cargo test` find it through the URLs in .cargo\config.toml.
+# `cargo dev` starts it by itself; `cargo run` and `cargo test` find it through the URLs in .cargo\config.toml.
 param([switch]$Stop, [switch]$Reset)
 $ErrorActionPreference = 'Stop'
 
