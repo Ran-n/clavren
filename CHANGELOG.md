@@ -12,6 +12,8 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-03
+
 ### Added
 
 - `cargo dev` (the `xtask` crate): starts the local database, builds the dashboard when it changed, creates the first admin when there is none, and runs the server; it stops the database it started on the way out.
