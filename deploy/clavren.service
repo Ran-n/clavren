@@ -1,0 +1,38 @@
+# Clavren licensing server. Install to /etc/systemd/system/; see docs/deployment.md.
+[Unit]
+Description=Clavren licensing server
+Documentation=file:///usr/local/share/doc/clavren/deployment.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=clavren
+Group=clavren
+EnvironmentFile=/etc/clavren/clavren.env
+ExecStart=/usr/local/bin/clavren
+Restart=on-failure
+RestartSec=5
+# SIGTERM: stop accepting connections, finish requests, stop background tasks, close the pool.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# /var/lib/clavren holds master.key: created by systemd as clavren:clavren, mode 0700.
+StateDirectory=clavren
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/lib/clavren
+
+[Install]
+WantedBy=multi-user.target

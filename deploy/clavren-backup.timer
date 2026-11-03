@@ -1,0 +1,11 @@
+# Nightly Clavren backup. Persistent: a run missed while the Pi was off happens at the next boot.
+[Unit]
+Description=Nightly Clavren backup
+
+[Timer]
+OnCalendar=*-*-* 03:15
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

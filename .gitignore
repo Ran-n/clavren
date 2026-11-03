@@ -1,0 +1,17 @@
+/target
+node_modules/
+/web/admin/dist/
+/web/admin/test-results/
+/web/admin/playwright-report/
+
+# never commit secrets: the master key, its data directory and local environment files
+/data/
+*.key
+.env
+.env.*
+!.env.example
+
+*.log
+
+# Claude Code's local state (worktrees, scratch copies)
+/.claude/

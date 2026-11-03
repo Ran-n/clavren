@@ -1,0 +1,15 @@
+DROP TRIGGER products_code_immutable ON products;
+DROP FUNCTION products_code_is_immutable_with_licenses();
+DROP VIEW license_states;
+DROP TABLE backup_runs;
+DROP TABLE audit_logs;
+DROP TABLE admin_preferences;
+DROP TABLE admin_sessions;
+DROP TABLE admin_recovery_codes;
+DROP TABLE admin_users;
+DROP TABLE verification_challenges;
+DROP TABLE activations;
+DROP TABLE license_key_secrets;
+DROP TABLE licenses;
+DROP TABLE customers;
+DROP TABLE products;

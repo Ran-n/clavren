@@ -1,0 +1,10 @@
+# Local defaults for `cargo run` and `cargo test` in this repository, pointing at the cluster
+# started by scripts\local-db.ps1. Cargo only sets these when the variable isn't already set, so a
+# real environment always wins; installed binaries (the Raspberry Pi) never see them.
+[env]
+# `cargo run`: the development database, kept between runs
+CLAVREN_DATABASE_URL = "postgres://clavren_local@127.0.0.1:55432/clavren_dev"
+CLAVREN_PUBLIC_URL = "http://localhost:8080"
+CLAVREN_DATA_DIR = { value = "target/dev-data", relative = true }
+# `cargo test`: each database test creates and drops its own database in the same cluster
+DATABASE_URL = "postgres://clavren_local@127.0.0.1:55432/postgres"

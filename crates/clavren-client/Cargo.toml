@@ -1,0 +1,37 @@
+[package]
+name = "clavren-client"
+description = "Client library for Breren applications: activation, offline licence checks and background renewal against Clavren"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["serde", "std", "clock"] }
+clavren-protocol = { path = "../clavren-protocol" }
+ed25519-dalek = "3.0.0"
+getrandom = "0.4.3"
+# a library logs through the facade; the application picks the logger
+log = { version = "0.4.28", features = ["std"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+ureq = "3.5.1"
+uuid = { version = "1.29.0", features = ["serde"] }
+zeroize = "1.9.1"
+
+# the device key is protected with DPAPI (CurrentUser scope)
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# the real server, for testing the client against it end to end
+clavren-server = { path = "../clavren-server" }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "chrono", "migrate", "macros"] }
+tempfile = "3.27.0"
+tokio = { version = "1.54.1", features = ["rt", "macros", "sync"] }

@@ -1,0 +1,8 @@
+# The Rust version this project builds, lints and measures coverage with; rustup installs it
+# on first use. Coverage needs llvm-tools from the same toolchain as the compiler. The aarch64
+# Linux target is the Raspberry Pi 5 the server is deployed to.
+[toolchain]
+channel = "1.99.0"
+profile = "minimal"
+components = ["clippy", "rustfmt", "llvm-tools-preview"]
+targets = ["aarch64-unknown-linux-gnu"]

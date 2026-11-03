@@ -1,0 +1,22 @@
+# One Clavren backup: database dump plus master.key, to a drive that isn't the SD card. Started by
+# clavren-backup.timer; run it by hand with `sudo systemctl start clavren-backup`.
+# If CLAVREN_BACKUP_DIR isn't /mnt/clavren-backups, change ReadWritePaths and RequiresMountsFor too.
+[Unit]
+Description=Clavren backup
+After=postgresql.service clavren.service
+Requires=postgresql.service
+RequiresMountsFor=/mnt/clavren-backups
+
+[Service]
+Type=oneshot
+User=clavren
+Group=clavren
+EnvironmentFile=/etc/clavren/clavren.env
+ExecStart=/usr/local/lib/clavren/clavren-backup.sh
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/var/lib/clavren
+ReadWritePaths=/mnt/clavren-backups

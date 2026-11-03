@@ -1,0 +1,26 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+authors = ["Ran# <ran.hash@proton.me>"]
+license-file = "LICENSE"
+publish = false
+
+[workspace.lints.rust]
+# Only the client's Windows DPAPI adapter needs unsafe; it opts in locally with a written reason.
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# Panicking on a bad value hides the error from the caller; return it instead.
+unwrap_used = "warn"
+expect_used = "warn"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
