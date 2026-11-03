@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.753452
-//+ Revised: 	2026/11/03 04:54:16.753452
+//+ Revised: 	2026/11/03 15:25:09.606721
 // -----------------------------------------------------------------------------
 
 //! Backups: a `pg_dump` archive, as `deploy/clavren-backup.sh` makes it, restores into an empty
@@ -112,7 +112,7 @@ async fn a_backup_restores_into_an_empty_database(pool: PgPool) {
 #[test]
 fn the_deploy_scripts_parse() {
     let deploy = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy");
-    for script in ["clavren-backup.sh", "clavren-restore.sh"] {
+    for script in ["clavren-backup.sh", "clavren-restore.sh", "install.sh", "clavren-new-admin.sh"] {
         // On stdin: bash on Windows would read a backslashed path as escapes.
         let source = std::fs::File::open(deploy.join(script)).unwrap();
         let output = Command::new("bash").arg("-n").stdin(source).output().expect("bash is installed");

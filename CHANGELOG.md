@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:54.981076 )
-[//]: # (+ Revised: 	2026/11/03 12:36:00.817388 )
+[//]: # (+ Revised: 	2026/11/03 15:42:16.289467 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Changelog
@@ -11,6 +11,20 @@ All notable changes to this project will be documented in this file.
 This project adheres to [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Added
+
+- `cargo dev` (the `xtask` crate): starts the local database, builds the dashboard when it changed, creates the first admin when there is none, and runs the server; it stops the database it started on the way out.
+- `deploy/install.sh`: installs Clavren on a Raspberry Pi (PostgreSQL, a random database password, the user, folders, configuration, services, the first backup and the first admin) or upgrades it (backup first, old binaries kept as `*.previous`). Tested on a Raspberry Pi 3 B+ with Debian 13.
+- `clavren-new-admin`, installed with the server: creates an admin on the terminal's alternate screen, so the username, QR code and recovery codes never stay in the scrollback.
+
+### Fixed
+
+- `docs/deployment.md` described cross-compiling instead of the release bundle, and its `create-admin` command broke on configuration values with spaces or quotes. It is now a step-by-step guide, with the script or entirely by hand, a check after every step, HTTPS with Cloudflare Tunnel or Caddy, day-to-day commands, a `clavren-admin` shell shortcut and troubleshooting.
+- `docs/deployment.md` also covers what the first real installation needed: a fixed address for the Pi, Cloudflare Tunnel set up entirely over SSH (the approval link opens on any device), changing the public address, and the Pi 3 B+ and Debian 12+ as supported.
+- `docs/backup-and-recovery.md`: restoring onto a new Pi works after either kind of installation, and warns not to restore the empty backup the installation makes; a one-off backup to another computer while there is no backup drive.
+- `clavren-backup.sh` warned `find: Failed to restore initial working directory` when run by hand from a home folder.
+- A bare `cargo run` failed with "could not determine which binary to run"; it now runs the server.
 
 ## [0.1.0] - 2026-11-03
 

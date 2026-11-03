@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/03 04:54:17.375058 )
-[//]: # (+ Revised: 	2026/11/03 04:54:17.375058 )
+[//]: # (+ Revised: 	2026/11/03 15:25:08.004507 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Backup and recovery
@@ -51,6 +51,40 @@ survive a fire or a theft.
 
 ---
 
+## No backup drive yet
+
+Until a drive is mounted, the nightly backup fails and the Overview warns. `master.key` then
+exists only on the SD card, so make a backup by hand and keep it on another computer, now and
+after issuing keys:
+
+1. On the Pi, back up into memory (`/dev/shm`). It never touches the SD card, the script accepts
+   it as another drive, and it is gone at the next reboot:
+
+   ```sh
+   sudo install -d -o clavren -g clavren -m 0700 /dev/shm/clavren-backup
+   sudo runuser -u clavren -- bash -c 'set -a; . /etc/clavren/clavren.env; CLAVREN_BACKUP_DIR=/dev/shm/clavren-backup; exec /usr/local/lib/clavren/clavren-backup.sh'
+   sudo cp /dev/shm/clavren-backup/clavren-* ~ && sudo chown "$USER" ~/clavren-*
+   ```
+
+2. On your computer, copy it over and check it:
+
+   ```sh
+   scp 'your-pi:clavren-*' .
+   b3sum --check clavren-*.b3
+   ```
+
+3. On the Pi, delete both copies:
+
+   ```sh
+   rm ~/clavren-*
+   sudo rm -rf /dev/shm/clavren-backup
+   ```
+
+The run is recorded like any other, so the Overview shows it. The archive holds `master.key`
+unencrypted unless `CLAVREN_BACKUP_AGE_RECIPIENT` is set: keep it somewhere private.
+
+---
+
 ## Checking a backup
 
 ```sh
@@ -66,15 +100,18 @@ intact.
 
 ---
 
-## Restoring onto a fresh Pi
+## Restoring
 
-1. Install Clavren as in [deployment.md](deployment.md#first-installation), steps 1–5: packages,
-   database and role, user and folders, files, backup drive. **Don't start `clavren` yet**: its
-   first start would create a new `master.key`.
+Onto a new Pi (after a dead SD card, say), or onto the same one after a mistake.
 
-   (Restoring onto the same Pi after a mistake: skip this step.)
+1. **New Pi only**: install Clavren as in [deployment.md](deployment.md), steps 1 to 3, with
+   either option. The install starts Clavren with a new, empty database and a new `master.key`;
+   the restore replaces both. Pick the archive to restore from **before** the problem, not the
+   empty backup the installation just made.
 
-2. Restore the latest archive:
+   **Same Pi**: skip this step.
+
+2. Restore the archive:
 
    ```sh
    sudo /usr/local/lib/clavren/clavren-restore.sh /mnt/clavren-backups/clavren-20270115T031502Z.tar

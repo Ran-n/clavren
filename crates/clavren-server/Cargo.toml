@@ -7,6 +7,8 @@ rust-version.workspace = true
 authors.workspace = true
 license-file.workspace = true
 publish.workspace = true
+# a bare `cargo run` runs the server; `cargo dev` (xtask) also sets up what it needs first
+default-run = "clavren"
 
 # The library is `clavren`, so log targets read `clavren::licences`, `clavren::http`…
 [lib]

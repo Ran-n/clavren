@@ -2,7 +2,7 @@
 # ------------------------------------------------------------------------------
 #+ Authors: 	Ran# <ran.hash@proton.me>
 #+ Created: 	2026/11/03 05:07:51.858253
-#+ Revised: 	2026/11/03 05:08:00.289883
+#+ Revised: 	2026/11/03 15:25:05.902934
 # ------------------------------------------------------------------------------
 
 # One Clavren backup: a pg_dump (custom format) and master.key in one tar archive, optionally
@@ -14,6 +14,8 @@
 # Needs: pg_dump, psql (postgresql-client), b3sum, tar; age when CLAVREN_BACKUP_AGE_RECIPIENT is set.
 set -euo pipefail
 umask 077
+# Run by hand from a home folder the clavren user can't read, find would warn on the way out.
+cd /
 
 fail() {
     printf 'clavren-backup: %s\n' "$*" >&2

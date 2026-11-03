@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.213599 )
-[//]: # (+ Revised: 	2026/11/03 04:54:25.527685 )
+[//]: # (+ Revised: 	2026/11/03 15:25:08.620017 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Development
@@ -25,6 +25,7 @@ built this way is in [design-decisions.md](design-decisions.md).
 | `crates/clavren-protocol/` | Everything server and clients must agree on: wire types, error codes, key format, challenge message, token claims |
 | `crates/clavren-server/` | The service: public API, admin API, dashboard serving, background tasks, and the `clavren-admin` CLI |
 | `crates/clavren-client/` | The library Breren applications use to activate, check and renew a licence |
+| `xtask/` | Repository tasks, run as `cargo xtask <task>`: `dev` (`cargo dev`) sets up and runs everything locally |
 | `web/admin/` | The admin dashboard (React, TypeScript, Vite), embedded in the server binary |
 | `docs/` | Specification, design decisions and the guides |
 
@@ -86,15 +87,28 @@ everything else it reports needs a test.
 ## Running the server locally
 
 ```powershell
-.\scripts\local-db.ps1   # once per session
-cargo run
+cargo dev
 ```
 
-Then `http://localhost:8080/health/ready` answers `{"status":"ok"}`. Stop it with Ctrl+C.
+`cargo dev` (the `xtask` crate, aliased in `.cargo/config.toml`) does everything in order:
 
-`cargo run` uses the development defaults in `.cargo/config.toml`: the `clavren_dev` database in
-the local cluster, `http://localhost:8080`, and `target/dev-data` for the master key. Cargo only
-applies them when a variable isn't already set, and an installed binary never sees them.
+1. Starts the local database with `scripts/local-db.ps1`, unless it is running already or
+   `CLAVREN_DATABASE_URL` points at another database.
+2. Runs `npm ci` in `web/admin` when `package-lock.json` changed, and `npm run build` when any
+   dashboard source is newer than `web/admin/dist`.
+3. Builds the server.
+4. When the database has no admin, asks for a username (your account name by default) and runs
+   `clavren-admin create-admin` (below).
+5. Runs the server on `http://localhost:8080` until Ctrl+C, then stops the database if step 1
+   started it.
+
+`cargo run` runs only the server, for when the database, the dashboard build and an admin are
+already there. Either way, `http://localhost:8080/health/ready` answers `{"status":"ok"}`.
+
+`cargo dev` and `cargo run` use the development defaults in `.cargo/config.toml`: the
+`clavren_dev` database in the local cluster, `http://localhost:8080`, and `target/dev-data` for
+the master key. Cargo only applies them when a variable isn't already set, and an installed binary
+never sees them.
 
 ### Configuration
 
@@ -121,8 +135,10 @@ dashboard works on `http://localhost`.
 
 ### An admin account
 
+`cargo dev` creates the first one. For more, or by hand:
+
 ```powershell
-cargo run --bin clavren-admin -- create-admin ran
+cargo run --bin clavren-admin -- create-admin alice
 ```
 
 It asks for a password, shows a QR code for the authenticator app, and asks for a code from the
@@ -154,6 +170,29 @@ baselines in `web/admin/e2e/baselines`, and checks that no page scrolls sideways
 actions are dimmed. After a deliberate visual change, run
 `npm run e2e -- --project=rendered --update-snapshots`, look at every changed image, and commit
 the ones that are right.
+
+## Building a release
+
+The release is one bundle for the Raspberry Pi, `clavren-X.Y.Z-aarch64-linux.tar.gz`, cross-compiled
+from Windows with [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) (no Docker):
+
+1. Build the dashboard: `npm run build` in `web/admin` (the binary embeds `web/admin/dist`).
+2. Once: `cargo install cargo-zigbuild --locked` and `python -m pip install --user ziglang`.
+   cargo-zigbuild doesn't find that zig by itself: set `CARGO_ZIGBUILD_ZIG_PATH` to
+   `<site-packages>/ziglang/zig.exe`.
+3. Build against glibc 2.31, so it runs on Raspberry Pi OS Bookworm and newer:
+
+   ```sh
+   cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.31 --bin clavren --bin clavren-admin
+   ```
+
+4. In `target/dist/`, put together `bin/clavren` and `bin/clavren-admin` (from
+   `target/aarch64-unknown-linux-gnu/release/`), `deploy/*`, `docs/`, `LICENSE`, `README.md` and
+   `CHANGELOG.md`. Binaries and `deploy/*.sh` are mode 755, everything else 644, and the `.sh`
+   files must have LF line endings. Archive it as `clavren-X.Y.Z-aarch64-linux.tar.gz` with a
+   BLAKE3 checksum next to it (`b3sum … > ….tar.gz.b3`).
+
+How it is installed from there is in [deployment.md](deployment.md).
 
 ## Conventions
 

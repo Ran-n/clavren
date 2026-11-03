@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:54.923033 )
-[//]: # (+ Revised: 	2026/11/03 08:25:53.324935 )
+[//]: # (+ Revised: 	2026/11/03 15:42:16.225558 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 <h1 align="center">Clavren</h1>
@@ -10,7 +10,7 @@
 Clavren makes the keys you hand out, makes sure each one works on a single computer, and lets you move or cancel a key whenever you need to.</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/server-Raspberry_Pi_5-555" alt="Server: Raspberry Pi 5">
+  <img src="https://img.shields.io/badge/server-Raspberry_Pi-555" alt="Server: Raspberry Pi">
   <img src="https://img.shields.io/badge/apps-Windows-555" alt="Apps: Windows">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PBL_v2.0-555" alt="License: PayBack License v2.0"></a>
 </p>
@@ -22,6 +22,7 @@ Clavren makes the keys you hand out, makes sure each one works on a single compu
   <a href="#why-clavren">Why</a> ·
   <a href="#how-a-key-works">How a key works</a> ·
   <a href="#questions">Questions</a> ·
+  <a href="#install-on-a-raspberry-pi">Install</a> ·
   <a href="#run-from-source">Run from source</a> ·
   <a href="#technical-details">Technical details</a> ·
   <a href="#license">License</a>
@@ -78,16 +79,29 @@ Open an issue, as described in [Reporting Bugs](CONTRIBUTING.md#reporting-bugs).
 
 ---
 
+## Install on a Raspberry Pi
+
+Download `clavren-X.Y.Z-aarch64-linux.tar.gz` from the [latest release](https://github.com/Ran-n/clavren/releases/latest), unpack it on the Pi and run:
+
+```sh
+sudo ./deploy/install.sh --public-url https://licences.example.com
+```
+
+It sets up PostgreSQL, the service, nightly backups and your admin account; run it again from a newer release to upgrade. Then point HTTPS (Cloudflare Tunnel or a reverse proxy) at it.
+
+[docs/deployment.md](docs/deployment.md) walks through it step by step, with or without the script, with a check after each step.
+
+---
+
 ## Run from source
 
 You need [Rust](https://rustup.rs/), [Node.js](https://nodejs.org/) 22 or newer and [PostgreSQL](https://www.postgresql.org/) 17.
 
 ```sh
-cd web/admin && npm ci && npm run build && cd ../..   # the dashboard, embedded in the server
-.\scripts\local-db.ps1    # a local, disposable database, never your own
-cargo test
-cargo run                 # the server and dashboard, on http://localhost:8080
+cargo dev    # the server and dashboard, on http://localhost:8080
 ```
+
+`cargo dev` starts a local, disposable database (never your own), builds the dashboard, asks for a username and sets up the first admin, then runs the server until Ctrl+C. It is for trying and working on Clavren, not for running it for customers: for that, [install it on a Pi](#install-on-a-raspberry-pi).
 
 The full guide is [docs/development.md](docs/development.md).
 
@@ -101,7 +115,7 @@ The full guide is [docs/development.md](docs/development.md).
 | [docs/design-decisions.md](docs/design-decisions.md) | Why it's built this way and where it departs from the usual defaults |
 | [docs/api.md](docs/api.md) | The HTTP API, with test vectors, and the `clavren-admin` commands |
 | [docs/client-integration.md](docs/client-integration.md) | Adding licensing to a desktop app with `clavren-client` |
-| [docs/deployment.md](docs/deployment.md) | Installing and upgrading on a Raspberry Pi 5 |
+| [docs/deployment.md](docs/deployment.md) | Installing and upgrading on a Raspberry Pi, step by step |
 | [docs/backup-and-recovery.md](docs/backup-and-recovery.md) | Nightly backups and restoring onto a fresh Pi |
 | [docs/development.md](docs/development.md) | Build, checks, tests, project layout, conventions |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to report bugs, suggest features and submit changes |

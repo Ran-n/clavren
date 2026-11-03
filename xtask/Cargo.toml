@@ -1,0 +1,20 @@
+[package]
+name = "xtask"
+description = "Repository tasks (`cargo xtask <task>`): `dev` starts the local database, builds the dashboard, creates the first admin and runs the server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[dependencies]
+ctrlc = "3.5.0"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[lints]
+workspace = true
