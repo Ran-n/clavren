@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.213599 )
-[//]: # (+ Revised: 	2026/11/03 15:25:08.620017 )
+[//]: # (+ Revised: 	2026/11/07 19:37:01.228241 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Development
@@ -65,17 +65,17 @@ or the development database. An explicit `DATABASE_URL` in the environment wins.
 | `tests/admin_session.rs` | Session expiry, sign-out, signing out other sessions, CSRF checks, disabled admins |
 | `tests/admin_account.rs` | Changing password, recovery codes and authenticator app |
 | `tests/maintenance.rs` | The hourly clean-up and its shutdown |
-| `tests/products.rs` | Products: create, list, edit, delete; the code lock; audit; session and CSRF |
+| `tests/products.rs` | Products: create (codes made from names), list, edit, delete with their licences; the code lock; audit; session and CSRF |
 | `tests/customers.rs` | Customers: create, search, order, edit, delete without leaving personal data |
-| `tests/licences.rs` | Issuing (keys only as hash and ciphertext), customers typed in place, the message, search by key, name or ID, filters, orders, `expand` |
-| `tests/licence_lifecycle.rs` | Edit, revoke, reset, bulk all-or-nothing, reveal, message, CSV export and its formula guard |
+| `tests/licences.rs` | Issuing (keys only as hash and ciphertext), customers typed in place, the message, search by key, name or ID, filters and exclusions, orders, `expand` |
+| `tests/licence_lifecycle.rs` | Edit every field but the product (customer, expiry, notes, reason), revoke, reset, delete, bulk all-or-nothing, reveal, message, CSV export and its formula guard |
 | `tests/activation.rs` | Activating a key: one computer per licence, the same computer again, refusals, rate limits, two computers racing for one key |
-| `tests/checks.rs` | Challenges and checks: signed tokens, the device signature, replayed and expired challenges, reset and revoked licences, per-activation limits |
+| `tests/checks.rs` | Challenges and checks: signed tokens, the device signature, replayed and expired challenges, reset, revoked and deleted licences and products, per-activation limits |
 | `tests/admin_console.rs` | Activations list and revoke, the overview and its backup warning, the audit log, backups, preferences |
 | `tests/dashboard.rs` | The embedded dashboard: its files, every page path, cache and security headers, API paths that stay JSON errors |
 | `tests/backup_restore.rs` | A `pg_dump` archive restores into an empty database and everything still works with the same master key; the deploy scripts parse |
 | `crates/clavren-client/tests/offline_and_online.rs` | The client against a fake server: offline days, refusals, clock rollback, the background checker |
-| `crates/clavren-client/tests/against_server.rs` | The client against the real server over HTTP: activate, check, reset, a second computer, revoke |
+| `crates/clavren-client/tests/against_server.rs` | The client against the real server over HTTP: activate, check, reset, a second computer, revoke, a deleted licence or product |
 
 Tests that check logs use `common::capture_logs`. It installs one global subscriber that sends each
 line to the capture buffer of the thread that logged it. A scoped subscriber per test
@@ -164,7 +164,7 @@ mouse or keyboard). `npm run e2e` builds the dashboard, then starts two servers 
 `crates/clavren-server/examples/e2e_server.rs` on ports 8091 and 8092, each with its own fresh
 database in the local cluster (`.\scripts\local-db.ps1` must be running) and a clock frozen at
 2027-03-01 09:30 UTC. The `flows` project signs in, issues, copies, reveals, exports, edits in
-place, resets, revokes, works in bulk, and checks every result through the API. The `rendered`
+place, resets, revokes, deletes, works in bulk, and checks every result through the API. The `rendered`
 project compares every page, light and dark, at desktop and phone width, with the reviewed
 baselines in `web/admin/e2e/baselines`, and checks that no page scrolls sideways and that disabled
 actions are dimmed. After a deliberate visual change, run
@@ -193,6 +193,11 @@ from Windows with [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild)
    BLAKE3 checksum next to it (`b3sum … > ….tar.gz.b3`).
 
 How it is installed from there is in [deployment.md](deployment.md).
+
+## Backlog
+
+Planned work lives in [TODO.md](../TODO.md) at the repository root, one self-contained item per
+change, in priority order.
 
 ## Conventions
 

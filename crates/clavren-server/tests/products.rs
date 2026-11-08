@@ -1,11 +1,11 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:17.229725
-//+ Revised: 	2026/11/03 04:54:17.229725
+//+ Revised: 	2026/11/07 19:37:00.620281
 // -----------------------------------------------------------------------------
 
 //! `/api/admin/products` against a real database: creating, listing, editing and deleting
-//! products, with the rules on codes and the audit trail.
+//! products (with their licences), with the rules on codes and the audit trail.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)] // a test that fails should panic
 
@@ -80,11 +80,66 @@ async fn codes_are_unique_and_requests_are_checked(pool: PgPool) {
         json!({ "code": "x", "name": "X", "message_template": "Hi {name}" }),
         json!({ "code": "x", "name": "X", "colour": "red" }),
         json!({ "code": "x" }),
+        json!({ "name": "" }),
+        json!({ "name": "   " }),
+        json!({ "name": "x".repeat(201) }),
     ] {
         let reply = admin.call(Method::POST, "/api/admin/products", Some(body.clone())).await;
         assert_eq!((reply.status, reply.error()), (StatusCode::BAD_REQUEST, "invalid_request"), "{body}");
     }
     assert_eq!(audit(&admin).await.len(), 1);
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn a_code_is_made_from_the_name_when_none_is_given(pool: PgPool) {
+    let admin = Admin::new(pool).await;
+    let typed = create(&admin, "typed", "Typed").await;
+    let mut made = Vec::new();
+    for body in [
+        json!({ "name": "Ñandú Pro" }),
+        json!({ "name": "Ñandú Pro", "code": "" }),
+        json!({ "name": "Nandu pro", "code": "  " }),
+        json!({ "name": "Nandu pro", "code": null }),
+        json!({ "name": "!!!" }),
+    ] {
+        let reply = admin.call(Method::POST, "/api/admin/products", Some(body.clone())).await;
+        assert_eq!(reply.status, StatusCode::CREATED, "{body}: {:?}", reply.body);
+        made.push(reply.body["code"].as_str().unwrap().to_string());
+    }
+    assert_eq!(made, ["nandu-pro", "nandu-pro-2", "nandu-pro-3", "nandu-pro-4", "product"]);
+    let first = format!(
+        "/api/admin/products/{}",
+        id_of(
+            &admin.get("/api/admin/products?limit=100").await.body["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|p| p["code"] == "nandu-pro")
+                .unwrap()
+                .clone()
+        )
+    );
+    let renamed = admin.call(Method::PATCH, &first, Some(json!({ "name": "Something Else" }))).await;
+    assert_eq!(renamed.body["code"], "nandu-pro", "renaming never changes the code");
+
+    let audit = audit(&admin).await;
+    let typed_entry = audit.iter().find(|(_, id, _)| id.map(|id| id.to_string()) == Some(id_of(&typed))).unwrap();
+    assert_eq!(typed_entry.2, json!({}), "a typed code isn't marked");
+    let marked = audit
+        .iter()
+        .filter(|(action, _, metadata)| action == "product.created" && *metadata == json!({ "automatic_code": true }))
+        .count();
+    assert_eq!(marked, 5);
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn a_typed_code_that_is_taken_is_still_refused(pool: PgPool) {
+    let admin = Admin::new(pool).await;
+    create(&admin, "avalio", "Avalio").await;
+    let reply =
+        admin.call(Method::POST, "/api/admin/products", Some(json!({ "code": "avalio", "name": "Other" }))).await;
+    assert_eq!((reply.status, reply.error()), (StatusCode::CONFLICT, "product_code_taken"), "never suffixed silently");
+    assert_eq!(audit(&admin).await.len(), 1, "no second entry");
 }
 
 #[sqlx::test(migrator = "clavren::database::MIGRATOR")]
@@ -104,6 +159,12 @@ async fn editing_changes_only_the_given_fields(pool: PgPool) {
 
     let reply = admin.call(Method::PATCH, &path, Some(json!({ "description": null }))).await;
     assert_eq!(reply.body["description"], Value::Null);
+    let blank = admin.call(Method::PATCH, &path, Some(json!({ "code": "" }))).await;
+    assert_eq!(
+        (blank.status, blank.error()),
+        (StatusCode::BAD_REQUEST, "invalid_request"),
+        "a code is only made on create"
+    );
     let unchanged = admin.call(Method::PATCH, &path, Some(json!({ "name": "Avalio Lite" }))).await;
     assert_eq!(unchanged.body, reply.body);
 
@@ -132,19 +193,83 @@ async fn the_code_is_locked_once_the_product_has_licences(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "clavren::database::MIGRATOR")]
-async fn only_a_product_without_licences_can_be_deleted(pool: PgPool) {
+async fn a_product_without_licences_is_deleted(pool: PgPool) {
     let admin = Admin::new(pool).await;
-    let kept = create(&admin, "kept", "Kept").await;
     let unused = create(&admin, "unused", "Unused").await;
-    insert_licence(&admin, &kept).await;
-
-    let reply = admin.call(Method::DELETE, &format!("/api/admin/products/{}", id_of(&kept)), None).await;
-    assert_eq!((reply.status, reply.error()), (StatusCode::CONFLICT, "product_has_licences"));
+    let usage = admin.get(&format!("/api/admin/products/{}/usage", id_of(&unused))).await;
+    assert_eq!((usage.status, usage.body), (StatusCode::OK, json!({ "licences": 0, "in_use": 0 })));
     let reply = admin.call(Method::DELETE, &format!("/api/admin/products/{}", id_of(&unused)), None).await;
     assert_eq!(reply.status, StatusCode::NO_CONTENT);
     let reply = admin.call(Method::GET, &format!("/api/admin/products/{}", id_of(&unused)), None).await;
     assert_eq!((reply.status, reply.error()), (StatusCode::NOT_FOUND, "not_found"));
-    assert_eq!(audit(&admin).await.last().unwrap().0, "product.deleted");
+    let (action, _, metadata) = audit(&admin).await.pop().unwrap();
+    assert_eq!((action.as_str(), metadata), ("product.deleted", json!({ "licences": 0, "in_use": 0 })));
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn a_product_is_deleted_with_its_licences(pool: PgPool) {
+    let admin = Admin::new(pool).await;
+    let doomed = create(&admin, "doomed", "Doomed").await;
+    let other = create(&admin, "other", "Other").await;
+    let issue = |product: &Value, quantity: usize, customer: Value| {
+        let body = json!({ "product": id_of(product), "quantity": quantity, "customer": customer });
+        let admin = &admin;
+        async move { admin.create("/api/admin/licences", body).await }
+    };
+    let issued = issue(&doomed, 3, json!({ "name": "Ana" })).await;
+    let ids: Vec<Uuid> =
+        issued["licences"].as_array().unwrap().iter().map(|l| l["id"].as_str().unwrap().parse().unwrap()).collect();
+    let kept = issue(&other, 1, Value::Null).await;
+    sqlx::query(
+        "INSERT INTO activations (license_id, device_public_key, device_name, platform, app_version)
+         VALUES ($1, $2, 'PC', 'windows', '1.0.0')",
+    )
+    .bind(ids[1])
+    .bind([9u8; 32].as_slice())
+    .execute(admin.pool())
+    .await
+    .unwrap();
+    admin.call(Method::POST, &format!("/api/admin/licences/{}/revoke", ids[2]), Some(json!({}))).await;
+
+    let path = format!("/api/admin/products/{}", id_of(&doomed));
+    let usage = admin.get(&format!("{path}/usage")).await;
+    assert_eq!(usage.body, json!({ "licences": 3, "in_use": 1 }));
+    let reply = admin.call(Method::DELETE, &path, None).await;
+    assert_eq!(reply.status, StatusCode::NO_CONTENT, "{:?}", reply.body);
+
+    let left = |sql: &'static str| {
+        let ids = ids.clone();
+        let admin = &admin;
+        async move { sqlx::query_scalar::<_, i64>(sql).bind(ids).fetch_one(admin.pool()).await.unwrap() }
+    };
+    assert_eq!(left("SELECT count(*) FROM licenses WHERE id = ANY($1)").await, 0);
+    assert_eq!(left("SELECT count(*) FROM license_key_secrets WHERE license_id = ANY($1)").await, 0);
+    assert_eq!(left("SELECT count(*) FROM activations WHERE license_id = ANY($1)").await, 0);
+    assert_eq!(admin.get(&path).await.status, StatusCode::NOT_FOUND);
+    let kept_id = kept["licences"][0]["id"].as_str().unwrap();
+    assert_eq!(
+        admin.get(&format!("/api/admin/licences/{kept_id}")).await.status,
+        StatusCode::OK,
+        "other products keep theirs"
+    );
+    let customer = issued["customer"]["id"].as_str().unwrap();
+    assert_eq!(admin.get(&format!("/api/admin/customers/{customer}")).await.status, StatusCode::OK, "customers stay");
+
+    let (action, _, metadata) = audit(&admin).await.pop().unwrap();
+    assert_eq!((action.as_str(), metadata), ("product.deleted", json!({ "licences": 3, "in_use": 1 })));
+    let licences_deleted: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_logs WHERE action = 'licence.deleted'")
+        .fetch_one(admin.pool())
+        .await
+        .unwrap();
+    assert_eq!(licences_deleted, 3);
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn deleting_or_counting_an_unknown_product_is_404(pool: PgPool) {
+    let admin = Admin::new(pool).await;
+    let path = format!("/api/admin/products/{}", Uuid::now_v7());
+    assert_eq!(admin.call(Method::DELETE, &path, None).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(admin.get(&format!("{path}/usage")).await.status, StatusCode::NOT_FOUND);
 }
 
 #[sqlx::test(migrator = "clavren::database::MIGRATOR")]

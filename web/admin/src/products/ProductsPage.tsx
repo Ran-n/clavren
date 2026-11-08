@@ -1,8 +1,9 @@
 // Products: edit in place, create in a new first row, activate and deactivate (with a warning:
-// every computer using it locks at its next check), see their licences, delete unused ones.
+// every computer using it locks at its next check), see their licences, delete, with their
+// licences (counted by the server first; with licences, the code must be typed to confirm).
 
 import { useState } from "react";
-import { api, query } from "../shared/api";
+import { api, get, query } from "../shared/api";
 import { Badge } from "../shared/components/Badge";
 import { Button } from "../shared/components/Button";
 import { ConfirmStrip } from "../shared/components/ConfirmStrip";
@@ -10,6 +11,7 @@ import { DataTable, type Column } from "../shared/components/DataTable";
 import { InlineText } from "../shared/components/InlineText";
 import { FilterSelect, Pager, Toolbar } from "../shared/components/ListControls";
 import { ErrorNotice } from "../shared/components/Notice";
+import { inUseWarning, plural } from "../shared/errors";
 import { DEFAULT_PAGE_SIZE, usePagedList, useTitle } from "../shared/hooks";
 import { useTablePreferences } from "../shared/preferences";
 import { Link } from "../shared/router";
@@ -17,7 +19,8 @@ import type { Product } from "../shared/types";
 import { NewProductRow } from "./NewProductRow";
 
 type Field = "code" | "name" | "description" | "message_template";
-type Pending = { id: string; action: "deactivate" | "delete" } | null;
+type Usage = { licences: number; in_use: number };
+type Pending = { id: string; action: "deactivate" } | { id: string; action: "delete"; usage: Usage } | null;
 
 const ACTIVE_OPTIONS = [
   { value: "", label: "Every product" },
@@ -25,7 +28,9 @@ const ACTIVE_OPTIONS = [
   { value: "false", label: "Inactive" },
 ];
 
-function columns(save: (product: Product, field: Field, value: string | null) => Promise<void>, setActive: (product: Product, active: boolean) => void, ask: (pending: Pending) => void): Column<Product>[] {
+type Ask = (product: Product, action: "deactivate" | "delete") => void;
+
+function columns(save: (product: Product, field: Field, value: string | null) => Promise<void>, setActive: (product: Product, active: boolean) => void, ask: Ask): Column<Product>[] {
   return [
     { key: "name", label: "Name", render: (product) => <InlineText label="name" value={product.name} maxLength={200} onSave={(value) => save(product, "name", value)} /> },
     { key: "code", label: "Code", render: (product) => <InlineText label="code" value={product.code} maxLength={63} display={<code>{product.code}</code>} onSave={(value) => save(product, "code", value)} /> },
@@ -46,11 +51,11 @@ function columns(save: (product: Product, field: Field, value: string | null) =>
         <span className="button-row">
           <Link to={`/licences?product=${product.id}`} className="button button--quiet button--small">Licences</Link>
           {product.is_active ? (
-            <Button size="small" variant="quiet" onClick={() => ask({ id: product.id, action: "deactivate" })}>Deactivate</Button>
+            <Button size="small" variant="quiet" onClick={() => ask(product, "deactivate")}>Deactivate</Button>
           ) : (
             <Button size="small" variant="quiet" onClick={() => setActive(product, true)}>Activate</Button>
           )}
-          <Button size="small" variant="quiet" onClick={() => ask({ id: product.id, action: "delete" })}>Delete</Button>
+          <Button size="small" variant="quiet" onClick={() => ask(product, "delete")}>Delete</Button>
         </span>
       ),
     },
@@ -75,6 +80,17 @@ export function ProductsPage() {
     setError(null);
     save(product, "is_active", isActive).catch(setError);
   }
+  /** A delete is counted by the server first; without the count there is no warning to show. */
+  async function ask(product: Product, action: "deactivate" | "delete") {
+    setError(null);
+    if (action === "deactivate") return setPending({ id: product.id, action });
+    try {
+      setPending({ id: product.id, action, usage: await get<Usage>(`/products/${product.id}/usage`) });
+    } catch (failure) {
+      setPending(null);
+      setError(failure);
+    }
+  }
   async function confirm(product: Product, action: "deactivate" | "delete") {
     if (action === "deactivate") await save(product, "is_active", false);
     else {
@@ -84,10 +100,12 @@ export function ProductsPage() {
     setPending(null);
   }
 
-  const messages = {
-    deactivate: (product: Product) => `Deactivate ${product.name}? Every computer using it locks at its next check, and no new licences can be issued for it.`,
-    delete: (product: Product) => `Delete ${product.name}? This only works while it has no licences.`,
-  };
+  function message(product: Product, pending: NonNullable<Pending>): string {
+    if (pending.action === "deactivate") return `Deactivate ${product.name}? Every computer using it locks at its next check, and no new licences can be issued for it.`;
+    const { licences, in_use } = pending.usage;
+    if (licences === 0) return `Delete ${product.name}?`;
+    return `Delete ${product.name} and its ${plural(licences, "licence")}? ${inUseWarning(in_use)}The keys, the licences and their history are deleted. This can't be undone.`;
+  }
   return (
     <section className="page">
       <h1>Products</h1>
@@ -101,15 +119,17 @@ export function ProductsPage() {
       <DataTable
         label="Products"
         rows={list.rows}
-        columns={columns(save, setActive, setPending)}
+        columns={columns(save, setActive, (product, action) => void ask(product, action))}
         rowKey={(product) => product.id}
         loading={list.loading}
         firstRow={adding ? <NewProductRow onCreated={() => { setAdding(false); list.reload(); }} onCancel={() => setAdding(false)} /> : null}
         below={(product) =>
           pending?.id === product.id ? (
             <ConfirmStrip
-              message={messages[pending.action](product)}
+              key={pending.action}
+              message={message(product, pending)}
               confirmLabel={pending.action === "delete" ? "Delete" : "Deactivate"}
+              confirmWord={pending.action === "delete" && pending.usage.licences > 0 ? product.code : undefined}
               onConfirm={() => confirm(product, pending.action)}
               onCancel={() => setPending(null)}
             />

@@ -1,11 +1,13 @@
-// Every product, for filters and the issue panel: few enough to load at once.
+// Every product, for filters and the issue panel: few enough to load at once. `loaded` says the
+// list is complete, so a filter naming a product that is gone can be told apart from one still
+// loading.
 
 import { useEffect, useState } from "react";
 import { get } from "../shared/api";
 import type { Page, Product } from "../shared/types";
 
-export function useProducts(): { products: Product[]; error: unknown } {
-  const [products, setProducts] = useState<Product[]>([]);
+export function useProducts(): { products: Product[]; loaded: boolean; error: unknown } {
+  const [products, setProducts] = useState<Product[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   useEffect(() => {
     let current = true;
@@ -24,5 +26,5 @@ export function useProducts(): { products: Product[]; error: unknown } {
       current = false;
     };
   }, []);
-  return { products, error };
+  return { products: products ?? [], loaded: products !== null, error };
 }

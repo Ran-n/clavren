@@ -1,12 +1,13 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.136897
-//+ Revised: 	2026/11/03 04:54:15.136897
+//+ Revised: 	2026/11/07 19:36:59.474189
 // -----------------------------------------------------------------------------
 
 //! Which licences a list or an export covers: product, customer, state, expiry, and a search that
 //! reads its text as a key (found by its hash, never stored or compared in plain), a licence ID, or
-//! part of a customer's name or email.
+//! part of a customer's name or email. Each of these can also exclude (`not_state`, `not_q`, …):
+//! the licences it matches are hidden instead.
 
 use chrono::{DateTime, Utc};
 use clavren_protocol::licence_key::LicenceKey;
@@ -58,33 +59,68 @@ pub struct FilterParams {
     pub state: Option<State>,
     pub expiry: Option<Expiry>,
     pub q: Option<String>,
+    pub not_product: Option<Uuid>,
+    pub not_customer: Option<Uuid>,
+    pub not_state: Option<State>,
+    pub not_expiry: Option<Expiry>,
+    pub not_q: Option<String>,
 }
 
-/// [`FilterParams`] ready for the query.
-#[derive(Debug, Clone)]
-pub struct Filter {
+/// What one side of a [`Filter`] matches; an unset field matches everything.
+#[derive(Debug, Clone, Default)]
+pub struct Criteria {
     pub product: Option<Uuid>,
     pub customer: Option<Uuid>,
     pub state: Option<&'static str>,
     pub expiry: Option<&'static str>,
-    pub now: DateTime<Utc>,
     pub key_hash: Option<Vec<u8>>,
     pub licence_id: Option<Uuid>,
     pub pattern: Option<String>,
 }
 
-impl FilterParams {
-    pub fn into_filter(self, keys: &KeyRing, now: DateTime<Utc>) -> Filter {
-        let q = self.q.as_deref().map(str::trim).filter(|q| !q.is_empty());
-        Filter {
-            product: self.product,
-            customer: self.customer,
-            state: self.state.map(State::as_str),
-            expiry: self.expiry.map(Expiry::as_str),
-            now,
+/// [`FilterParams`] ready for the query: the licences matching `only` and not matching `except`.
+#[derive(Debug, Clone)]
+pub struct Filter {
+    pub only: Criteria,
+    pub except: Criteria,
+    pub now: DateTime<Utc>,
+}
+
+impl Criteria {
+    fn new(
+        keys: &KeyRing,
+        product: Option<Uuid>,
+        customer: Option<Uuid>,
+        state: Option<State>,
+        expiry: Option<Expiry>,
+        q: Option<&str>,
+    ) -> Self {
+        let q = q.map(str::trim).filter(|q| !q.is_empty());
+        Self {
+            product,
+            customer,
+            state: state.map(State::as_str),
+            expiry: expiry.map(Expiry::as_str),
             key_hash: q.and_then(LicenceKey::parse).map(|key| lookup_hash(keys, &key).to_vec()),
             licence_id: q.and_then(|q| Uuid::parse_str(q).ok()),
             pattern: q.map(contains_pattern),
+        }
+    }
+}
+
+impl FilterParams {
+    pub fn into_filter(self, keys: &KeyRing, now: DateTime<Utc>) -> Filter {
+        Filter {
+            only: Criteria::new(keys, self.product, self.customer, self.state, self.expiry, self.q.as_deref()),
+            except: Criteria::new(
+                keys,
+                self.not_product,
+                self.not_customer,
+                self.not_state,
+                self.not_expiry,
+                self.not_q.as_deref(),
+            ),
+            now,
         }
     }
 }
@@ -94,9 +130,12 @@ mod tests {
     use super::*;
     use crate::crypto::master_key::MasterKey;
 
-    fn filter(q: &str) -> Filter {
-        let keys = KeyRing::new(MasterKey::from_bytes([1; 32]));
-        FilterParams { q: Some(q.into()), ..FilterParams::default() }.into_filter(&keys, Utc::now())
+    fn keys() -> KeyRing {
+        KeyRing::new(MasterKey::from_bytes([1; 32]))
+    }
+
+    fn filter(q: &str) -> Criteria {
+        FilterParams { q: Some(q.into()), ..FilterParams::default() }.into_filter(&keys(), Utc::now()).only
     }
 
     #[test]
@@ -114,5 +153,21 @@ mod tests {
         let name = filter(" López ");
         assert_eq!((name.key_hash, name.licence_id, name.pattern.as_deref()), (None, None, Some("%López%")));
         assert_eq!(filter("   ").pattern, None);
+    }
+
+    #[test]
+    fn an_exclusion_is_read_like_a_search() {
+        let except = |q: &str| {
+            let filter =
+                FilterParams { not_q: Some(q.into()), ..FilterParams::default() }.into_filter(&keys(), Utc::now());
+            assert!(filter.only.pattern.is_none() && filter.only.key_hash.is_none(), "only stays empty");
+            filter.except
+        };
+        assert_eq!(except("brn 79yn 44xq w025 377z").key_hash.map(|hash| hash.len()), Some(32));
+        let id = Uuid::now_v7();
+        assert_eq!(except(&id.to_string()).licence_id, Some(id));
+        assert_eq!(except(" López ").pattern.as_deref(), Some("%López%"));
+        let blank = except("   ");
+        assert_eq!((blank.key_hash, blank.licence_id, blank.pattern), (None, None, None));
     }
 }

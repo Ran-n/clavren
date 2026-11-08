@@ -1,24 +1,26 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.495003
-//+ Revised: 	2026/11/03 04:54:15.495003
+//+ Revised: 	2026/11/07 19:36:59.643116
 // -----------------------------------------------------------------------------
 
-//! Changing licences after issuing: editing expiry and notes, revoking, and resetting (freeing a
-//! licence for another computer). Each takes a batch of up to 1,000 licences, locks them, and
+//! Changing licences after issuing: editing every field but the product (customer, expiry, notes,
+//! and a revoked licence's reason), revoking, resetting (freeing a licence for another computer),
+//! and deleting. Each takes a batch of up to 1,000 licences, locks them, and
 //! either changes all of them or none, naming the licences that blocked it.
 
 use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-use super::{MAX_BATCH, MAX_NOTES, MAX_REASON, repository};
+use super::{MAX_BATCH, MAX_NOTES, MAX_REASON, State, repository};
 use crate::activations::{self, RevocationReason};
 use crate::audit::{self, Actor};
+use crate::customers::{self, CustomerChoice};
 use crate::http::AppState;
 use crate::http::error::ApiError;
 use crate::http::fields;
@@ -26,35 +28,82 @@ use crate::http::patch::Patch;
 
 const ENTITY: &str = "licence";
 
+/// The fields of a licence an admin can change; the product, key, state and dates can't be.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct LicenceChanges {
+    /// An existing customer's ID, a new customer typed in place, or `null` for none.
+    pub customer: Patch<CustomerChoice>,
     /// `null` makes the licence permanent; a past date ends it now.
     pub expires_at: Patch<DateTime<Utc>>,
     pub internal_notes: Patch<String>,
+    /// Only a revoked licence has one.
+    pub revocation_reason: Patch<String>,
+}
+
+/// [`LicenceChanges`] checked: the changes for the database, with the customer still to resolve.
+#[derive(Debug)]
+struct Parsed {
+    customer: Option<Option<CustomerChoice>>,
+    changes: repository::Changes,
+    fields: Vec<&'static str>,
+}
+
+fn text(field: &str, patch: Patch<String>, max: usize) -> Result<Option<Option<String>>, ApiError> {
+    match patch {
+        Patch::Keep => Ok(None),
+        Patch::Clear => Ok(Some(None)),
+        Patch::Set(text) => Ok(Some(fields::optional(field, Some(&text), max)?)),
+    }
+}
+
+fn parse(changes: LicenceChanges) -> Result<Parsed, ApiError> {
+    let customer = match changes.customer {
+        Patch::Keep => None,
+        Patch::Clear => Some(None),
+        Patch::Set(choice) => Some(Some(choice)),
+    };
+    let expires_at = if changes.expires_at.is_keep() { None } else { Some(changes.expires_at.apply(None)) };
+    let changes = repository::Changes {
+        customer_id: None,
+        expires_at,
+        internal_notes: text("internal_notes", changes.internal_notes, MAX_NOTES)?,
+        revocation_reason: text("revocation_reason", changes.revocation_reason, MAX_REASON)?,
+    };
+    let fields: Vec<&'static str> = [
+        ("customer", customer.is_some()),
+        ("expires_at", changes.expires_at.is_some()),
+        ("internal_notes", changes.internal_notes.is_some()),
+        ("revocation_reason", changes.revocation_reason.is_some()),
+    ]
+    .into_iter()
+    .filter_map(|(field, on)| on.then_some(field))
+    .collect();
+    if fields.is_empty() {
+        return Err(ApiError::invalid_request(
+            "give at least one of customer, expires_at, internal_notes, revocation_reason",
+        ));
+    }
+    Ok(Parsed { customer, changes, fields })
 }
 
 pub async fn edit(state: &AppState, actor: &Actor, ids: &[Uuid], changes: LicenceChanges) -> Result<(), ApiError> {
     check_batch(ids)?;
-    let notes = match changes.internal_notes {
-        Patch::Keep => None,
-        Patch::Clear => Some(None),
-        Patch::Set(text) => Some(fields::optional("internal_notes", Some(&text), MAX_NOTES)?),
-    };
-    let expires_at = match changes.expires_at {
-        Patch::Keep => None,
-        other => Some(other.apply(None)),
-    };
-    let fields: Vec<&str> = [("expires_at", expires_at.is_some()), ("internal_notes", notes.is_some())]
-        .into_iter()
-        .filter_map(|(f, on)| on.then_some(f))
-        .collect();
-    if fields.is_empty() {
-        return Err(ApiError::invalid_request("give expires_at and/or internal_notes to change"));
-    }
+    let Parsed { customer, mut changes, fields } = parse(changes)?;
     let mut transaction = state.pool.begin().await?;
-    lock_existing(&mut transaction, ids).await?;
-    repository::update(&mut *transaction, ids, expires_at, notes.as_ref().map(Option::as_deref)).await?;
+    let revoked: HashSet<Uuid> = lock_existing(&mut transaction, ids).await?.into_iter().collect();
+    let live: Vec<Uuid> = ids.iter().filter(|id| !revoked.contains(id)).copied().collect();
+    if changes.revocation_reason.is_some() && !live.is_empty() {
+        return Err(
+            ApiError::conflict("licence_not_revoked", "only a revoked licence has a revocation reason").with_ids(live)
+        );
+    }
+    changes.customer_id = match customer {
+        None => None,
+        Some(None) => Some(None),
+        Some(Some(choice)) => Some(Some(customers::choose(&mut transaction, actor, choice).await?.id)),
+    };
+    repository::update(&mut *transaction, ids, &changes).await?;
     audit::record_for_each(&mut *transaction, actor, "licence.updated", ENTITY, ids, json!({ "fields": fields }))
         .await?;
     transaction.commit().await?;
@@ -79,6 +128,53 @@ pub async fn revoke(state: &AppState, actor: &Actor, ids: &[Uuid], reason: Optio
     transaction.commit().await?;
     tracing::info!(count = ids.len(), computers = deactivated.len(), "licences revoked");
     Ok(())
+}
+
+/// What a delete removed (or, as a dry run, would remove): how many licences, and how many of
+/// them were in use on a computer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Deleted {
+    pub deleted: usize,
+    pub in_use: usize,
+}
+
+/// Deletes for good, with their activations: their keys read as unknown afterwards, and the
+/// computers using them lock at their next check. The audit keeps one entry per licence, with the
+/// state it was in. A `dry_run` only counts.
+pub async fn delete(state: &AppState, actor: &Actor, ids: &[Uuid], dry_run: bool) -> Result<Deleted, ApiError> {
+    check_batch(ids)?;
+    let mut transaction = state.pool.begin().await?;
+    lock_existing(&mut transaction, ids).await?;
+    let deleted = delete_locked(&mut transaction, actor, ids, dry_run).await?;
+    if !dry_run {
+        transaction.commit().await?;
+        tracing::info!(count = deleted.deleted, in_use = deleted.in_use, "licences deleted");
+    }
+    Ok(deleted)
+}
+
+/// Deletes licences already locked in this transaction (unless `dry_run`), auditing each.
+pub async fn delete_locked(
+    connection: &mut PgConnection,
+    actor: &Actor,
+    ids: &[Uuid],
+    dry_run: bool,
+) -> Result<Deleted, ApiError> {
+    let states = repository::states(&mut *connection, ids).await?;
+    let in_use = states.iter().filter(|(_, state)| state == State::Redeemed.as_str()).count();
+    let deleted = Deleted { deleted: states.len(), in_use };
+    if dry_run {
+        return Ok(deleted);
+    }
+    repository::delete(connection, ids).await?;
+    for was in [State::Unused, State::Redeemed, State::Revoked] {
+        let of_state: Vec<Uuid> = states.iter().filter(|(_, state)| state == was.as_str()).map(|(id, _)| *id).collect();
+        if !of_state.is_empty() {
+            let metadata = json!({ "was": was.as_str() });
+            audit::record_for_each(&mut *connection, actor, "licence.deleted", ENTITY, &of_state, metadata).await?;
+        }
+    }
+    Ok(deleted)
 }
 
 /// Frees a licence in use so the same key can be activated on another computer; the old computer
@@ -119,4 +215,51 @@ fn check_batch(ids: &[Uuid]) -> Result<(), ApiError> {
         return Err(ApiError::invalid_request("ids lists a licence more than once"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn changes(json: &str) -> LicenceChanges {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn an_empty_change_is_refused() {
+        assert_eq!(parse(changes("{}")).unwrap_err().code(), "invalid_request");
+    }
+
+    #[test]
+    fn removing_the_customer_alone_is_a_change() {
+        let parsed = parse(changes(r#"{"customer": null}"#)).unwrap();
+        assert!(matches!(parsed.customer, Some(None)));
+        assert_eq!(parsed.fields, ["customer"]);
+    }
+
+    #[test]
+    fn every_field_is_named_and_text_tidied() {
+        let parsed = parse(changes(
+            r#"{"customer": {"name": "Bea"}, "expires_at": null, "internal_notes": " ", "revocation_reason": " dup "}"#,
+        ))
+        .unwrap();
+        assert_eq!(parsed.fields, ["customer", "expires_at", "internal_notes", "revocation_reason"]);
+        assert_eq!(parsed.changes.expires_at, Some(None));
+        assert_eq!(parsed.changes.internal_notes, Some(None), "blank notes clear them");
+        assert_eq!(parsed.changes.revocation_reason, Some(Some("dup".into())));
+    }
+
+    #[test]
+    fn an_over_long_reason_is_refused() {
+        let body = format!(r#"{{"revocation_reason": "{}"}}"#, "x".repeat(MAX_REASON + 1));
+        assert_eq!(parse(changes(&body)).unwrap_err().code(), "invalid_request");
+    }
+
+    #[test]
+    fn read_only_fields_are_unknown() {
+        for field in ["product", "key", "state", "created_at", "revoked_at"] {
+            let body = format!(r#"{{"{field}": null}}"#);
+            assert!(serde_json::from_str::<LicenceChanges>(&body).is_err(), "{field}");
+        }
+    }
 }

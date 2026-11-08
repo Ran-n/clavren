@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.155237 )
-[//]: # (+ Revised: 	2026/11/03 08:25:53.123975 )
+[//]: # (+ Revised: 	2026/11/07 19:37:00.933296 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Design decisions
@@ -105,6 +105,33 @@ line of defence.
 The dashboard can revoke an activation from the Activations page, and it is the same operation as
 resetting its licence. A separate "unbound but still locked" state would need its own stored flag
 and gives nothing a licence revocation doesn't already give.
+
+## Licences can be deleted
+
+The user decided (2026-11-03) that any licence can be deleted, revoked or not, so test keys and
+mistakes don't stay in the table and in exports for ever. Deleting removes the licence, its
+encrypted key and its activations in one transaction; `activations.license_id` stays `ON DELETE
+RESTRICT`, so history can only disappear through that one function. Revoking is still the way to
+stop a key while keeping its record: a revoked key's hash stays and is refused as revoked, while a
+deleted key reads as unknown. The audit log keeps its entries for a deleted licence, which name it
+by ID only and say what state it was in, so the log still shows whether a live key was cut off.
+
+## Deleting a product takes its licences
+
+The user decided (2026-11-03) that deleting a product always works and takes every licence of it
+with it, live ones included; deactivating remains the way to pause a product without losing
+anything. Unlike a bulk licence delete (at most 1,000, chosen on screen), this has no limit and
+reaches licences no filter on screen shows, so the dashboard asks for the product's code to be
+typed before it confirms, with the counts from the server in the warning. Customers stay: they may
+have other products' licences.
+
+## Product codes made from names
+
+A new product's code is optional; without one the server makes it from the name (accents dropped,
+lowercase, dashes, `-2`, `-3`, … when taken). The server makes it, not the dashboard, because only
+the server knows which codes are taken, and a copy of the rules in TypeScript would drift. A typed
+code that is taken is refused rather than suffixed: typing it was a choice. Renaming never changes
+the code, because every token issued for the product carries it.
 
 ## The encrypted key lives in its own table
 

@@ -1,5 +1,6 @@
-// A new product, typed into the first row of the table: its code and name. The rest is edited in
-// place afterwards. Enter saves, Escape cancels.
+// A new product, typed into the first row of the table: its name, and a code unless it should be
+// made from the name (the server makes it, so it knows which codes are taken). The rest is edited
+// in place afterwards. Enter saves, Escape cancels.
 
 import { useState, type KeyboardEvent } from "react";
 import { api } from "../shared/api";
@@ -39,18 +40,20 @@ export function NewProductRow({ onCreated, onCancel }: { onCreated: () => void; 
         <input aria-label="New product's name" placeholder="Name" value={name} maxLength={200} onChange={(event) => setName(event.target.value)} autoFocus disabled={busy} />
       </td>
       <td data-label="Code">
-        <input aria-label="New product's code" placeholder="code-like-this" value={code} maxLength={63} onChange={(event) => setCode(event.target.value)} disabled={busy} />
+        <input aria-label="New product's code" placeholder="Automatic" value={code} maxLength={63} onChange={(event) => setCode(event.target.value)} disabled={busy} />
       </td>
       <td colSpan={4}>
         <span className="button-row">
-          <Button size="small" variant="primary" busy={busy} onClick={() => void save()} disabledReason={name.trim() && code.trim() ? null : "Type a name and a code first"}>
+          <Button size="small" variant="primary" busy={busy} onClick={() => void save()} disabledReason={name.trim() ? null : "Type a name first"}>
             Save
           </Button>
           <Button size="small" onClick={onCancel} disabled={busy}>
             Cancel
           </Button>
         </span>
-        <span className="field__help">The code goes into every licence token; it can't change once the product has licences.</span>
+        <span className="field__help">
+          Leave the code empty to make it from the name. The code goes into every licence token; it can't change once the product has licences.
+        </span>
         {error && (
           <span className="inline-error" role="alert">
             {error}

@@ -1,10 +1,11 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.129982
-//+ Revised: 	2026/11/03 04:54:16.129982
+//+ Revised: 	2026/11/07 19:37:00.152489
 // -----------------------------------------------------------------------------
 
-//! `/api/admin/products`: list, create, read, edit and delete products.
+//! `/api/admin/products`: list, create, read, edit, and delete products (with their licences), and
+//! what deleting one would take with it.
 
 use axum::Router;
 use axum::extract::State;
@@ -16,7 +17,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::repository::{self, CODE_CONSTRAINT};
-use super::{NewProduct, Product, ProductChanges};
+use super::{NewProduct, Product, ProductChanges, Usage, automatic_code};
 use crate::admin_auth::guard::Admin;
 use crate::audit::{self, AuditEntry};
 use crate::database::violates_unique;
@@ -31,6 +32,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/products", get(list).post(create))
         .route("/products/{id}", get(read).patch(edit).delete(remove))
+        .route("/products/{id}/usage", get(usage))
 }
 
 /// The page fields are spelled out: `#[serde(flatten)]` breaks numbers in query strings.
@@ -58,12 +60,23 @@ async fn create(
     admin: Admin,
     ApiJson(request): ApiJson<NewProduct>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let product = request.into_product(Uuid::now_v7(), admin.actor.at)?;
+    request.check_name()?;
     let mut transaction = state.pool.begin().await?;
+    let (code, automatic_code) = match request.typed_code() {
+        Some(code) => (code.to_string(), false),
+        None => (automatic_code::choose(&mut transaction, &request.name).await?, true),
+    };
+    let product = request.into_product(Uuid::now_v7(), admin.actor.at, &code)?;
+    // Two products made with the same code at once: the second gets the conflict; saving again
+    // picks the next suffix.
     repository::insert(&mut *transaction, &product).await.map_err(code_taken)?;
-    audit::record(&mut *transaction, AuditEntry::by(&admin.actor, "product.created", ENTITY, product.id)).await?;
+    let mut entry = AuditEntry::by(&admin.actor, "product.created", ENTITY, product.id);
+    if automatic_code {
+        entry = entry.with_metadata(json!({ "automatic_code": true }));
+    }
+    audit::record(&mut *transaction, entry).await?;
     transaction.commit().await?;
-    tracing::info!(product = %product.code, admin = %admin.username, "product created");
+    tracing::info!(product = %product.code, automatic_code, admin = %admin.username, "product created");
     Ok((StatusCode::CREATED, Json(product)))
 }
 
@@ -87,7 +100,7 @@ async fn edit(
     if fields.is_empty() {
         return Ok(Json(product));
     }
-    if product.code != current.code && repository::has_licences(&mut *transaction, id).await? {
+    if product.code != current.code && repository::usage(&mut *transaction, id).await?.licences > 0 {
         return Err(ApiError::conflict(
             "product_code_locked",
             "the code can't change once the product has licences: every activated copy carries it",
@@ -101,6 +114,15 @@ async fn edit(
     Ok(Json(product))
 }
 
+async fn usage(
+    State(state): State<AppState>,
+    _admin: Admin,
+    ApiPath(id): ApiPath<Uuid>,
+) -> Result<Json<Usage>, ApiError> {
+    repository::find(&state.pool, id).await?.ok_or_else(ApiError::not_found)?;
+    Ok(Json(repository::usage(&state.pool, id).await?))
+}
+
 async fn remove(
     State(state): State<AppState>,
     admin: Admin,
@@ -108,23 +130,18 @@ async fn remove(
 ) -> Result<StatusCode, ApiError> {
     let mut transaction = state.pool.begin().await?;
     let product = repository::find_for_update(&mut transaction, id).await?.ok_or_else(ApiError::not_found)?;
-    if repository::has_licences(&mut *transaction, id).await? {
-        return Err(ApiError::conflict(
-            "product_has_licences",
-            "a product with licences can't be deleted; deactivate it instead",
-        ));
-    }
-    repository::delete(&mut *transaction, id).await?;
-    audit::record(&mut *transaction, AuditEntry::by(&admin.actor, "product.deleted", ENTITY, id)).await?;
+    let deleted = super::delete_with_licences(&mut transaction, &admin.actor, &product).await?;
     transaction.commit().await?;
-    tracing::info!(product = %product.code, admin = %admin.username, "product deleted");
+    tracing::info!(
+        product = %product.code,
+        licences = deleted.deleted,
+        in_use = deleted.in_use,
+        admin = %admin.username,
+        "product deleted"
+    );
     Ok(StatusCode::NO_CONTENT)
 }
 
 fn code_taken(error: sqlx::Error) -> ApiError {
-    if violates_unique(&error, CODE_CONSTRAINT) {
-        ApiError::conflict("product_code_taken", "another product already has this code")
-    } else {
-        error.into()
-    }
+    if violates_unique(&error, CODE_CONSTRAINT) { super::code_taken_error() } else { error.into() }
 }

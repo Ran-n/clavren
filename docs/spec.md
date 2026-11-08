@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.098038 )
-[//]: # (+ Revised: 	2026/11/03 09:59:16.618145 )
+[//]: # (+ Revised: 	2026/11/07 19:37:01.329688 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Clavren — Specification
@@ -71,7 +71,7 @@ The administrator edits the expiry date in place (extend a school year, make it 
 
 ## 3. Concepts
 
-- **Product**: an application that uses Clavren. It has a unique `code` (e.g. `avalio-lite`, used in tokens), a name, a description, an active flag, and the message template for issued keys. Products are deactivated, never deleted once they have licences.
+- **Product**: an application that uses Clavren. It has a unique `code` (e.g. `avalio-lite`, used in tokens), made from the name when none is given, a name, a description, an active flag, and the message template for issued keys. Deleting a product deletes all its licences and their history; their computers lock at their next check. Deactivating keeps everything.
 - **Customer**: who received a key: name, optional email, notes. Only the administrator sees it. One customer can have several licences.
 - **Licence**: one key for one product, optionally for a customer, optionally with an expiry date. Its state is **unused**, **redeemed** (in use on a computer) or **revoked**; the state is derived, never stored (section 7).
 - **Activation**: one computer (Windows user account) a licence was bound to: its public key, name, platform, app version, when it was activated and last checked, and whether and why it was revoked. A licence has at most one active activation; earlier ones stay as history.
@@ -91,7 +91,7 @@ Generation, per key:
 
 Normalization of a typed key: accept any letter case, ignore spaces and dashes, map the Crockford look-alikes `I`/`L` → `1` and `O` → `0`, then require the prefix and exactly 16 characters of the alphabet. The same function (in `clavren-protocol`) runs in the application, to reject a mistyped key before going online, and on the server.
 
-The encrypted key is kept while the licence is unused or redeemed, so the administrator can show it again (e.g. after a reset, for a customer who lost it). Revoking deletes it; the lookup hash stays so the key can never be accepted again.
+The encrypted key is kept while the licence is unused or redeemed, so the administrator can show it again (e.g. after a reset, for a customer who lost it). Revoking deletes it; the lookup hash stays so the key can never be accepted again. Any licence can be deleted, with its activations; its key then reads as unknown and a computer using it locks at its next check.
 
 ---
 
@@ -239,7 +239,7 @@ A partial unique index on `license_id WHERE revoked_at IS NULL`: at most one act
 ### `audit_logs`
 `id` UUID PK · `admin_user_id` nullable FK · `action` · `entity_type` · `entity_id` nullable UUID · `metadata` JSONB · `ip_address` nullable INET · `created_at`.
 
-Recorded: licences issued, key revealed, copied as message or exported, licence edited, reset, revoked, activation created, refused checks (revoked, expired, unavailable), product and customer changes, admin login, failed login, logout, password and TOTP changes. Successful checks are not audited (they update `last_checked_at`). Kept indefinitely. Never contains keys, passwords, tokens, or customer names and emails.
+Recorded: licences issued, key revealed, copied as message or exported, licence edited (the names of the fields changed), reset, revoked, deleted (with the state it was in), activation created, refused checks (revoked, expired, unavailable), product and customer changes, admin login, failed login, logout, password and TOTP changes. Successful checks are not audited (they update `last_checked_at`). Kept indefinitely. Never contains keys, passwords, tokens, or customer names and emails.
 
 ### `backup_runs`
 `id` UUID PK · `finished_at` · `archive_name` · `size_bytes` BIGINT.
@@ -258,9 +258,9 @@ A polished, responsive web application (React, TypeScript, Vite) embedded in the
 
 ### Interaction rules (every page)
 
-- **Inline editing**: click a value (product name, description, message template, customer name, email, notes, licence expiry, licence notes), edit, Enter or leaving the field saves, Escape cancels. No edit dialogs or edit pages.
+- **Inline editing**: click a value (product name, description, message template, customer name, email, notes, licence customer, expiry, notes and revocation reason), edit, Enter or leaving the field saves, Escape cancels. No edit dialogs or edit pages.
 - **Inline creation**: a new product or customer is a new editable row at the top of its table; a new customer can also be typed straight into the **Issue licences** panel.
-- **No modal dialogs**: a destructive action (revoke, reset, deactivate, delete customer) turns its button into an inline confirmation strip: what will happen in plain words, an optional reason, a red **Confirm** and **Cancel**. Escape cancels.
+- **No modal dialogs**: a destructive action (revoke, reset, deactivate, delete licence, delete product, delete customer) turns its button into an inline confirmation strip: what will happen in plain words, an optional reason, a red **Confirm** and **Cancel**. Escape cancels. Deleting a product that has licences also needs its code typed before **Confirm** is enabled.
 - **Disabled actions look disabled**: dimmed background and label, with a tooltip saying why (e.g. Reset on a licence that isn't in use).
 - **One primary action per page**, large and on its own line (e.g. **Issue licences**); secondary actions smaller.
 - **Everything is remembered**: theme, filters, search, sort, page size, visible columns and last page are saved in `admin_preferences` and restored at the next login, on any browser. Defaults (theme follows the system) apply until the admin picks something.
@@ -271,10 +271,10 @@ A polished, responsive web application (React, TypeScript, Vite) embedded in the
 ### Pages
 
 - **Overview**: products, licences by state, active computers, computers that checked in and checks made in the last 24 hours, last successful backup (warning if over 48 hours old).
-- **Licences**: table with key (hidden, **Reveal** / **Copy**), product, customer, state, issued, redeemed, last check, expiry (inline), notes (inline). Search by key (normalized and looked up by hash), customer name or email, licence ID. Filters by product, state, expiry (permanent, expiring within 30 days, expired). Primary action **Issue licences**: inline panel with product, customer, quantity (up to 1,000), optional expiry and notes; the new keys appear there with **Copy message** (one customer) and **Download CSV**. Bulk: revoke, edit expiry, edit notes, export CSV.
-- **Licence detail**: all fields, Reveal/Copy, **Copy message**, Reset (only when in use), Revoke (unless revoked), and the activation history (every computer it was on, with reasons).
+- **Licences**: table with key (hidden, **Reveal** / **Copy**), product, customer, state, issued, redeemed, last check, customer, expiry and notes (inline; revocation reason inline on revoked licences); the product, key, state and dates are read-only. Search by key (normalized and looked up by hash), customer name or email, licence ID. Filters by product, state, expiry (permanent, expiring within 30 days, expired), each of which can also exclude ("Except revoked"), plus a hide box for key, customer or licence ID. Primary action **Issue licences**: inline panel with product, customer (picked from a searchable list of every customer, or typed as a new one), quantity (up to 1,000), optional expiry and notes; the new keys appear there with **Copy message** (one customer) and **Download CSV**. Bulk: set customer, edit expiry, edit notes, edit reason, export CSV, revoke, delete (with the server's count of what goes).
+- **Licence detail**: all fields, Reveal/Copy, **Copy message**, Reset (only when in use), Revoke (unless revoked), Delete (any state), and the activation history (every computer it was on, with reasons).
 - **Customers**: table (inline editing and creation), search by name or email, each with their licences; delete with inline confirmation ("their licences keep working; their name and email are erased").
-- **Products**: table (inline editing and creation), activate/deactivate (inline confirmation warning that every computer of that product locks at its next check), link to its licences.
+- **Products**: table (inline editing and creation, the code made from the name when left empty), activate/deactivate (inline confirmation warning that every computer of that product locks at its next check), delete with its licences (the strip shows how many and how many are in use), link to its licences.
 - **Activations**: table of computers: product, licence, customer, device name, platform, app version, activated, last check, state. Revoking an activation here is the same operation as resetting its licence.
 - **Audit log**: who did what, when, from which IP; filters by action, admin, entity, date.
 - **Account**: change password, re-enrol TOTP, regenerate recovery codes, sign out everywhere else.
@@ -387,7 +387,7 @@ Every step ships with its tests; none are left for the end.
 - **Property-based** (`proptest`): encode/normalize round trips; any casing, spacing or dashes of a valid key normalize to it; any character outside the alphabet is rejected; encrypt/decrypt round trips.
 - **Integration** (real PostgreSQL, real migrations, a fresh database per test): every endpoint, success and every error path.
 - **Concurrency**: simultaneous activations of one key → exactly one succeeds, no orphan rows; reset racing a check or a revoke ends consistent.
-- **Lifecycle**: issue → activate → check → reset → activate elsewhere (old device refused) → revoke (checks refused, key gone, cannot be reset or activated); expiry edit picked up at the next check; token `exp` capped at licence expiry; product deactivation; same-device retry is idempotent; deleting a customer keeps their licences working and leaves no name or email anywhere (including audit).
+- **Lifecycle**: issue → activate → check → reset → activate elsewhere (old device refused) → revoke (checks refused, key gone, cannot be reset or activated); expiry edit picked up at the next check; token `exp` capped at licence expiry; product deactivation; delete in each state; product deletion; same-device retry is idempotent; deleting a customer keeps their licences working and leaves no name or email anywhere (including audit).
 - **Security**: tampered ciphertext and wrong key rejected; replayed, expired or foreign challenges rejected; wrong signature rejected; tokens with bad signature, wrong product, tampered claims or expired rejected; missing master key with existing licences refuses to start; logs never contain keys, passwords, tokens or customer data.
 - **Admin**: every admin endpoint refuses anonymous requests and missing CSRF; login with wrong password, wrong or reused TOTP, recovery code used twice, all give the same answer; rate limits; bulk endpoints are all-or-nothing; `expand` without per-row queries; preferences saved, restored, invalid ones rejected.
 - **Contract**: pinned JSON for every public response and error, the token claim set, the CSV columns, and golden test vectors (normalization, check message, fingerprint).

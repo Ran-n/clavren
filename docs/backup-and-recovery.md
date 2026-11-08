@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/03 04:54:17.375058 )
-[//]: # (+ Revised: 	2026/11/03 15:25:08.004507 )
+[//]: # (+ Revised: 	2026/11/07 19:37:00.854995 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Backup and recovery
@@ -143,6 +143,10 @@ Everything after the backup: licences issued, activations, resets and revocation
 activated after the backup is unknown to the restored server and is refused at its next check;
 issue the customer a new key or reset theirs. A licence revoked after the backup works again until
 it is revoked again.
+
+It also brings back what was deleted after the backup: licences, with their keys (which work
+again), and products with all their licences. Delete them again after the restore if they should
+stay gone.
 
 ### Without `master.key`
 

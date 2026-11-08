@@ -1,12 +1,12 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.824867
-//+ Revised: 	2026/11/03 08:25:52.804153
+//+ Revised: 	2026/11/07 19:37:00.396515
 // -----------------------------------------------------------------------------
 
 //! The daily check: challenges that work once, for two minutes and one activation, signatures
-//! from the device key only, fresh tokens, and the answers after a reset, revoke, expiry or
-//! deactivation.
+//! from the device key only, fresh tokens, and the answers after a reset, revoke, delete, expiry
+//! or deactivation.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)] // a test that fails should panic
 
@@ -256,4 +256,29 @@ async fn checks_are_counted_by_the_hour_and_old_hours_are_forgotten(pool: PgPool
     clock.advance(Duration::from_secs(30 * 24 * 3600 - 3600));
     let cleaned = maintenance::run_once(&licensing.admin.fixture.state).await.unwrap();
     assert_eq!(cleaned.check_counts, 1, "only the hour more than 30 days old");
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn a_deleted_licences_computer_locks(pool: PgPool) {
+    let licensing = Licensing::new(pool).await;
+    let (licence, activation) = activated(&licensing, json!({})).await;
+    let reply = licensing.admin.call(axum::http::Method::DELETE, &format!("/api/admin/licences/{licence}"), None).await;
+    assert_eq!(reply.status, StatusCode::NO_CONTENT);
+
+    let reply = Device::new(1).challenge(licensing.app(), &activation).await;
+    assert_eq!((reply.status, reply.error()), (StatusCode::FORBIDDEN, "activation_revoked"), "the same as a reset");
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn a_deleted_products_computers_lock(pool: PgPool) {
+    let licensing = Licensing::new(pool).await;
+    let (_, activation) = activated(&licensing, json!({})).await;
+    let (_, spare_key) = licensing.issue(json!({})).await;
+    let path = format!("/api/admin/products/{}", licensing.product_id);
+    assert_eq!(licensing.admin.call(axum::http::Method::DELETE, &path, None).await.status, StatusCode::NO_CONTENT);
+
+    let reply = Device::new(1).challenge(licensing.app(), &activation).await;
+    assert_eq!((reply.status, reply.error()), (StatusCode::FORBIDDEN, "activation_revoked"));
+    let reply = Device::new(2).activate(licensing.app(), PRODUCT, &spare_key).await;
+    assert_eq!((reply.status, reply.error()), (StatusCode::NOT_FOUND, "invalid_key"));
 }

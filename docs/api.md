@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 19:43:36.881392 )
-[//]: # (+ Revised: 	2026/11/03 15:25:08.317510 )
+[//]: # (+ Revised: 	2026/11/07 19:37:00.703125 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # HTTP API
@@ -310,23 +310,29 @@ field of an expanded record. Each list says which fields it expands; any other i
 
 - `code` is up to 63 lowercase letters, digits and `-`, starting with a letter or digit. Uppercase
   input is lowercased. Tokens carry it, so it **can't change once the product has licences**.
+  On create, without `code` (or with a blank one) the code is made from the name: accents
+  dropped, lowercase, other characters as `-`, `product` if nothing is left, and `-2`, `-3`, …
+  when taken. A typed code that is taken is refused. Renaming a product never changes its code.
 - `name` is up to 200 characters, `description` up to 2,000.
 - `message_template` is up to 10,000 characters. Its placeholders are `{customer_name}`,
   `{product_name}` and `{key}`; any other `{word}` is refused. Without a template, a product gets a
   default one.
-- A product with licences can't be deleted. Deactivating it (`"is_active": false`) makes every
-  computer that uses it lock at its next check.
+- Deactivating a product (`"is_active": false`) makes every computer that uses it lock at its
+  next check, and keeps everything. Deleting it deletes its licences too, with their keys and
+  activations; their computers lock at their next check and their keys read as unknown. Customers
+  stay.
 
 | Endpoint | Answer |
 |----------|--------|
 | `GET /api/admin/products?active=true\|false` | A page of products, A to Z by name |
-| `POST /api/admin/products` | `201` with the product. Body: `code`, `name`, optional `description`, `message_template`, `is_active` |
+| `POST /api/admin/products` | `201` with the product. Body: `name`, optional `code`, `description`, `message_template`, `is_active` |
 | `GET /api/admin/products/{id}` | The product |
 | `PATCH /api/admin/products/{id}` | The product after the change. Any of `code`, `name`, `description`, `message_template`, `is_active` |
-| `DELETE /api/admin/products/{id}` | `204` |
+| `GET /api/admin/products/{id}/usage` | `{"licences": 120, "in_use": 34}`: what deleting it would take with it |
+| `DELETE /api/admin/products/{id}` | `204`. The product, every licence of it (no 1,000 limit), their keys and activations; one `licence.deleted` audit entry per licence and a `product.deleted` with the counts |
 
 Conflict codes: `product_code_taken` (another product has the code), `product_code_locked` (the
-product has licences), `product_has_licences` (on delete).
+product has licences).
 
 ---
 
@@ -425,8 +431,12 @@ key on its own line where `{key}` is; it is `null` without a customer. Errors: `
 | `product`, `customer` | IDs |
 | `state` | `unused`, `redeemed` or `revoked` |
 | `expiry` | `permanent`, `expiring` (within 30 days) or `expired` |
+| `not_product`, `not_customer`, `not_state`, `not_expiry`, `not_q` | The same values, hiding what they match; licences without a customer are never hidden by a customer exclusion |
 | `order` | `newest` (default) or `expiry` (soonest first, permanent last) |
 | `limit`, `after`, `expand` | As everywhere |
+
+The filters combine: `?q=acme&not_q=test@acme.com&not_state=revoked` lists Acme's live licences
+except that address's. A contradiction (`state=revoked&not_state=revoked`) is an empty list.
 
 `GET /api/admin/licences/{id}` returns one licence. `expand` works there too, and on the answers
 of `PATCH`, `revoke` and `reset` below.
@@ -435,11 +445,13 @@ of `PATCH`, `revoke` and `reset` below.
 
 | Endpoint | Body | Answer |
 |----------|------|--------|
-| `PATCH /api/admin/licences/{id}` | `expires_at` (`null`: permanent; a past date ends it now), `internal_notes` | The licence |
+| `PATCH /api/admin/licences/{id}` | Any of `customer` (an existing customer's ID, `{"name", "email"}` for a new one, or `null` for none), `expires_at` (`null`: permanent; a past date ends it now), `internal_notes`, `revocation_reason` (revoked licences only). Every other field (product, key, state, dates) is read-only and refused | The licence |
 | `POST /api/admin/licences/{id}/revoke` | `{}` or `{"reason": "…"}` | The licence. The key is deleted and can never be accepted again; a computer using it locks at its next check |
 | `POST /api/admin/licences/{id}/reset` | | The licence, now `unused`. The same key activates on another computer; the old one locks at its next check |
-| `POST /api/admin/licences/bulk/edit` | `ids` (up to 1,000), `expires_at`, `internal_notes` | `{"updated": 3}` |
+| `DELETE /api/admin/licences/{id}` | | `204`. The licence, its key and its activations are gone in any state; a computer using it locks at its next check, and the key reads as unknown (`invalid_key`) |
+| `POST /api/admin/licences/bulk/edit` | `ids` (up to 1,000) and the fields of `PATCH`; a new customer is created once for the batch | `{"updated": 3}` |
 | `POST /api/admin/licences/bulk/revoke` | `ids`, optional `reason` | `{"revoked": 3}` |
+| `POST /api/admin/licences/bulk/delete` | `ids`, optional `"dry_run": true` (only counts) | `{"deleted": 12, "in_use": 3}` |
 
 Bulk requests change every licence or none. When some licences block the batch, the error lists
 them:
@@ -449,7 +461,11 @@ them:
 ```
 
 Errors: `not_found` (with `ids` for a batch), `licence_revoked`, `licence_not_in_use` (reset),
-`invalid_request` (including an empty batch, more than 1,000 IDs, or an ID listed twice).
+`licence_not_revoked` (a revocation reason for a live licence, with `ids`), `customer_email_taken`
+(a new customer with an existing email), `invalid_request` (including an empty batch, more than
+1,000 IDs, an ID listed twice, or an unknown customer). The audit names the changed fields
+(`licence.updated` with `fields`) and the state a deleted licence was in (`licence.deleted` with
+`was`), never names, emails or reason text.
 
 ### The key, again
 
@@ -457,7 +473,7 @@ Errors: `not_found` (with `ids` for a batch), `licence_revoked`, `licence_not_in
 |----------|--------|
 | `POST /api/admin/licences/{id}/reveal` | `{"key": "BRN-…"}` |
 | `POST /api/admin/licences/{id}/message` | `{"message": "…"}`, the product's template filled in |
-| `POST /api/admin/licences/export` | CSV, for `{"ids": [...]}` (up to 1,000) or `{"filter": {"state": "unused", …}}` (the list filters, up to 10,000 licences) |
+| `POST /api/admin/licences/export` | CSV, for `{"ids": [...]}` (up to 1,000) or `{"filter": {"state": "unused", …}}` (the list filters, exclusions included, up to 10,000 licences) |
 
 A revoked licence has no key left: `licence_revoked`. The CSV has the columns `licence_id,
 product_code, customer_name, customer_email, key, state, issued_at, expires_at, notes`, with CRLF

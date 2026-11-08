@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:54.981076 )
-[//]: # (+ Revised: 	2026/11/03 15:42:16.289467 )
+[//]: # (+ Revised: 	2026/11/07 19:36:59.178984 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Changelog
@@ -11,6 +11,18 @@ All notable changes to this project will be documented in this file.
 This project adheres to [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Added
+
+- Licences can be filtered out as well as in: Except options for state, product and expiry, a hide box for key, customer or licence ID, and the same `not_*` filters in the API and CSV export.
+- Every licence field but the product can be edited after issuing: the customer (added, changed or removed) and the revocation reason join expiry and notes, inline and in bulk.
+- Licences can be deleted in any state, one at a time or in bulk; a computer using one locks at its next check.
+- A new product's code is optional: left empty, it is made from the name (`Ñandú Pro` → `nandu-pro`, then `-2`, `-3`, … when taken), in the dashboard and the API.
+
+### Changed
+
+- The customer field lists every customer A to Z and narrows by name as you type, instead of showing five suggestions after two letters.
+- Deleting a product now deletes its licences too, after typing its code to confirm; its computers lock at their next check.
 
 ## [0.2.0] - 2026-11-03
 

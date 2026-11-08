@@ -1,5 +1,6 @@
-// One licence: every field, its key (Reveal/Copy), Copy message, Reset (only while in use),
-// Revoke (unless revoked), and every computer it was ever activated on.
+// One licence: every field (customer, expiry, notes and a revoked licence's reason edited in
+// place), its key (Reveal/Copy), Copy message, Reset (only while in use), Revoke (unless revoked),
+// Delete (in any state, back to the list), and every computer it was ever activated on.
 
 import { useEffect, useState } from "react";
 import { api, get } from "../shared/api";
@@ -10,13 +11,22 @@ import { CopyButton, KeyField } from "../shared/components/Copy";
 import { ErrorNotice, Loading } from "../shared/components/Notice";
 import { formatDateTime } from "../shared/format";
 import { useTitle } from "../shared/hooks";
-import { Link } from "../shared/router";
+import { Link, navigate } from "../shared/router";
 import { expanded, type Licence } from "../shared/types";
 import { ActivationHistory } from "./ActivationHistory";
-import { ExpiryField, NotesField } from "./columns";
-import { LICENCE_EXPAND } from "./licenceApi";
+import { ExpiryField, NotesField, ReasonField } from "./columns";
+import { CustomerField } from "./CustomerField";
+import { DELETED_NOTICE, LICENCE_EXPAND } from "./licenceApi";
 
-type Action = "reset" | "revoke" | null;
+type Action = "reset" | "revoke" | "delete" | null;
+
+/** What deleting a licence in this state ends, in plain words. */
+const DELETE_MESSAGES: Record<Licence["state"], string> = {
+  redeemed:
+    "Delete this licence? The computer using it locks at its next check, the key stops working, and the licence disappears with its history. This can't be undone.",
+  unused: "Delete this licence? Its key stops working and the licence disappears. This can't be undone.",
+  revoked: "Delete this licence? It disappears with the computers it was used on. This can't be undone.",
+};
 
 function resetReason(licence: Licence): string | null {
   if (licence.state === "revoked") return "A revoked licence can't be reset";
@@ -36,7 +46,6 @@ export function LicenceDetailPage({ id }: { id: string }) {
 
   if (!licence) return error ? <ErrorNotice error={error} /> : <Loading />;
   const product = expanded(licence.product);
-  const customer = expanded(licence.customer);
   const revoked = licence.state === "revoked";
 
   async function act(kind: "reset" | "revoke", reason: string | null) {
@@ -44,6 +53,11 @@ export function LicenceDetailPage({ id }: { id: string }) {
     setLicence(await api<Licence>("POST", `/licences/${id}/${kind}?expand=${LICENCE_EXPAND}`, body));
     setAction(null);
     setHistory((value) => value + 1);
+  }
+
+  async function remove() {
+    await api("DELETE", `/licences/${id}`);
+    navigate(`/licences?${DELETED_NOTICE}`);
   }
 
   return (
@@ -60,7 +74,7 @@ export function LicenceDetailPage({ id }: { id: string }) {
         <dt>Product</dt>
         <dd>{product?.name ?? "—"}</dd>
         <dt>Customer</dt>
-        <dd>{customer ? `${customer.name}${customer.email ? ` · ${customer.email}` : ""}` : <span className="muted">No customer</span>}</dd>
+        <dd><CustomerField licence={licence} onChange={setLicence} /></dd>
         <dt>Issued</dt>
         <dd>{formatDateTime(licence.created_at)}</dd>
         <dt>Expires</dt>
@@ -70,7 +84,9 @@ export function LicenceDetailPage({ id }: { id: string }) {
         {revoked && (
           <>
             <dt>Revoked</dt>
-            <dd>{formatDateTime(licence.revoked_at)}{licence.revocation_reason ? ` · ${licence.revocation_reason}` : ""}</dd>
+            <dd className="revoked-line">
+              {formatDateTime(licence.revoked_at)} · <ReasonField licence={licence} onChange={setLicence} />
+            </dd>
           </>
         )}
         <dt>Licence ID</dt>
@@ -85,6 +101,9 @@ export function LicenceDetailPage({ id }: { id: string }) {
         <Button onClick={() => setAction("reset")} disabledReason={resetReason(licence)}>Reset</Button>
         <Button variant="danger" onClick={() => setAction("revoke")} disabledReason={revoked ? "This licence is already revoked" : null}>
           Revoke
+        </Button>
+        <Button variant="danger" onClick={() => setAction("delete")}>
+          Delete
         </Button>
       </div>
       {action === "reset" && (
@@ -103,6 +122,9 @@ export function LicenceDetailPage({ id }: { id: string }) {
           onConfirm={(reason) => act("revoke", reason)}
           onCancel={() => setAction(null)}
         />
+      )}
+      {action === "delete" && (
+        <ConfirmStrip message={DELETE_MESSAGES[licence.state]} confirmLabel="Delete" onConfirm={remove} onCancel={() => setAction(null)} />
       )}
       <h2>Computers</h2>
       <ActivationHistory licenceId={licence.id} key={history} />
