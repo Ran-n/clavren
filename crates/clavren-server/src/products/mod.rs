@@ -1,25 +1,30 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.963172
-//+ Revised: 	2026/11/03 04:54:15.963172
+//+ Revised: 	2026/11/07 19:36:59.974743
 // -----------------------------------------------------------------------------
 
 //! Products: the applications that use Clavren. A product's `code` is the audience of every token
-//! issued for it, so it can't change once the product has licences; a product with licences is
-//! deactivated, never deleted.
+//! issued for it, so it can't change once the product has licences. Deactivating a product pauses
+//! it and keeps everything; deleting it deletes its licences and their history too, and the
+//! computers using them lock at their next check. Without a code, one is made from the name.
 
+mod automatic_code;
 pub mod message_template;
 pub mod repository;
 mod routes;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
+use serde_json::json;
+use sqlx::{FromRow, PgConnection};
 use uuid::Uuid;
 
+use crate::audit::{self, Actor, AuditEntry};
 use crate::http::error::ApiError;
 use crate::http::fields;
 use crate::http::patch::Patch;
+use crate::licences::{self, Deleted};
 pub use routes::routes;
 
 const MAX_NAME: usize = 200;
@@ -39,10 +44,38 @@ pub struct Product {
     pub updated_at: DateTime<Utc>,
 }
 
+/// How many licences a product has, and how many of them are in use on a computer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, FromRow)]
+pub struct Usage {
+    pub licences: i64,
+    pub in_use: i64,
+}
+
+/// Deletes `product` (locked by the caller's transaction) with every licence it has, their keys
+/// and their history, auditing each licence and the product. Set-based: no limit on how many.
+pub async fn delete_with_licences(
+    connection: &mut PgConnection,
+    actor: &Actor,
+    product: &Product,
+) -> Result<Deleted, ApiError> {
+    let ids = licences::repository::ids_of_product(&mut *connection, product.id).await?;
+    let deleted = licences::delete_locked(&mut *connection, actor, &ids, false).await?;
+    repository::delete(&mut *connection, product.id).await?;
+    let metadata = json!({ "licences": deleted.deleted, "in_use": deleted.in_use });
+    audit::record(
+        &mut *connection,
+        AuditEntry::by(actor, "product.deleted", "product", product.id).with_metadata(metadata),
+    )
+    .await?;
+    Ok(deleted)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NewProduct {
-    pub code: String,
+    /// Missing or blank: made from the name.
+    #[serde(default)]
+    pub code: Option<String>,
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
@@ -63,12 +96,23 @@ pub struct ProductChanges {
 }
 
 impl NewProduct {
-    /// The product to store, checked and tidied.
-    pub fn into_product(self, id: Uuid, now: DateTime<Utc>) -> Result<Product, ApiError> {
+    /// The code as typed, trimmed; `None` when it is missing or blank.
+    pub fn typed_code(&self) -> Option<&str> {
+        self.code.as_deref().map(str::trim).filter(|code| !code.is_empty())
+    }
+
+    /// Checks the name on its own, before a code is made from it.
+    pub fn check_name(&self) -> Result<(), ApiError> {
+        fields::required("name", &self.name, MAX_NAME).map(drop)
+    }
+
+    /// The product to store with `code` (typed or made: both meet the same check), checked and
+    /// tidied.
+    pub fn into_product(self, id: Uuid, now: DateTime<Utc>, code: &str) -> Result<Product, ApiError> {
         let template = self.message_template.unwrap_or_else(|| message_template::DEFAULT.to_string());
         Ok(Product {
             id,
-            code: code(&self.code)?,
+            code: self::code(code)?,
             name: fields::required("name", &self.name, MAX_NAME)?,
             description: fields::optional("description", self.description.as_deref(), MAX_DESCRIPTION)?,
             message_template: template_text(&template)?,
@@ -123,6 +167,11 @@ fn changed_fields(before: &Product, after: &Product) -> Vec<&'static str> {
 }
 
 /// Lowercase letters, digits and `-`, starting with a letter or digit; typed in any case.
+/// Another product already has the code, typed or made.
+fn code_taken_error() -> ApiError {
+    ApiError::conflict("product_code_taken", "another product already has this code")
+}
+
 fn code(value: &str) -> Result<String, ApiError> {
     let code = value.trim().to_ascii_lowercase();
     let mut characters = code.chars();

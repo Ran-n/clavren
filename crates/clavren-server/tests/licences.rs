@@ -1,11 +1,11 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:17.102897
-//+ Revised: 	2026/11/03 04:54:17.102897
+//+ Revised: 	2026/11/07 19:37:00.544611
 // -----------------------------------------------------------------------------
 
 //! Issuing and finding licences: keys stored only as hash and ciphertext, customers chosen or typed
-//! in place, the message, search by key, name or ID, filters, orders, and `expand`.
+//! in place, the message, search by key, name or ID, filters and exclusions, orders, and `expand`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)] // a test that fails should panic
 
@@ -163,19 +163,36 @@ async fn search_finds_a_key_however_it_is_typed_and_names_and_ids(pool: PgPool) 
     assert_eq!(list(&admin, "?q=%20").await.len(), 2);
 }
 
+/// Four licences: Ana's (avalio, expiring in 10 days), one of avalio expiring in 100 days, and two
+/// permanent ones of `other` without a customer, the second of them revoked.
+struct Mixed {
+    avalio: String,
+    other: String,
+    ana: Value,
+    permanent: Value,
+    revoked_id: String,
+}
+
+impl Mixed {
+    async fn new(admin: &Admin) -> Self {
+        let (avalio, other) = (product(admin, "avalio-lite").await, product(admin, "other").await);
+        let now = admin.fixture.clock.now();
+        let soon = (now + chrono::Duration::days(10)).to_rfc3339();
+        let later = (now + chrono::Duration::days(100)).to_rfc3339();
+        let ana = issue(admin, json!({ "product": avalio, "customer": { "name": "Ana" }, "expires_at": soon })).await;
+        issue(admin, json!({ "product": avalio, "expires_at": later })).await;
+        let permanent = issue(admin, json!({ "product": other })).await;
+        let revoked = issue(admin, json!({ "product": other })).await;
+        let revoked_id = revoked["licences"][0]["id"].as_str().unwrap().to_string();
+        admin.call(Method::POST, &format!("/api/admin/licences/{revoked_id}/revoke"), Some(json!({}))).await;
+        Self { avalio, other, ana, permanent, revoked_id }
+    }
+}
+
 #[sqlx::test(migrator = "clavren::database::MIGRATOR")]
 async fn filters_narrow_by_product_customer_state_and_expiry(pool: PgPool) {
     let mut admin = Admin::new(pool).await;
-    let (avalio, other) = (product(&admin, "avalio-lite").await, product(&admin, "other").await);
-    let now = admin.fixture.clock.now();
-    let soon = (now + chrono::Duration::days(10)).to_rfc3339();
-    let later = (now + chrono::Duration::days(100)).to_rfc3339();
-    let ana = issue(&admin, json!({ "product": avalio, "customer": { "name": "Ana" }, "expires_at": soon })).await;
-    issue(&admin, json!({ "product": avalio, "expires_at": later })).await;
-    let permanent = issue(&admin, json!({ "product": other })).await;
-    let revoked = issue(&admin, json!({ "product": other })).await;
-    let revoked_id = revoked["licences"][0]["id"].as_str().unwrap();
-    admin.call(Method::POST, &format!("/api/admin/licences/{revoked_id}/revoke"), Some(json!({}))).await;
+    let Mixed { avalio, other, ana, permanent, revoked_id } = Mixed::new(&admin).await;
 
     assert_eq!(list(&admin, &format!("?product={avalio}")).await.len(), 2);
     assert_eq!(list(&admin, &format!("?customer={}", ana["customer"]["id"].as_str().unwrap())).await.len(), 1);
@@ -197,6 +214,57 @@ async fn filters_narrow_by_product_customer_state_and_expiry(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn exclusions_hide_what_they_name(pool: PgPool) {
+    let admin = Admin::new(pool).await;
+    let mixed = Mixed::new(&admin).await;
+    let ids = |licences: Vec<Value>| licences.iter().map(|l| l["id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    let ana_id = mixed.ana["licences"][0]["id"].as_str().unwrap().to_string();
+    let ana_key = mixed.ana["licences"][0]["key"].as_str().unwrap();
+
+    let live = ids(list(&admin, "?not_state=revoked").await);
+    assert_eq!(live.len(), 3);
+    assert!(!live.contains(&mixed.revoked_id));
+    let avalio = list(&admin, &format!("?not_product={}", mixed.other)).await;
+    assert!(avalio.len() == 2 && avalio.iter().all(|l| l["product"] == mixed.avalio.as_str()), "{avalio:?}");
+    assert_eq!(list(&admin, "?not_expiry=permanent").await.len(), 2);
+    let without_ana =
+        ids(list(&admin, &format!("?not_customer={}", mixed.ana["customer"]["id"].as_str().unwrap())).await);
+    assert_eq!(without_ana.len(), 3, "licences without a customer aren't hidden");
+    assert!(!without_ana.contains(&ana_id));
+    assert_eq!(list(&admin, "?not_q=ana").await.len(), 3);
+    for hide in [ana_key, ana_id.as_str()] {
+        let shown = ids(list(&admin, &format!("?not_q={}", urlencode(hide))).await);
+        assert_eq!(shown.len(), 3, "{hide}");
+        assert!(!shown.contains(&ana_id), "{hide}");
+    }
+    assert_eq!(list(&admin, &format!("?state=unused&not_product={}", mixed.other)).await.len(), 2);
+    assert_eq!(list(&admin, "?not_q=%20%20").await.len(), 4, "blank hides nothing");
+    assert_eq!(list(&admin, "?state=revoked&not_state=revoked").await.len(), 0, "consistent, just empty");
+    assert_eq!(list(&admin, &format!("?q=ana&not_q={}", urlencode(ana_key))).await.len(), 0);
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn bad_exclusions_are_refused(pool: PgPool) {
+    let admin = Admin::new(pool).await;
+    for bad in ["?not_state=lost", "?not_expiry=soon", "?not_product=nope", "?not_customer=nope"] {
+        let reply = admin.get(&format!("/api/admin/licences{bad}")).await;
+        assert_eq!((reply.status, reply.error()), (StatusCode::BAD_REQUEST, "invalid_request"), "{bad}");
+    }
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn export_honours_exclusions(pool: PgPool) {
+    let admin = Admin::new(pool).await;
+    let mixed = Mixed::new(&admin).await;
+    let body = json!({ "filter": { "not_state": "revoked" } });
+    let reply = admin.call(Method::POST, "/api/admin/licences/export", Some(body)).await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
+    let rows: Vec<&str> = reply.text.split("\r\n").skip(1).filter(|line| !line.is_empty()).collect();
+    assert_eq!(rows.len(), 3);
+    assert!(rows.iter().all(|row| !row.contains(",revoked,") && !row.starts_with(&mixed.revoked_id)), "{rows:?}");
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
 async fn pages_follow_either_order_to_the_end(pool: PgPool) {
     let admin = Admin::new(pool).await;
     let product = product(&admin, "avalio-lite").await;
@@ -206,28 +274,40 @@ async fn pages_follow_either_order_to_the_end(pool: PgPool) {
             .await;
     }
     issue(&admin, json!({ "product": product, "quantity": 2 })).await;
+    let revoked = issue(&admin, json!({ "product": product })).await["licences"][0]["id"].as_str().unwrap().to_string();
+    admin.call(Method::POST, &format!("/api/admin/licences/{revoked}/revoke"), Some(json!({}))).await;
 
-    let walk = |order: &'static str| {
+    let walk = |query: &'static str| {
         let admin = &admin;
         async move {
             let mut seen = Vec::new();
-            let mut query = format!("?order={order}&limit=2");
+            let mut page = format!("?{query}&limit=2");
             loop {
-                let reply = admin.get(&format!("/api/admin/licences{query}")).await;
+                let reply = admin.get(&format!("/api/admin/licences{page}")).await;
                 assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
-                seen.extend(reply.body["data"].as_array().unwrap().iter().map(|licence| licence["expires_at"].clone()));
+                seen.extend(reply.body["data"].as_array().unwrap().iter().cloned());
                 let Some(cursor) = reply.body["next_cursor"].as_str() else { return seen };
-                query = format!("?order={order}&limit=2&after={cursor}");
+                page = format!("?{query}&limit=2&after={cursor}");
             }
         }
     };
-    let by_expiry = walk("expiry").await;
-    let days: Vec<Option<i64>> = by_expiry
-        .iter()
-        .map(|at| at.as_str().map(|at| (chrono::DateTime::parse_from_rfc3339(at).unwrap().to_utc() - now).num_days()))
-        .collect();
-    assert_eq!(days, [Some(10), Some(20), Some(30), None, None]);
-    assert_eq!(walk("newest").await.len(), 5);
+    let days = |licences: &[Value]| -> Vec<Option<i64>> {
+        licences
+            .iter()
+            .map(|licence| {
+                licence["expires_at"]
+                    .as_str()
+                    .map(|at| (chrono::DateTime::parse_from_rfc3339(at).unwrap().to_utc() - now).num_days())
+            })
+            .collect()
+    };
+    assert_eq!(days(&walk("order=expiry&not_state=revoked").await), [Some(10), Some(20), Some(30), None, None]);
+    assert_eq!(walk("order=expiry").await.len(), 6);
+    assert_eq!(walk("order=newest").await.len(), 6);
+    let live = walk("order=newest&not_state=revoked").await;
+    let distinct: std::collections::HashSet<&str> = live.iter().map(|l| l["id"].as_str().unwrap()).collect();
+    assert_eq!((live.len(), distinct.len()), (5, 5), "no repeats");
+    assert!(!distinct.contains(revoked.as_str()));
 }
 
 #[sqlx::test(migrator = "clavren::database::MIGRATOR")]

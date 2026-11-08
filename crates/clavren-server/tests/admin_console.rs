@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.689302
-//+ Revised: 	2026/11/03 08:25:52.741508
+//+ Revised: 	2026/11/07 19:37:00.319082
 // -----------------------------------------------------------------------------
 
 //! The admin endpoints behind the dashboard's other pages: activations, the overview, the audit
@@ -105,6 +105,15 @@ async fn the_overview_counts_and_warns_about_backups(pool: PgPool) {
         assert_eq!(overview[field], count, "{field}");
     }
     assert_eq!((overview["last_backup"].clone(), overview["backup_overdue"].clone()), (Value::Null, json!(true)));
+    let deleted =
+        licensing.admin.call(axum::http::Method::DELETE, &format!("/api/admin/licences/{revoked}"), None).await;
+    assert_eq!(deleted.status, StatusCode::NO_CONTENT);
+    let overview = licensing.admin.get("/api/admin/overview").await.body;
+    assert_eq!(
+        (overview["revoked"].clone(), overview["unused"].clone()),
+        (json!(0), json!(1)),
+        "a deleted licence counts nowhere"
+    );
 
     sqlx::query(
         "INSERT INTO backup_runs (finished_at, archive_name, size_bytes) VALUES ($1, 'clavren-20270115.tar', 2048)",

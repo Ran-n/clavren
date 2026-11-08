@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.199013
-//+ Revised: 	2026/11/03 04:54:15.199013
+//+ Revised: 	2026/11/07 19:36:59.551546
 // -----------------------------------------------------------------------------
 
 //! Issuing licences: up to 1,000 keys for one product and (optionally) one customer, existing or
@@ -17,9 +17,8 @@ use uuid::Uuid;
 
 use super::repository::{self, NewLicences};
 use super::{MAX_BATCH, MAX_NOTES, secrets};
-use crate::audit::{self, Actor, AuditEntry};
-use crate::customers::{self, Customer, NewCustomer};
-use crate::database::violates_unique;
+use crate::audit::{self, Actor};
+use crate::customers::{self, Customer, CustomerChoice};
 use crate::http::AppState;
 use crate::http::error::ApiError;
 use crate::http::fields;
@@ -46,14 +45,6 @@ fn one() -> usize {
     1
 }
 
-/// An existing customer's ID, or a new customer typed into the issuing panel.
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum CustomerChoice {
-    Existing(Uuid),
-    New(NewCustomer),
-}
-
 pub struct Issued {
     pub keys: Vec<(Uuid, LicenceKey)>,
     pub product: Product,
@@ -75,7 +66,10 @@ pub async fn issue(state: &AppState, actor: &Actor, request: IssueRequest) -> Re
     if !product.is_active {
         return Err(ApiError::conflict("product_inactive", "licences can't be issued for an inactive product"));
     }
-    let customer = choose_customer(&mut transaction, actor, request.customer).await?;
+    let customer = match request.customer {
+        Some(choice) => Some(customers::choose(&mut transaction, actor, choice).await?),
+        None => None,
+    };
     let new = Batch {
         product: &product,
         customer: customer.as_ref(),
@@ -88,32 +82,6 @@ pub async fn issue(state: &AppState, actor: &Actor, request: IssueRequest) -> Re
     audit::record_for_each(&mut *transaction, actor, "licence.issued", "licence", &ids, metadata).await?;
     transaction.commit().await?;
     Ok(Issued { keys, product, customer })
-}
-
-async fn choose_customer(
-    connection: &mut PgConnection,
-    actor: &Actor,
-    choice: Option<CustomerChoice>,
-) -> Result<Option<Customer>, ApiError> {
-    match choice {
-        None => Ok(None),
-        Some(CustomerChoice::Existing(id)) => customers::repository::find(&mut *connection, id)
-            .await?
-            .map(Some)
-            .ok_or_else(|| ApiError::invalid_request("customer doesn't name an existing customer")),
-        Some(CustomerChoice::New(new)) => {
-            let customer = new.into_customer(Uuid::now_v7(), actor.at)?;
-            customers::repository::insert(&mut *connection, &customer).await.map_err(|error| {
-                if violates_unique(&error, customers::repository::EMAIL_CONSTRAINT) {
-                    ApiError::conflict("customer_email_taken", "a customer with this email exists; pick them instead")
-                } else {
-                    error.into()
-                }
-            })?;
-            audit::record(&mut *connection, AuditEntry::by(actor, "customer.created", "customer", customer.id)).await?;
-            Ok(Some(customer))
-        }
-    }
 }
 
 struct Batch<'a> {

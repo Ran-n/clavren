@@ -1,21 +1,24 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:13.342000
-//+ Revised: 	2026/11/03 04:54:13.342000
+//+ Revised: 	2026/11/07 19:36:59.383912
 // -----------------------------------------------------------------------------
 
 //! Customers: who received a key. Only administrators see them. Deleting one erases their name,
 //! email and notes; their licences keep working, without the link. The audit log refers to
-//! customers by ID only, so nothing personal is left behind.
+//! customers by ID only, so nothing personal is left behind. A licence's customer is picked, or
+//! typed in place as a new one, the same way when issuing and when editing ([`choose`]).
 
 pub mod repository;
 mod routes;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
+use sqlx::{FromRow, PgConnection};
 use uuid::Uuid;
 
+use crate::audit::{self, Actor, AuditEntry};
+use crate::database::violates_unique;
 use crate::http::error::ApiError;
 use crate::http::fields;
 use crate::http::patch::Patch;
@@ -50,6 +53,39 @@ pub struct CustomerChanges {
     pub name: Option<String>,
     pub email: Patch<String>,
     pub notes: Patch<String>,
+}
+
+/// An existing customer's ID, or a new customer typed in place.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum CustomerChoice {
+    Existing(Uuid),
+    New(NewCustomer),
+}
+
+/// The customer `choice` names: an existing one, or a new one created now (and audited).
+pub async fn choose(
+    connection: &mut PgConnection,
+    actor: &Actor,
+    choice: CustomerChoice,
+) -> Result<Customer, ApiError> {
+    match choice {
+        CustomerChoice::Existing(id) => repository::find(&mut *connection, id)
+            .await?
+            .ok_or_else(|| ApiError::invalid_request("customer doesn't name an existing customer")),
+        CustomerChoice::New(new) => {
+            let customer = new.into_customer(Uuid::now_v7(), actor.at)?;
+            repository::insert(&mut *connection, &customer).await.map_err(|error| {
+                if violates_unique(&error, repository::EMAIL_CONSTRAINT) {
+                    ApiError::conflict("customer_email_taken", "a customer with this email exists; pick them instead")
+                } else {
+                    error.into()
+                }
+            })?;
+            audit::record(&mut *connection, AuditEntry::by(actor, "customer.created", "customer", customer.id)).await?;
+            Ok(customer)
+        }
+    }
 }
 
 impl NewCustomer {

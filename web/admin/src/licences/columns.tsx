@@ -1,5 +1,5 @@
-// The licence table's columns. Expiry and notes are edited in place; the key stays hidden until
-// Reveal.
+// The licence table's columns. Customer, expiry and notes are edited in place (and a revoked
+// licence's reason, on its page); the key stays hidden until Reveal.
 
 import { LicenceStateBadge } from "../shared/components/Badge";
 import { KeyField } from "../shared/components/Copy";
@@ -8,7 +8,11 @@ import { InlineText } from "../shared/components/InlineText";
 import { formatDate, formatDateTime, fromDateInput, toDateInput } from "../shared/format";
 import { Link } from "../shared/router";
 import { expanded, type Licence } from "../shared/types";
+import { CustomerField } from "./CustomerField";
 import { updateLicence } from "./licenceApi";
+
+/** The server's limit on a revocation reason. */
+const MAX_REASON = 500;
 
 type Replace = (licence: Licence) => void;
 
@@ -38,26 +42,23 @@ export function NotesField({ licence, onChange }: { licence: Licence; onChange: 
   );
 }
 
+export function ReasonField({ licence, onChange }: { licence: Licence; onChange: Replace }) {
+  return (
+    <InlineText
+      label="revocation reason"
+      value={licence.revocation_reason}
+      maxLength={MAX_REASON}
+      placeholder="Add a reason"
+      onSave={async (value) => onChange(await updateLicence(licence.id, { revocation_reason: value }))}
+    />
+  );
+}
+
 export function licenceColumns(onChange: Replace): Column<Licence>[] {
   return [
     { key: "key", label: "Key", render: (licence) => <KeyField licenceId={licence.id} revoked={licence.state === "revoked"} /> },
     { key: "product", label: "Product", optional: true, render: (licence) => expanded(licence.product)?.name ?? "—" },
-    {
-      key: "customer",
-      label: "Customer",
-      optional: true,
-      render: (licence) => {
-        const customer = expanded(licence.customer);
-        return customer ? (
-          <span className="stacked">
-            <span>{customer.name}</span>
-            {customer.email && <span className="muted">{customer.email}</span>}
-          </span>
-        ) : (
-          <span className="muted">No customer</span>
-        );
-      },
-    },
+    { key: "customer", label: "Customer", optional: true, render: (licence) => <CustomerField compact licence={licence} onChange={onChange} /> },
     { key: "state", label: "State", render: (licence) => <LicenceStateBadge state={licence.state} /> },
     { key: "issued", className: "table__nowrap", label: "Issued", optional: true, render: (licence) => formatDate(licence.created_at) },
     { key: "redeemed", label: "Activated", optional: true, render: (licence) => formatDateTime(expanded(licence.active_activation)?.activated_at) },

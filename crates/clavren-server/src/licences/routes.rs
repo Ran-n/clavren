@@ -1,11 +1,11 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.689100
-//+ Revised: 	2026/11/03 04:54:15.689100
+//+ Revised: 	2026/11/07 19:36:59.890050
 // -----------------------------------------------------------------------------
 
 //! `/api/admin/licences`: issue, list and search, read, edit, reveal, copy message, revoke, reset,
-//! the bulk versions, and CSV export.
+//! delete, the bulk versions, and CSV export.
 
 use axum::extract::State;
 use axum::http::{StatusCode, header};
@@ -23,7 +23,7 @@ use super::lifecycle::{self, LicenceChanges};
 use super::views::{EXPANDABLE, LicenceView, present};
 use super::{MAX_BATCH, State as LicenceState, repository};
 use crate::admin_auth::guard::Admin;
-use crate::customers::Customer;
+use crate::customers::{Customer, CustomerChoice};
 use crate::http::AppState;
 use crate::http::error::ApiError;
 use crate::http::expand::Expand;
@@ -37,13 +37,14 @@ const MAX_EXPORT: u32 = 10_000;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/licences", get(list).post(issue_licences))
-        .route("/licences/{id}", get(read).patch(edit))
+        .route("/licences/{id}", get(read).patch(edit).delete(remove))
         .route("/licences/{id}/reveal", post(reveal))
         .route("/licences/{id}/message", post(message))
         .route("/licences/{id}/revoke", post(revoke))
         .route("/licences/{id}/reset", post(reset))
         .route("/licences/bulk/edit", post(bulk_edit))
         .route("/licences/bulk/revoke", post(bulk_revoke))
+        .route("/licences/bulk/delete", post(bulk_delete))
         .route("/licences/export", post(export))
 }
 
@@ -55,6 +56,11 @@ struct ListParams {
     state: Option<LicenceState>,
     expiry: Option<Expiry>,
     q: Option<String>,
+    not_product: Option<Uuid>,
+    not_customer: Option<Uuid>,
+    not_state: Option<LicenceState>,
+    not_expiry: Option<Expiry>,
+    not_q: Option<String>,
     #[serde(default)]
     order: Order,
     limit: Option<u32>,
@@ -79,6 +85,11 @@ async fn list(
         state: params.state,
         expiry: params.expiry,
         q: params.q,
+        not_product: params.not_product,
+        not_customer: params.not_customer,
+        not_state: params.not_state,
+        not_expiry: params.not_expiry,
+        not_q: params.not_q,
     }
     .into_filter(&state.keys, admin.actor.at);
     let rows = repository::page(&state.pool, &filter, params.order, cursor.as_ref(), fetch_count(limit)).await?;
@@ -193,14 +204,31 @@ async fn reset(
     view(&state, id, &expand).await.map(Json)
 }
 
+/// The IDs, and the same fields as [`LicenceChanges`].
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BulkEdit {
     ids: Vec<Uuid>,
     #[serde(default)]
+    customer: Patch<CustomerChoice>,
+    #[serde(default)]
     expires_at: Patch<chrono::DateTime<chrono::Utc>>,
     #[serde(default)]
     internal_notes: Patch<String>,
+    #[serde(default)]
+    revocation_reason: Patch<String>,
+}
+
+impl BulkEdit {
+    fn split(self) -> (Vec<Uuid>, LicenceChanges) {
+        let changes = LicenceChanges {
+            customer: self.customer,
+            expires_at: self.expires_at,
+            internal_notes: self.internal_notes,
+            revocation_reason: self.revocation_reason,
+        };
+        (self.ids, changes)
+    }
 }
 
 async fn bulk_edit(
@@ -208,9 +236,9 @@ async fn bulk_edit(
     admin: Admin,
     ApiJson(request): ApiJson<BulkEdit>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let changes = LicenceChanges { expires_at: request.expires_at, internal_notes: request.internal_notes };
-    lifecycle::edit(&state, &admin.actor, &request.ids, changes).await?;
-    Ok(Json(json!({ "updated": request.ids.len() })))
+    let (ids, changes) = request.split();
+    lifecycle::edit(&state, &admin.actor, &ids, changes).await?;
+    Ok(Json(json!({ "updated": ids.len() })))
 }
 
 #[derive(Debug, Deserialize)]
@@ -228,6 +256,32 @@ async fn bulk_revoke(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     lifecycle::revoke(&state, &admin.actor, &request.ids, request.reason.as_deref()).await?;
     Ok(Json(json!({ "revoked": request.ids.len() })))
+}
+
+async fn remove(
+    State(state): State<AppState>,
+    admin: Admin,
+    ApiPath(id): ApiPath<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    lifecycle::delete(&state, &admin.actor, &[id], false).await.map_err(single)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BulkDelete {
+    ids: Vec<Uuid>,
+    /// Only count what would go.
+    #[serde(default)]
+    dry_run: bool,
+}
+
+async fn bulk_delete(
+    State(state): State<AppState>,
+    admin: Admin,
+    ApiJson(request): ApiJson<BulkDelete>,
+) -> Result<Json<lifecycle::Deleted>, ApiError> {
+    lifecycle::delete(&state, &admin.actor, &request.ids, request.dry_run).await.map(Json)
 }
 
 /// A selection (`ids`) or everything matching a filter (`filter`), but not both.

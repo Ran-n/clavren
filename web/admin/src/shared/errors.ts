@@ -15,16 +15,23 @@ const MESSAGES: Record<string, string> = {
   not_found: "It isn't there any more; it may have been deleted. Reload the page.",
   product_code_taken: "Another product already uses this code. Choose a different one.",
   product_code_locked: "This product has licences, so its code can't change: their tokens carry it.",
-  product_has_licences: "This product has licences, so it can't be deleted. Deactivate it instead.",
   product_inactive: "This product is inactive. Activate it on the Products page before issuing licences.",
   customer_email_taken: "Another customer already has this email address.",
   licence_revoked: "This licence is revoked, and that can't be undone.",
   licence_not_in_use: "This licence isn't in use on any computer, so there is nothing to reset.",
+  licence_not_revoked: "Only a revoked licence has a revocation reason.",
   activation_revoked: "This computer's activation has already ended.",
 };
 
 export function plural(count: number, word: string): string {
   return `${count.toLocaleString()} ${word}${count === 1 ? "" : "s"}`;
+}
+
+/** Before deleting licences: how many computers lock, as a sentence (empty when none). */
+export function inUseWarning(inUse: number): string {
+  if (inUse === 0) return "";
+  if (inUse === 1) return "1 is in use: that computer locks at its next check. ";
+  return `${inUse.toLocaleString()} are in use: those computers lock at their next check. `;
 }
 
 export function describe(error: unknown): string {

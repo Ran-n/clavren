@@ -1,11 +1,12 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.005194
-//+ Revised: 	2026/11/03 04:54:12.005194
+//+ Revised: 	2026/11/07 19:36:59.297085
 // -----------------------------------------------------------------------------
 
 //! The client against the real server over HTTP, the way avalio-lite will use it: activate, check,
-//! reset and activate on a second computer (the first locks), revoke (the second locks).
+//! reset and activate on a second computer (the first locks), revoke (the second locks), and a
+//! deleted licence or product (its computer locks).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)] // a test that fails should panic
 
@@ -16,7 +17,7 @@ use clavren::activations::tokens;
 use clavren::config::{AdminAuthSettings, Config, LicensingSettings, ProxySettings};
 use clavren::crypto::key_ring::KeyRing;
 use clavren::crypto::master_key::{self, MasterKeyFile};
-use clavren::licences::secrets;
+use clavren::licences::{repository, secrets};
 use clavren::startup::Server;
 use clavren_client::clock::SystemClock;
 use clavren_client::store::MemoryStore;
@@ -139,6 +140,46 @@ async fn a_licence_moves_between_computers_and_ends(_pool: PgPoolOptions, option
         .unwrap();
     assert_eq!(on_computer(&second, |client| client.check().unwrap()).await, Outcome::Revoked);
     assert_eq!(on_computer(&second, |client| client.status()).await, Outcome::Revoked);
+
+    running.stop.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(30), running.serving).await.unwrap().unwrap();
+}
+
+#[sqlx::test(migrations = false)]
+async fn a_deleted_licences_computer_locks(_pool: PgPoolOptions, options: PgConnectOptions) {
+    let running = start(options).await;
+    let (licence, key) = issue(&running).await;
+    let client = computer(&running);
+    assert!(on_computer(&client, move |client| client.activate(&key).unwrap()).await.is_licensed());
+
+    let mut connection = running.pool.acquire().await.unwrap();
+    repository::delete(&mut connection, &[licence]).await.unwrap();
+    assert_eq!(on_computer(&client, |client| client.check().unwrap()).await, Outcome::Revoked, "a definitive refusal");
+    assert_eq!(on_computer(&client, |client| client.status()).await, Outcome::Revoked, "the token is gone");
+
+    running.stop.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(30), running.serving).await.unwrap().unwrap();
+}
+
+#[sqlx::test(migrations = false)]
+async fn a_deleted_products_computer_locks(_pool: PgPoolOptions, options: PgConnectOptions) {
+    let running = start(options).await;
+    let (licence, key) = issue(&running).await;
+    let client = computer(&running);
+    assert!(on_computer(&client, move |client| client.activate(&key).unwrap()).await.is_licensed());
+
+    let product: Uuid = sqlx::query_scalar("SELECT product_id FROM licenses WHERE id = $1")
+        .bind(licence)
+        .fetch_one(&running.pool)
+        .await
+        .unwrap();
+    let mut transaction = running.pool.begin().await.unwrap();
+    let ids = repository::ids_of_product(&mut transaction, product).await.unwrap();
+    repository::delete(&mut transaction, &ids).await.unwrap();
+    clavren::products::repository::delete(&mut *transaction, product).await.unwrap();
+    transaction.commit().await.unwrap();
+    assert_eq!(on_computer(&client, |client| client.check().unwrap()).await, Outcome::Revoked, "a definitive refusal");
+    assert_eq!(on_computer(&client, |client| client.status()).await, Outcome::Revoked, "the token is gone");
 
     running.stop.send(()).unwrap();
     tokio::time::timeout(Duration::from_secs(30), running.serving).await.unwrap().unwrap();

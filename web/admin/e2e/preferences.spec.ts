@@ -1,6 +1,8 @@
 // Everything the admin sets is remembered on the server and comes back after signing in again:
-// theme, filters, order, page size, columns and the last page.
+// theme, filters (exclusions too), order, page size, columns and the last page. A licence key is
+// never saved.
 
+import { createProduct } from "./data";
 import { expect, test } from "./fixtures";
 
 test("preferences are restored after signing in again", async ({ admin, credentials }) => {
@@ -30,4 +32,40 @@ test("preferences are restored after signing in again", async ({ admin, credenti
   await expect(admin.getByRole("columnheader", { name: "Notes" })).toHaveCount(0);
   await expect(admin.getByRole("columnheader", { name: "Customer" })).toBeVisible();
   await expect(admin.locator("html")).toHaveAttribute("data-theme", "dark");
+});
+
+test("exclusions come back after a reload, but a key typed in the hide box doesn't", async ({ admin }) => {
+  const saved = () => admin.waitForResponse((response) => response.url().endsWith("/api/admin/preferences") && response.request().method() === "PUT");
+  await admin.goto("/licences");
+  let put = saved();
+  await admin.getByLabel("State").selectOption({ label: "Except revoked" });
+  await put;
+  put = saved();
+  await admin.getByLabel("Hide key, customer or licence ID").fill("López");
+  expect((await put).request().postData()).toContain("López");
+  await admin.reload();
+  await expect(admin.getByLabel("State")).toHaveValue("not:revoked");
+  await expect(admin.getByLabel("Hide key, customer or licence ID")).toHaveValue("López");
+
+  put = saved();
+  await admin.getByLabel("Hide key, customer or licence ID").fill("brn 79yn 44xq w025 377z");
+  expect((await put).request().postData()).not.toContain("79yn");
+  await admin.reload();
+  await expect(admin.getByLabel("Hide key, customer or licence ID")).toHaveValue("");
+  await expect(admin.getByLabel("State")).toHaveValue("not:revoked");
+});
+
+test("a remembered product filter is dropped once that product is deleted", async ({ admin, api }) => {
+  const product = await createProduct(api);
+  const saved = () => admin.waitForResponse((response) => response.url().endsWith("/api/admin/preferences") && response.request().method() === "PUT");
+  await admin.goto("/licences");
+  let put = saved();
+  await admin.getByRole("combobox", { name: /^Product/ }).selectOption({ label: product.name });
+  await put;
+  await api.call("DELETE", `/products/${product.id}`);
+
+  put = saved();
+  await admin.reload();
+  await expect(admin.getByRole("combobox", { name: /^Product/ })).toHaveValue("");
+  expect((await put).request().postData()).not.toContain(product.id);
 });

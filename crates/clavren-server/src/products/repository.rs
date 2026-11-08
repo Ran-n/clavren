@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.059583
-//+ Revised: 	2026/11/03 04:54:16.059583
+//+ Revised: 	2026/11/07 19:37:00.056784
 // -----------------------------------------------------------------------------
 
 //! Database access for products.
@@ -9,7 +9,7 @@
 use sqlx::{PgConnection, PgExecutor};
 use uuid::Uuid;
 
-use super::Product;
+use super::{Product, Usage};
 use crate::http::pagination::Cursor;
 
 /// The unique constraint on `products.code`.
@@ -73,11 +73,20 @@ pub async fn delete(executor: impl PgExecutor<'_>, id: Uuid) -> Result<(), sqlx:
     Ok(())
 }
 
-pub async fn has_licences(executor: impl PgExecutor<'_>, id: Uuid) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM licenses WHERE product_id = $1)")
-        .bind(id)
-        .fetch_one(executor)
-        .await
+pub async fn code_exists(executor: impl PgExecutor<'_>, code: &str) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM products WHERE code = $1)").bind(code).fetch_one(executor).await
+}
+
+/// How many licences the product has, and how many of them are in use on a computer.
+pub async fn usage(executor: impl PgExecutor<'_>, id: Uuid) -> Result<Usage, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT count(*) AS licences, count(*) FILTER (WHERE s.state = 'redeemed') AS in_use
+         FROM licenses l JOIN license_states s ON s.license_id = l.id
+         WHERE l.product_id = $1",
+    )
+    .bind(id)
+    .fetch_one(executor)
+    .await
 }
 
 /// Products by name, after `cursor`, optionally only active or inactive ones.

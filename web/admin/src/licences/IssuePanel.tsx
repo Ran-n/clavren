@@ -11,16 +11,10 @@ import { plural } from "../shared/errors";
 import { fromDateInput } from "../shared/format";
 import type { Customer, Licence, Product } from "../shared/types";
 import { CustomerPicker, type CustomerChoice } from "./CustomerPicker";
-import { MAX_BATCH, csvName } from "./licenceApi";
+import { MAX_BATCH, csvName, customerBody } from "./licenceApi";
 
 type Issued = { licences: (Licence & { key: string })[]; customer: Customer | null; message: string | null };
 type Props = { products: Product[]; onClose: () => void; onIssued: () => void };
-
-function customerBody(choice: CustomerChoice): string | { name: string; email?: string } | undefined {
-  if (choice.kind === "existing") return choice.customer.id;
-  if (choice.kind === "new" && choice.name.trim()) return { name: choice.name.trim(), email: choice.email.trim() || undefined };
-  return undefined;
-}
 
 function IssuedKeys({ issued, onMore, onClose }: { issued: Issued; onMore: () => void; onClose: () => void }) {
   const [error, setError] = useState<unknown>(null);

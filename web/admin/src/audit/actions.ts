@@ -22,6 +22,7 @@ const ACTIONS: Record<string, string> = {
   "licence.updated": "Licence changed",
   "licence.revoked": "Licence revoked",
   "licence.reset": "Licence reset",
+  "licence.deleted": "Licence deleted",
   "licence.key_revealed": "Key revealed",
   "licence.message_copied": "Message copied",
   "licence.exported": "Exported to CSV",

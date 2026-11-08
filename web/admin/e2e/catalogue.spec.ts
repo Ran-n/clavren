@@ -1,8 +1,10 @@
-// Customers and products: created in a new first row, edited in place, deleted or deactivated
-// after an inline confirmation. Checked through the API.
+// Customers and products: created in a new first row (a product's code made from its name when
+// left empty), edited in place, deleted or deactivated
+// after an inline confirmation (a product with licences only after typing its code). Checked
+// through the API.
 
-import { createProduct, unique } from "./data";
-import { expect, test } from "./fixtures";
+import { createProduct, issue, unique } from "./data";
+import { Device, expect, test } from "./fixtures";
 
 test("customers are created, edited and deleted in the table", async ({ admin, api }) => {
   const name = unique("Dora");
@@ -41,6 +43,17 @@ test("products are created, their message edited, and deactivated after a warnin
   await admin.getByRole("button", { name: "Save" }).click();
   await expect(admin.getByRole("row").filter({ hasText: name })).toHaveCount(1);
 
+  // Without a code, one is made from the name: lowercase, accents dropped.
+  const automatic = unique("Gamma Ñ");
+  await admin.getByRole("button", { name: "New product" }).click();
+  await expect(admin.getByLabel("New product's code")).toHaveAttribute("placeholder", "Automatic");
+  const save = admin.getByRole("button", { name: "Save" });
+  await expect(save).toBeDisabled();
+  await admin.getByLabel("New product's name").fill(automatic);
+  await save.click();
+  const made = automatic.toLowerCase().replace("ñ", "n").replace(/[^a-z0-9]+/g, "-");
+  await expect(admin.getByRole("row").filter({ hasText: automatic }).getByRole("button", { name: "Edit code" })).toHaveText(made);
+
   const row = admin.getByRole("row").filter({ hasText: existing.name });
   await row.getByRole("button", { name: "Edit message template" }).click();
   const template = row.getByLabel("message template");
@@ -57,4 +70,51 @@ test("products are created, their message edited, and deactivated after a warnin
   const saved = await api.get<{ is_active: boolean; message_template: string }>(`/products/${existing.id}`);
   expect(saved.is_active).toBe(false);
   expect(saved.message_template).toBe("Dear {customer_name},\nyour key: {key}");
+});
+
+test("a product without licences is deleted after a plain confirmation", async ({ admin, api }) => {
+  const product = await createProduct(api);
+  await admin.goto("/products");
+  const row = admin.getByRole("row").filter({ hasText: product.name });
+  await row.getByRole("button", { name: "Delete" }).click();
+  const strip = admin.getByRole("group", { name: "Delete" });
+  await expect(strip).toContainText(`Delete ${product.name}?`);
+  await expect(strip.getByRole("textbox")).toHaveCount(0);
+  await strip.getByRole("button", { name: "Delete" }).click();
+  await expect(row).toHaveCount(0);
+});
+
+test("a product with licences is deleted with them once its code is typed", async ({ admin, api, request }) => {
+  const product = await createProduct(api);
+  const issued = (await issue(api, product.id, { quantity: 3 })).licences;
+  await new Device("PRODUCT-DELETE-PC").activate(request, product.code, issued[0]!.key, "203.0.113.43");
+  await admin.goto("/products");
+  const row = admin.getByRole("row").filter({ hasText: product.name });
+  await row.getByRole("button", { name: "Delete" }).click();
+  const strip = admin.getByRole("group", { name: "Delete" });
+  await expect(strip).toContainText(`Delete ${product.name} and its 3 licences? 1 is in use: that computer locks at its next check.`);
+  await strip.press("Escape");
+  await expect(strip).toBeHidden();
+
+  await row.getByRole("button", { name: "Delete" }).click();
+  const confirm = strip.getByRole("button", { name: "Delete" });
+  await expect(confirm).toBeDisabled();
+  expect(Number(await confirm.evaluate((button) => getComputedStyle(button).opacity))).toBeLessThan(0.6);
+  const word = strip.getByLabel(`Type ${product.code} to confirm`);
+  await word.fill(product.code.toUpperCase());
+  await expect(confirm, "exactly the code").toBeDisabled();
+  await word.fill(product.code);
+  await confirm.click();
+  await expect(row).toHaveCount(0);
+
+  for (const one of issued) {
+    const gone = await api.get(`/licences/${one.id}`).then(
+      () => false,
+      () => true,
+    );
+    expect(gone).toBe(true);
+  }
+  await admin.goto(`/licences?product=${product.id}`);
+  await expect(admin.getByText("No licence matches.")).toHaveCount(0); // the filter for a product that is gone is dropped
+  await expect(admin.getByRole("row").filter({ hasText: product.name })).toHaveCount(0);
 });

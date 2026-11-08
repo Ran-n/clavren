@@ -1,40 +1,101 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.624141
-//+ Revised: 	2026/11/03 04:54:15.624141
+//+ Revised: 	2026/11/07 19:36:59.803436
 // -----------------------------------------------------------------------------
 
 //! Database access for licences and their encrypted keys.
 
+use std::sync::LazyLock;
+
 use chrono::{DateTime, Utc};
-use sqlx::{FromRow, PgConnection, PgExecutor};
+use sqlx::postgres::PgArguments;
+use sqlx::query::QueryAs;
+use sqlx::{FromRow, PgConnection, PgExecutor, Postgres};
 use uuid::Uuid;
 
 use super::LicenceRow;
-use super::filter::{Filter, Order};
+use super::filter::{Criteria, Filter, Order};
 use crate::http::pagination::Cursor;
 
-/// Every [`LicenceRow`] column, with the filters every list and export applies ($1 to $8).
-macro_rules! select_licences {
-    ($rest:literal) => {
-        concat!(
-            "SELECT l.id, l.product_id, l.customer_id, s.state, s.active_activation_id, l.created_at, l.expires_at,
-                    l.revoked_at, l.revocation_reason, l.internal_notes
-             FROM licenses l
-             JOIN license_states s ON s.license_id = l.id
-             LEFT JOIN customers c ON c.id = l.customer_id
-             WHERE ($1::uuid IS NULL OR l.product_id = $1)
-               AND ($2::uuid IS NULL OR l.customer_id = $2)
-               AND ($3::text IS NULL OR s.state = $3)
-               AND ($4::text IS NULL
-                    OR ($4 = 'permanent' AND l.expires_at IS NULL)
-                    OR ($4 = 'expiring' AND l.expires_at > $5 AND l.expires_at <= $5 + interval '30 days')
-                    OR ($4 = 'expired' AND l.expires_at <= $5))
-               AND (($6::bytea IS NULL AND $7::uuid IS NULL AND $8::text IS NULL)
-                    OR l.key_lookup = $6 OR l.id = $7 OR c.name ILIKE $8 OR c.email ILIKE $8) ",
-            $rest
-        )
-    };
+/// Every [`LicenceRow`] column.
+const SELECT_LICENCES: &str =
+    "SELECT l.id, l.product_id, l.customer_id, s.state, s.active_activation_id, l.created_at, l.expires_at,
+            l.revoked_at, l.revocation_reason, l.internal_notes
+     FROM licenses l
+     JOIN license_states s ON s.license_id = l.id
+     LEFT JOIN customers c ON c.id = l.customer_id";
+
+/// The parameter holding `now` in a [`page`] query, after the two sets of criteria ($1 to $14).
+const NOW: usize = 15;
+
+/// What each [`Criteria`] field matches, from its first parameter `$n` on: the condition, and the
+/// parameters that leave it unset when all are `NULL`.
+fn matches(n: usize) -> [(String, Vec<usize>); 5] {
+    let (product, customer, state, expiry, key, id, pattern) = (n, n + 1, n + 2, n + 3, n + 4, n + 5, n + 6);
+    [
+        (format!("l.product_id = ${product}::uuid"), vec![product]),
+        (format!("l.customer_id = ${customer}::uuid"), vec![customer]),
+        (format!("s.state = ${state}::text"), vec![state]),
+        (
+            format!(
+                "(${expiry}::text = 'permanent' AND l.expires_at IS NULL)
+                 OR (${expiry} = 'expiring' AND l.expires_at > ${NOW}::timestamptz
+                     AND l.expires_at <= ${NOW} + interval '30 days')
+                 OR (${expiry} = 'expired' AND l.expires_at <= ${NOW})"
+            ),
+            vec![expiry],
+        ),
+        (
+            format!(
+                "l.key_lookup = ${key}::bytea OR l.id = ${id}::uuid
+                 OR c.name ILIKE ${pattern}::text OR c.email ILIKE ${pattern}"
+            ),
+            vec![key, id, pattern],
+        ),
+    ]
+}
+
+/// The `WHERE` condition of a [`Filter`]: every `only` criterion ($1 to $7) holds, and no `except`
+/// one ($8 to $14) does. An exclusion is `NOT COALESCE(…, false)` so a licence the criterion can't
+/// say anything about (no customer, no expiry) isn't hidden by it.
+fn filter_condition() -> String {
+    let only = matches(1).map(|(condition, params)| {
+        let unset = params.iter().map(|n| format!("${n} IS NULL")).collect::<Vec<_>>().join(" AND ");
+        format!("(({unset}) OR {condition})")
+    });
+    let except = matches(8).map(|(condition, _)| format!("NOT COALESCE({condition}, false)"));
+    only.into_iter().chain(except).collect::<Vec<_>>().join("\n AND ")
+}
+
+/// A [`page`] query in each order; the cursor is $16 (key) and $17 (ID), the count $18.
+static NEWEST: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "{SELECT_LICENCES} WHERE {} AND ($17::uuid IS NULL OR l.id < $17) ORDER BY l.id DESC LIMIT $18",
+        filter_condition()
+    )
+});
+static SOONEST_EXPIRY: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "{SELECT_LICENCES} WHERE {}
+           AND ($17::uuid IS NULL OR (COALESCE(l.expires_at, 'infinity'), l.id) > ($16::timestamptz, $17))
+         ORDER BY COALESCE(l.expires_at, 'infinity'), l.id LIMIT $18",
+        filter_condition()
+    )
+});
+
+fn bind_criteria<'q, O>(
+    query: QueryAs<'q, Postgres, O, PgArguments>,
+    criteria: &'q Criteria,
+) -> QueryAs<'q, Postgres, O, PgArguments> {
+    query
+        .bind(criteria.product)
+        .bind(criteria.customer)
+        .bind(criteria.state)
+        .bind(criteria.expiry)
+        .bind(criteria.key_hash.as_deref())
+        .bind(criteria.licence_id)
+        .bind(criteria.pattern.as_deref())
 }
 
 /// The licences matching `filter`, in `order`, after `cursor`.
@@ -45,24 +106,12 @@ pub async fn page(
     cursor: Option<&Cursor>,
     count: i64,
 ) -> Result<Vec<LicenceRow>, sqlx::Error> {
-    let query = match order {
-        Order::Newest => {
-            sqlx::query_as(select_licences!("AND ($10::uuid IS NULL OR l.id < $10) ORDER BY l.id DESC LIMIT $11"))
-        }
-        Order::Expiry => sqlx::query_as(select_licences!(
-            "AND ($10::uuid IS NULL OR (COALESCE(l.expires_at, 'infinity'), l.id) > ($9::timestamptz, $10))
-             ORDER BY COALESCE(l.expires_at, 'infinity'), l.id LIMIT $11"
-        )),
+    let sql = match order {
+        Order::Newest => NEWEST.as_str(),
+        Order::Expiry => SOONEST_EXPIRY.as_str(),
     };
-    query
-        .bind(filter.product)
-        .bind(filter.customer)
-        .bind(filter.state)
-        .bind(filter.expiry)
+    bind_criteria(bind_criteria(sqlx::query_as(sql), &filter.only), &filter.except)
         .bind(filter.now)
-        .bind(filter.key_hash.as_deref())
-        .bind(filter.licence_id)
-        .bind(filter.pattern.as_deref())
         .bind(cursor.and_then(|cursor| cursor.key.clone()))
         .bind(cursor.map(|cursor| cursor.id))
         .bind(count)
@@ -90,18 +139,35 @@ pub fn cursor_fits(order: Order, cursor: &Cursor) -> bool {
     }
 }
 
+static FIND_MANY: LazyLock<String> =
+    LazyLock::new(|| format!("{SELECT_LICENCES} WHERE l.id = ANY($1) ORDER BY l.id DESC"));
+
 pub async fn find_many(executor: impl PgExecutor<'_>, ids: &[Uuid]) -> Result<Vec<LicenceRow>, sqlx::Error> {
-    sqlx::query_as(select_licences!("AND l.id = ANY($9) ORDER BY l.id DESC"))
-        .bind(None::<Uuid>)
-        .bind(None::<Uuid>)
-        .bind(None::<String>)
-        .bind(None::<String>)
-        .bind(None::<DateTime<Utc>>)
-        .bind(None::<Vec<u8>>)
-        .bind(None::<Uuid>)
-        .bind(None::<String>)
+    sqlx::query_as(FIND_MANY.as_str()).bind(ids).fetch_all(executor).await
+}
+
+/// The state of each licence in `ids` that exists, as `(id, state)`.
+pub async fn states(executor: impl PgExecutor<'_>, ids: &[Uuid]) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+    sqlx::query_as("SELECT license_id, state FROM license_states WHERE license_id = ANY($1) ORDER BY license_id")
         .bind(ids)
         .fetch_all(executor)
+        .await
+}
+
+/// Deletes the licences in `ids` with their activations (their challenges and encrypted keys go
+/// with them, by cascade). `activations.license_id` is `ON DELETE RESTRICT`, so this is the one
+/// place a licence's history is removed.
+pub async fn delete(connection: &mut PgConnection, ids: &[Uuid]) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM activations WHERE license_id = ANY($1)").bind(ids).execute(&mut *connection).await?;
+    sqlx::query("DELETE FROM licenses WHERE id = ANY($1)").bind(ids).execute(connection).await?;
+    Ok(())
+}
+
+/// Every licence of the product, locked until the transaction ends.
+pub async fn ids_of_product(connection: &mut PgConnection, product_id: Uuid) -> Result<Vec<Uuid>, sqlx::Error> {
+    sqlx::query_scalar("SELECT id FROM licenses WHERE product_id = $1 ORDER BY id FOR UPDATE")
+        .bind(product_id)
+        .fetch_all(connection)
         .await
 }
 
@@ -186,23 +252,33 @@ pub async fn stored_keys(executor: impl PgExecutor<'_>, ids: &[Uuid]) -> Result<
     .await
 }
 
-/// Sets the expiry and/or notes of every licence in `ids`; `None` leaves a field as it is.
-pub async fn update(
-    executor: impl PgExecutor<'_>,
-    ids: &[Uuid],
-    expires_at: Option<Option<DateTime<Utc>>>,
-    internal_notes: Option<Option<&str>>,
-) -> Result<(), sqlx::Error> {
+/// What [`update`] changes: per field, `None` leaves it as it is and `Some(None)` clears it.
+#[derive(Debug, Default)]
+pub struct Changes {
+    pub customer_id: Option<Option<Uuid>>,
+    pub expires_at: Option<Option<DateTime<Utc>>>,
+    pub internal_notes: Option<Option<String>>,
+    pub revocation_reason: Option<Option<String>>,
+}
+
+/// Applies `changes` to every licence in `ids`.
+pub async fn update(executor: impl PgExecutor<'_>, ids: &[Uuid], changes: &Changes) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "UPDATE licenses SET expires_at = CASE WHEN $2 THEN $3 ELSE expires_at END,
-                             internal_notes = CASE WHEN $4 THEN $5 ELSE internal_notes END
+        "UPDATE licenses SET customer_id = CASE WHEN $2 THEN $3 ELSE customer_id END,
+                             expires_at = CASE WHEN $4 THEN $5 ELSE expires_at END,
+                             internal_notes = CASE WHEN $6 THEN $7 ELSE internal_notes END,
+                             revocation_reason = CASE WHEN $8 THEN $9 ELSE revocation_reason END
          WHERE id = ANY($1)",
     )
     .bind(ids)
-    .bind(expires_at.is_some())
-    .bind(expires_at.flatten())
-    .bind(internal_notes.is_some())
-    .bind(internal_notes.flatten())
+    .bind(changes.customer_id.is_some())
+    .bind(changes.customer_id.flatten())
+    .bind(changes.expires_at.is_some())
+    .bind(changes.expires_at.flatten())
+    .bind(changes.internal_notes.is_some())
+    .bind(changes.internal_notes.as_ref().and_then(Option::as_deref))
+    .bind(changes.revocation_reason.is_some())
+    .bind(changes.revocation_reason.as_ref().and_then(Option::as_deref))
     .execute(executor)
     .await?;
     Ok(())

@@ -1,5 +1,6 @@
 // A reviewed baseline screenshot of every page, light and dark, at desktop and phone width, from
-// a fixed data set on a server whose clock stands still. Also: nothing makes the page scroll
+// a fixed data set on a server whose clock stands still, plus the states that open in place (the
+// customer list, the customer editor, the delete warnings). Also: nothing makes the page scroll
 // sideways, and disabled actions are dimmed. Keys stay hidden; IDs are masked.
 
 import type { Page } from "@playwright/test";
@@ -34,13 +35,19 @@ async function seed(api: AdminApi, request: import("@playwright/test").APIReques
   return { activeLicence: active.id, revokedLicence: revoked.id };
 }
 
-async function capture(page: Page, name: string, path: string, masks: (page: Page) => import("@playwright/test").Locator[] = () => []) {
+type Locators = (page: Page) => import("@playwright/test").Locator[];
+const masked: (selector: string) => Locators = (selector) => (page) => [page.locator(selector)];
+const LICENCE_ID = masked("code.licence-id");
+
+/** `path` at every size and scheme; `prepare` opens a state on the page before the capture. */
+async function capture(page: Page, name: string, path: string, masks: Locators = () => [], prepare?: (page: Page) => Promise<void>) {
   for (const [size, viewport] of Object.entries(SIZES)) {
     for (const scheme of SCHEMES) {
       await page.setViewportSize(viewport);
       await page.emulateMedia({ colorScheme: scheme });
       await page.goto(path);
       await expect(page.locator("[aria-busy='true'], .loading")).toHaveCount(0);
+      if (prepare) await prepare(page);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(overflow, `${name} scrolls sideways at ${size} width`).toBeLessThanOrEqual(0);
       await expect(page).toHaveScreenshot(`${name}-${size}-${scheme}.png`, { fullPage: true, mask: masks(page) });
@@ -57,19 +64,39 @@ test.describe("every page, light and dark, desktop and phone", () => {
   test("sign-in", async ({ page }) => capture(page, "sign-in", "/"));
   test("overview", async ({ admin }) => capture(admin, "overview", "/"));
   test("licences", async ({ admin }) => capture(admin, "licences", "/licences"));
-  test("licence in use", async ({ admin }) =>
-    capture(admin, "licence-in-use", `/licences/${seeded.activeLicence}`, (page) => [page.locator("code.licence-id")]));
+  test("licence in use", async ({ admin }) => capture(admin, "licence-in-use", `/licences/${seeded.activeLicence}`, LICENCE_ID));
   test("revoked licence, actions dimmed", async ({ admin }) => {
-    await capture(admin, "licence-revoked", `/licences/${seeded.revokedLicence}`, (page) => [page.locator("code.licence-id")]);
+    await capture(admin, "licence-revoked", `/licences/${seeded.revokedLicence}`, LICENCE_ID);
     for (const name of ["Reset", "Revoke"]) {
       const button = admin.getByRole("button", { name });
       await expect(button).toBeDisabled();
       expect(Number(await button.evaluate((element) => getComputedStyle(element).opacity))).toBeLessThan(0.6);
     }
   });
+  test("issuing, with the list of every customer open", async ({ admin }) =>
+    capture(admin, "issue-customers", "/licences", undefined, async (page) => {
+      await page.getByRole("button", { name: "Issue licences" }).click();
+      await page.getByRole("combobox", { name: "Customer (optional)" }).focus();
+      await expect(page.getByRole("option", { name: /Carla Gómez/ })).toBeVisible();
+    }));
+  test("a licence's customer being changed", async ({ admin }) =>
+    capture(admin, "licence-customer-editor", `/licences/${seeded.activeLicence}`, LICENCE_ID, async (page) => {
+      await page.getByRole("button", { name: "Change" }).click();
+      await expect(page.getByRole("group", { name: "Customer" })).toBeVisible();
+    }));
+  test("deleting a licence in use", async ({ admin }) =>
+    capture(admin, "licence-delete", `/licences/${seeded.activeLicence}`, LICENCE_ID, async (page) => {
+      await page.getByRole("button", { name: "Delete" }).click();
+      await expect(page.getByRole("group", { name: "Delete" })).toContainText("locks at its next check");
+    }));
+  test("deleting a product with licences", async ({ admin }) =>
+    capture(admin, "product-delete", "/products", undefined, async (page) => {
+      await page.getByRole("row").filter({ hasText: "Avalio Lite" }).getByRole("button", { name: "Delete" }).click();
+      await expect(page.getByRole("group", { name: "Delete" })).toContainText("Type avalio-lite to confirm");
+    }));
   test("customers", async ({ admin }) => capture(admin, "customers", "/customers"));
   test("products", async ({ admin }) => capture(admin, "products", "/products"));
   test("activations", async ({ admin }) => capture(admin, "activations", "/activations"));
-  test("audit log", async ({ admin }) => capture(admin, "audit", "/audit", (page) => [page.locator('td[data-label="Record"]')]));
+  test("audit log", async ({ admin }) => capture(admin, "audit", "/audit", masked('td[data-label="Record"]')));
   test("account", async ({ admin }) => capture(admin, "account", "/account"));
 });
