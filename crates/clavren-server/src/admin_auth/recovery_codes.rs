@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:35.256555
-//+ Revised: 	2026/11/03 04:54:18.363502
+//+ Revised: 	2026/11/08 14:55:44.297764
 // -----------------------------------------------------------------------------
 
 //! One-time recovery codes, for an admin who lost the phone with their authenticator app. Each is
@@ -36,9 +36,24 @@ pub fn hash(canonical: &str) -> [u8; 32] {
     *blake3::hash(canonical.as_bytes()).as_bytes()
 }
 
+/// The hashes to store for codes just shown, one per code; `None` if any of them doesn't read
+/// back as a code, so the admin is never shown a code that wasn't saved.
+pub fn hash_all(codes: &[String]) -> Option<Vec<[u8; 32]>> {
+    codes.iter().map(|code| normalize(code).map(|canonical| hash(&canonical))).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_new_code_is_hashed_or_none_is() {
+        let codes = generate().unwrap();
+        let hashes = hash_all(&codes).unwrap();
+        assert_eq!(hashes.len(), codes.len());
+        assert_eq!(hashes[0], hash(&normalize(&codes[0]).unwrap()));
+        assert_eq!(hash_all(&[codes[0].clone(), "not a code".into()]), None);
+    }
 
     #[test]
     fn ten_distinct_grouped_codes() {

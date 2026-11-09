@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 13:04:40.772096
-//+ Revised: 	2026/11/03 13:14:24.271710
+//+ Revised: 	2026/11/08 14:55:48.675139
 // -----------------------------------------------------------------------------
 
 //! Building the dashboard (`web/admin`) before the server embeds it, only when it is out of date.
@@ -23,8 +23,15 @@ pub fn build_if_stale(admin: &Path) -> Result<(), String> {
         tracing::info!(target: "xtask::dashboard", "installing the dashboard's dependencies");
         npm(admin, "ci")?;
     }
-    let built = modified(&admin.join("dist/index.html"))?;
-    if built.is_none_or(|built| newest_source(admin).is_ok_and(|newest| newest > built)) {
+    let stale = match modified(&admin.join("dist/index.html"))? {
+        None => true,
+        Some(built) => {
+            let newest = newest_source(admin)
+                .map_err(|error| format!("could not look through the dashboard sources: {error}"))?;
+            newest > built
+        }
+    };
+    if stale {
         tracing::info!(target: "xtask::dashboard", "building the dashboard");
         npm(admin, "run build")?;
     } else {

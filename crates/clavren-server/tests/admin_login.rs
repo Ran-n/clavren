@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:36.698814
-//+ Revised: 	2026/11/03 04:54:23.298769
+//+ Revised: 	2026/11/08 14:55:45.318034
 // -----------------------------------------------------------------------------
 
 //! `POST /api/admin/session`: signing in with password and second factor, the single answer for
@@ -189,6 +189,63 @@ async fn too_many_failures_for_one_username_are_refused_from_any_address(pool: P
 
     let addresses: Vec<Option<String>> = audit_rows(fixture.pool()).await.into_iter().map(|(_, ip, _)| ip).collect();
     assert_eq!(addresses[0].as_deref(), Some("203.0.113.1"), "the tunnel's client address is recorded");
+}
+
+/// Regression: the limit was checked before the password and counted after it, so guesses sent
+/// in parallel all passed the check (and each ran Argon2) before any of them was counted.
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn guesses_sent_in_parallel_never_pass_the_limit(pool: PgPool) {
+    let fixture = Fixture::new(pool).await;
+    let guesses: Vec<_> = (0..20)
+        .map(|_| {
+            let app = fixture.app.clone();
+            tokio::spawn(async move { login(&app, "ran", "wrong password", "123456").await.status })
+        })
+        .collect();
+    let mut answers = Vec::new();
+    for guess in guesses {
+        answers.push(guess.await.unwrap());
+    }
+    let wrong = answers.iter().filter(|&&status| status == StatusCode::UNAUTHORIZED).count();
+    let refused = answers.iter().filter(|&&status| status == StatusCode::TOO_MANY_REQUESTS).count();
+    assert_eq!((wrong, refused), (5, 15), "{answers:?}");
+}
+
+/// Regression: the limit was counted per spelling (`ran`, `ran `, ` ran`), while the lookup
+/// trimmed it, so every spelling got five more guesses at the same account.
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn every_spelling_of_a_username_shares_one_limit(pool: PgPool) {
+    let fixture = Fixture::new(pool).await;
+    let tunnel = test_app(fixture.state.clone(), "127.0.0.1:40000".parse().unwrap());
+    let login_from = |address: String, username: &'static str, password: &'static str, code: String| {
+        let tunnel = tunnel.clone();
+        async move {
+            Call::new(Method::POST, "/api/admin/session")
+                .json(json!({ "username": username, "password": password, "code": code }))
+                .forwarded_for(&address)
+                .send(&tunnel)
+                .await
+        }
+    };
+    for (index, username) in ["ran", "ran ", " ran", "RAN  ", "\tran"].into_iter().enumerate() {
+        let reply = login_from(format!("203.0.113.{}", index + 1), username, "wrong password", "123456".into()).await;
+        assert_eq!(reply.status, StatusCode::UNAUTHORIZED);
+    }
+    let reply = login_from("203.0.113.99".into(), "ran   ", PASSWORD, fixture.code()).await;
+    assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn a_success_from_an_address_leaves_it_nothing_counted(pool: PgPool) {
+    let fixture = Fixture::new(pool).await;
+    for _ in 0..4 {
+        login(&fixture.app, "ran", "wrong password", "123456").await;
+    }
+    assert_eq!(login(&fixture.app, "ran", PASSWORD, &fixture.code()).await.status, StatusCode::OK);
+    fixture.clock.advance(Duration::from_secs(30));
+    assert_eq!(login(&fixture.app, "nobody", "wrong password", "123456").await.status, StatusCode::UNAUTHORIZED);
+    let reply = login(&fixture.app, "nobody", "wrong password", "123456").await;
+    assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS, "four failures and this one: the sign-in wasn't counted");
 }
 
 #[sqlx::test(migrator = "clavren::database::MIGRATOR")]

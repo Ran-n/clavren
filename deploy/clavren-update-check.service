@@ -1,0 +1,20 @@
+# Checks whether a newer Clavren release is out; the dashboard shows what it finds. Started by
+# clavren-update-check.timer and clavren-update-check.path; run it by hand with
+# `sudo systemctl start clavren-update-check`.
+[Unit]
+Description=Clavren update check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=clavren
+Group=clavren
+EnvironmentFile=/etc/clavren/clavren.env
+ExecStart=/usr/local/lib/clavren/clavren-update-check.sh
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/clavren

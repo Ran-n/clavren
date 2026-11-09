@@ -39,9 +39,11 @@ export function BulkBar({ selection, filters, onDone }: Props) {
     if (count !== 0) setDone(null); // a new selection replaces the last result
   }, [count]);
   if (count === 0 && !done) return null;
-  const what = count === null ? "every licence that matches the filter" : plural(count, "selected licence");
+  const except = selection.excluded.size > 0 ? `, except ${plural(selection.excluded.size, "unticked licence")}` : "";
+  const what = count === null ? `every licence that matches the filter${except}` : plural(count, "selected licence");
 
-  const ids = () => (selection.allMatching ? matchingIds(filters) : Promise.resolve([...selection.ids]));
+  const ids = async () =>
+    selection.allMatching ? (await matchingIds(filters)).filter((id) => !selection.excluded.has(id)) : [...selection.ids];
   async function finish(message: string) {
     setMode("idle");
     setDone(message);
@@ -74,8 +76,12 @@ export function BulkBar({ selection, filters, onDone }: Props) {
   }
   function exportCsv() {
     setError(null);
-    const body = selection.allMatching ? { filter: filterBody(filters) } : { ids: [...selection.ids] };
-    download("/licences/export", body, csvName()).catch(setError);
+    // the server applies a filter by itself; rows unticked from it are left out by listing the rest
+    const body = async () =>
+      selection.allMatching && selection.excluded.size === 0 ? { filter: filterBody(filters) } : { ids: await ids() };
+    body()
+      .then((chosen) => download("/licences/export", chosen, csvName()))
+      .catch(setError);
   }
 
   // The result sits where the bar was, the same size, so ticking the next row doesn't move the table.
@@ -88,7 +94,7 @@ export function BulkBar({ selection, filters, onDone }: Props) {
   }
   return (
     <div className="bulk-bar" role="region" aria-label="Selected licences">
-      <span className="bulk-bar__count">{count === null ? "All matching licences" : plural(count, "licence")} selected</span>
+      <span className="bulk-bar__count">{count === null ? `All matching licences selected${except}` : `${plural(count, "licence")} selected`}</span>
       {mode === "idle" && (
         <span className="button-row">
           <Button size="small" onClick={() => setMode("customer")}>Set customer</Button>

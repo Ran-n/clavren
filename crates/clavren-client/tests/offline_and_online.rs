@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.065377
-//+ Revised: 	2026/11/03 04:54:12.065377
+//+ Revised: 	2026/11/08 15:20:39.092718
 // -----------------------------------------------------------------------------
 
 //! The client against an in-memory server: activation, offline starts, the daily check, clock
@@ -11,7 +11,7 @@
 
 mod fake_server;
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
@@ -33,6 +33,25 @@ impl Computer {
     fn new() -> Self {
         let clock = Arc::new(ManualClock::new(DateTime::from_timestamp(1_800_000_000, 0).unwrap()));
         Self { server: FakeServer::new(clock.clone()), clock, store: Arc::new(MemoryStore::default()) }
+    }
+
+    /// A computer whose clock is `behind` the server's (which keeps its own clock).
+    fn with_clock_behind(behind: TimeDelta) -> Self {
+        let server_clock = Arc::new(ManualClock::new(DateTime::from_timestamp(1_800_000_000, 0).unwrap()));
+        let clock = Arc::new(ManualClock::new(server_clock.now() - behind));
+        Self { server: FakeServer::new(server_clock), clock, store: Arc::new(MemoryStore::default()) }
+    }
+
+    /// Moves the computer's clock and the server's together: time passing.
+    fn pass(&self, by: TimeDelta) {
+        self.advance(by);
+        if !Arc::ptr_eq(&self.clock, &self.server.clock) {
+            self.server.clock.set(self.server.clock.now() + by);
+        }
+    }
+
+    fn client_on(&self, store: Box<dyn SecretStore>, config: Config) -> Client {
+        Client::new(config, store, Box::new(self.server.clone()), Box::new(self.clock.clone()))
     }
 
     /// The application starting: a new client on the same saved state.
@@ -120,6 +139,153 @@ fn setting_the_clock_back_needs_an_online_check() {
     assert_eq!(client.status(), Outcome::NeedsCheck);
     assert!(client.needs_check());
     assert!(client.check().unwrap().is_licensed(), "the server's time puts things right");
+}
+
+/// Regression: after a check, the system clock became the baseline and tokens were judged by it,
+/// so a clock set back two years before one check made the 30-day token last two years offline.
+#[test]
+fn setting_the_clock_back_before_a_check_gains_nothing() {
+    let computer = Computer::with_clock_behind(TimeDelta::zero());
+    let client = computer.activated();
+    computer.advance(TimeDelta::days(-730));
+    assert_eq!(client.status(), Outcome::NeedsCheck);
+    assert!(client.check().unwrap().is_licensed(), "the check succeeds on the server's time");
+
+    computer.server.set_mode(Mode::Offline);
+    computer.pass(TimeDelta::days(29));
+    assert!(computer.start().status().is_licensed());
+    computer.pass(TimeDelta::days(1));
+    assert_eq!(computer.start().status(), Outcome::NeedsCheck, "30 days by the server's clock, not 2 years");
+}
+
+#[test]
+fn a_computer_whose_clock_is_simply_wrong_works_normally() {
+    for behind in [TimeDelta::days(400), TimeDelta::days(-400)] {
+        let computer = Computer::with_clock_behind(behind);
+        let client = computer.activated();
+        assert!(client.status().is_licensed(), "{behind}");
+        computer.server.set_mode(Mode::Offline);
+        computer.pass(TimeDelta::days(29));
+        assert!(computer.start().status().is_licensed(), "{behind}: works offline");
+        computer.pass(TimeDelta::days(1));
+        assert_eq!(computer.start().status(), Outcome::NeedsCheck, "{behind}: for 30 days");
+    }
+}
+
+/// Regression: a 200 answer without the fields Clavren sends (a proxy's page) wiped the saved
+/// licence.
+#[test]
+fn an_answer_that_isnt_from_clavren_changes_nothing() {
+    let computer = Computer::new();
+    computer.server.set_mode(Mode::Garbage);
+    assert_eq!(computer.start().activate(KEY).unwrap(), Outcome::Unreachable);
+    assert_eq!(computer.start().status(), Outcome::NeedsActivation);
+
+    computer.server.set_mode(Mode::Normal);
+    let client = computer.activated();
+    computer.advance(TimeDelta::days(1));
+    computer.server.set_mode(Mode::Garbage);
+    assert!(matches!(client.check(), Err(Temporary::Server(_))));
+    assert!(computer.start().status().is_licensed(), "the saved token is kept");
+    assert!(client.needs_check(), "and the check is still due");
+}
+
+/// Regression: a token the client can't verify was stored anyway, which left the background
+/// checker asking again at once, in a loop.
+#[test]
+fn a_token_the_client_cannot_verify_is_never_stored() {
+    let computer = Computer::new();
+    let client = computer.activated();
+    let saved = computer.store.load().unwrap().unwrap();
+    computer.advance(TimeDelta::days(1));
+    computer.server.set_mode(Mode::UntrustedToken);
+    assert!(matches!(client.check(), Err(Temporary::Server(message)) if message.contains("can't be used")));
+    assert_eq!(computer.store.load().unwrap().unwrap(), saved);
+    assert!(client.status().is_licensed());
+
+    let fresh = Computer::new();
+    fresh.server.set_mode(Mode::UntrustedToken);
+    assert_eq!(fresh.start().activate(KEY).unwrap(), Outcome::NeedsCheck, "activated, but not runnable yet");
+    fresh.server.set_mode(Mode::Normal);
+    assert!(fresh.start().check().unwrap().is_licensed());
+}
+
+#[test]
+fn the_background_checker_backs_off_when_a_check_leaves_nothing_to_run_on() {
+    let computer = Computer::new();
+    computer.server.set_mode(Mode::UntrustedToken);
+    let client = Arc::new(computer.start());
+    assert_eq!(client.activate(KEY).unwrap(), Outcome::NeedsCheck);
+    let before = computer.server.calls.load(Ordering::SeqCst);
+    let checks = Background::spawn(client, |_| {}).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    checks.stop();
+    let calls = computer.server.calls.load(Ordering::SeqCst) - before;
+    assert!(calls <= 2, "one check (two requests), then backoff; got {calls} requests");
+}
+
+/// Regression: every `status()` call saved the state (DPAPI and a file write on the UI thread).
+/// Now `status()` never touches the disk; the time seen is saved apart, once it moved on.
+#[test]
+fn status_never_saves_and_the_time_seen_is_saved_once_it_moved_on() {
+    struct Counting(MemoryStore, AtomicUsize);
+    impl SecretStore for Counting {
+        fn load(&self) -> Result<Option<Vec<u8>>, StoreError> {
+            self.0.load()
+        }
+        fn save(&self, plain: &[u8]) -> Result<(), StoreError> {
+            self.1.fetch_add(1, Ordering::SeqCst);
+            self.0.save(plain)
+        }
+    }
+    let computer = Computer::new();
+    let store = Arc::new(Counting(MemoryStore::default(), AtomicUsize::new(0)));
+    let client = computer.client_on(Box::new(store.clone()), Config::new(PRODUCT, FakeServer::trusted_keys(), "2.0.0"));
+    assert!(client.activate(KEY).unwrap().is_licensed());
+    let after_activation = store.1.load(Ordering::SeqCst);
+    for _ in 0..100 {
+        computer.advance(TimeDelta::seconds(1));
+        assert!(client.status().is_licensed());
+    }
+    computer.advance(TimeDelta::hours(5));
+    client.status();
+    assert_eq!(store.1.load(Ordering::SeqCst), after_activation, "status() saves nothing");
+
+    client.save_time_seen().unwrap();
+    assert_eq!(store.1.load(Ordering::SeqCst), after_activation + 1);
+    computer.advance(TimeDelta::minutes(9));
+    client.status();
+    client.save_time_seen().unwrap();
+    assert_eq!(store.1.load(Ordering::SeqCst), after_activation + 1, "under ten minutes more: nothing to save");
+
+    // the saved time catches a clock set back between runs
+    computer.advance(TimeDelta::hours(-3));
+    let restarted =
+        computer.client_on(Box::new(store.clone()), Config::new(PRODUCT, FakeServer::trusted_keys(), "2.0.0"));
+    assert_eq!(restarted.status(), Outcome::NeedsCheck);
+}
+
+#[test]
+fn the_background_checker_saves_the_time_seen_when_it_stops() {
+    let computer = Computer::new();
+    let client = Arc::new(computer.activated());
+    computer.advance(TimeDelta::hours(3));
+    assert!(client.status().is_licensed());
+    Background::spawn(client.clone(), |_| {}).unwrap().stop();
+    computer.advance(TimeDelta::hours(-2));
+    assert_eq!(computer.start().status(), Outcome::NeedsCheck, "the 3 hours seen were saved");
+}
+
+/// Regression: an interval past what the calendar can add panicked instead of meaning "never".
+#[test]
+fn a_check_interval_too_long_for_the_calendar_means_not_again() {
+    let computer = Computer::new();
+    computer.activated();
+    let mut config = Config::new(PRODUCT, FakeServer::trusted_keys(), "2.0.0");
+    config.check_interval = Duration::MAX;
+    let client = computer.client_on(Box::new(computer.store.clone()), config);
+    assert_eq!(client.time_until_due(), Duration::MAX);
+    assert!(!client.needs_check());
 }
 
 #[test]
@@ -249,6 +415,30 @@ fn unreadable_state_starts_over() {
     assert_eq!(computer.start().status(), Outcome::NeedsActivation);
 }
 
+/// Regression: a saved licence that couldn't be read at start (another program had the file open)
+/// counted as none, and the next activation saved over it.
+#[test]
+fn a_saved_licence_that_cannot_be_read_is_never_overwritten() {
+    struct Locked(AtomicBool);
+    impl SecretStore for Locked {
+        fn load(&self) -> Result<Option<Vec<u8>>, StoreError> {
+            let source = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "in use");
+            Err(StoreError::Io { path: "licence.dat".into(), source })
+        }
+        fn save(&self, _: &[u8]) -> Result<(), StoreError> {
+            self.0.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    let computer = Computer::new();
+    let store = Arc::new(Locked(AtomicBool::new(false)));
+    let client = computer.client_on(Box::new(store.clone()), Config::new(PRODUCT, FakeServer::trusted_keys(), "2.0.0"));
+    assert_eq!(client.status(), Outcome::NeedsActivation);
+    assert!(matches!(client.activate(KEY), Err(StoreError::Unreadable(_))));
+    assert!(!store.0.load(Ordering::SeqCst), "nothing was saved over it");
+    assert_eq!(computer.server.calls.load(Ordering::SeqCst), 0, "and nothing was sent");
+}
+
 #[test]
 fn the_background_checker_reports_a_change_and_stops_promptly() {
     let computer = Computer::new();
@@ -279,4 +469,32 @@ fn the_background_checker_says_nothing_while_nothing_changes() {
     }
     drop(checks);
     assert!(told.try_recv().is_err(), "still licensed: nothing to report");
+}
+
+#[test]
+fn a_token_for_another_activation_is_not_trusted() {
+    let computer = Computer::new();
+    computer.activated();
+    let mut saved: serde_json::Value = serde_json::from_slice(&computer.store.load().unwrap().unwrap()).unwrap();
+    saved["activation"] = serde_json::json!(uuid::Uuid::from_u128(99));
+    computer.store.save(&serde_json::to_vec(&saved).unwrap()).unwrap();
+    assert_eq!(computer.start().status(), Outcome::NeedsCheck);
+}
+
+#[test]
+fn a_panicking_callback_doesnt_end_the_checks() {
+    let computer = Computer::new();
+    let client = Arc::new(computer.activated());
+    computer.advance(TimeDelta::days(1));
+    computer.server.set_mode(Mode::Refuse("licence_revoked", 403));
+    let (tell, told) = mpsc::channel();
+    let checks = Background::spawn(client.clone(), move |outcome| {
+        tell.send(outcome).unwrap();
+        panic!("the application's callback failed");
+    })
+    .unwrap();
+    assert_eq!(told.recv_timeout(Duration::from_secs(10)).unwrap(), Outcome::Revoked);
+    computer.advance(TimeDelta::hours(3));
+    assert_eq!(client.status(), Outcome::Revoked);
+    checks.stop(); // the thread is still there to stop, and joins without a panic
 }

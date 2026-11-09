@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.718170
-//+ Revised: 	2026/11/03 04:54:11.718170
+//+ Revised: 	2026/11/08 15:20:39.164986
 // -----------------------------------------------------------------------------
 
 //! Where the client's state lives between runs: a file whose contents are protected by the
@@ -9,6 +9,7 @@
 //! another Windows account or another computer. Other systems plug in their own [`Protector`]
 //! (macOS Keychain, Linux secret storage) later.
 
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -46,10 +47,17 @@ pub enum StoreError {
     Unprotect(std::io::Error),
     #[error("the licence data is damaged")]
     Corrupt,
+    /// The saved state existed but couldn't be read when the application started (e.g. another
+    /// program had the file open); saving now would overwrite a licence that may still be good.
+    #[error(
+        "the saved licence couldn't be read at start ({0}); close other programs using it and restart the application, \
+         or check that this Windows account may read the file"
+    )]
+    Unreadable(String),
 }
 
-/// A file, protected with `protector`. Writes go to a temporary file first, then replace the old
-/// one, so a crash never leaves half a file.
+/// A file, protected with `protector`. Writes go to a temporary file first, flushed to the disk,
+/// then replace the old one, so neither a crash nor a power cut leaves half a file.
 pub struct FileStore {
     path: PathBuf,
     protector: Box<dyn Protector>,
@@ -80,7 +88,9 @@ impl SecretStore for FileStore {
             std::fs::create_dir_all(parent).map_err(|error| self.io(error))?;
         }
         let temporary = self.path.with_extension("tmp");
-        std::fs::write(&temporary, protected).map_err(|error| self.io(error))?;
+        let mut file = std::fs::File::create(&temporary).map_err(|error| self.io(error))?;
+        file.write_all(&protected).and_then(|()| file.sync_all()).map_err(|error| self.io(error))?;
+        drop(file);
         std::fs::rename(&temporary, &self.path).map_err(|error| self.io(error))
     }
 }
@@ -127,6 +137,16 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"etats");
         assert_eq!(store.load().unwrap().unwrap(), b"state");
         assert!(!path.with_extension("tmp").exists());
+    }
+
+    #[test]
+    fn a_file_that_cant_be_read_is_an_error_naming_it_not_nothing() {
+        let directory = tempfile::tempdir().unwrap();
+        // a folder where the file should be: it exists, but can't be read as one
+        let store = FileStore::new(directory.path().to_path_buf(), Box::new(Reverse));
+        let error = store.load().unwrap_err();
+        assert!(matches!(error, StoreError::Io { .. }), "{error}");
+        assert!(error.to_string().contains(&directory.path().display().to_string()), "{error}");
     }
 
     #[test]

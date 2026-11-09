@@ -1,0 +1,26 @@
+# Formatting, lints, tests and the dashboard's type check on every push; the steps are in
+# scripts/ci.sh, shared with GitLab and Codeberg.
+name: checks
+on:
+  push:
+  pull_request:
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          # the user the tests expect (.cargo/config.toml), a superuser so sqlx::test can create databases
+          POSTGRES_USER: clavren_local
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U clavren_local" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://clavren_local@127.0.0.1:55432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/ci-setup.sh
+      - run: bash scripts/ci.sh

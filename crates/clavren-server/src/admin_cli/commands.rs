@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:35.553798
-//+ Revised: 	2026/11/03 04:54:18.708486
+//+ Revised: 	2026/11/08 14:55:44.434834
 // -----------------------------------------------------------------------------
 
 //! The `clavren-admin` commands.
@@ -142,12 +142,7 @@ async fn existing(context: &CliContext, username: &str) -> Result<AdminRecord, C
 
 fn credentials(context: &CliContext, admin_id: Uuid, enrolment: &Enrolment) -> Result<Credentials, CliError> {
     let sealed = totp::seal(&context.keys, admin_id, &enrolment.totp_secret)?;
-    let recovery_code_hashes = enrolment
-        .recovery_codes
-        .iter()
-        .filter_map(|code| recovery_codes::normalize(code))
-        .map(|code| recovery_codes::hash(&code))
-        .collect();
+    let recovery_code_hashes = recovery_codes::hash_all(&enrolment.recovery_codes).ok_or(CliError::RecoveryCodes)?;
     Ok(Credentials {
         password_hash: enrolment.password_hash.clone(),
         totp_secret_ciphertext: sealed.ciphertext,

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 13:04:41.080840
-//+ Revised: 	2026/11/03 13:14:24.613092
+//+ Revised: 	2026/11/08 14:55:48.752747
 // -----------------------------------------------------------------------------
 
 //! The local, disposable database cluster of `scripts/local-db.ps1`.
@@ -37,8 +37,10 @@ impl LocalDatabase {
             return Ok(Self { started_by: None });
         }
         tracing::info!(target: "xtask::database", "starting the local database");
+        // from here on the guard owns the cluster: a start that fails half-way is stopped too
+        let database = Self { started_by: Some(root.to_path_buf()) };
         process::run(local_db(root, &[]), "scripts/local-db.ps1")?;
-        Ok(Self { started_by: Some(root.to_path_buf()) })
+        Ok(database)
     }
 }
 
@@ -54,7 +56,8 @@ impl Drop for LocalDatabase {
 
 /// Whether a database URL is the local cluster's.
 pub fn uses_local_cluster(url: &str) -> bool {
-    url.split_once('@').is_some_and(|(_, rest)| rest.starts_with(&format!("{LOCAL_CLUSTER}/")))
+    // the last `@`: a password may contain one
+    url.rsplit_once('@').is_some_and(|(_, rest)| rest.starts_with(&format!("{LOCAL_CLUSTER}/")))
 }
 
 fn is_listening() -> bool {
@@ -78,6 +81,7 @@ mod tests {
     #[test]
     fn the_development_url_is_the_local_cluster() {
         assert!(uses_local_cluster("postgres://clavren_local@127.0.0.1:55432/clavren_dev"));
+        assert!(uses_local_cluster("postgres://clavren_local:p@ss@127.0.0.1:55432/clavren_dev"));
     }
 
     #[test]
@@ -86,5 +90,6 @@ mod tests {
         assert!(!uses_local_cluster("postgres://clavren_local@127.0.0.1:5543/clavren_dev"));
         assert!(!uses_local_cluster("postgres://clavren_local@127.0.0.1:554320/clavren_dev"));
         assert!(!uses_local_cluster(""));
+        assert!(!uses_local_cluster("postgres://u:x@127.0.0.1:55432/@db.example.com:5432/clavren"));
     }
 }

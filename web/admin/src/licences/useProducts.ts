@@ -2,7 +2,7 @@
 // list is complete, so a filter naming a product that is gone can be told apart from one still
 // loading.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { get } from "../shared/api";
 import type { Page, Product } from "../shared/types";
 
@@ -27,4 +27,29 @@ export function useProducts(): { products: Product[]; loaded: boolean; error: un
     };
   }, []);
   return { products: products ?? [], loaded: products !== null, error };
+}
+
+/**
+ * A remembered filter naming a product that has been deleted would hide everything: once the
+ * products are in (and whenever they change), `drop` gets the names among `names` whose value in
+ * `filters` is no product's ID, set to "".
+ */
+export function useDropDeletedProducts(
+  filters: Record<string, string> | undefined,
+  names: readonly string[],
+  { products, loaded }: { products: Product[]; loaded: boolean },
+  drop: (changes: Record<string, string>) => void,
+): void {
+  // the latest values, read when the products change: the check runs only then
+  const latest = useRef({ filters, names, drop });
+  latest.current = { filters, names, drop };
+  useEffect(() => {
+    if (!loaded) return;
+    const { filters: current, names: checked, drop: dropping } = latest.current;
+    const gone = checked.filter((name) => {
+      const id = current?.[name];
+      return id && !products.some((product) => product.id === id);
+    });
+    if (gone.length > 0) dropping(Object.fromEntries(gone.map((name) => [name, ""])));
+  }, [loaded, products]);
 }

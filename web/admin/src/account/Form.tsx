@@ -4,6 +4,7 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Button } from "../shared/components/Button";
 import { ErrorNotice, Notice } from "../shared/components/Notice";
+import type { Wording } from "../shared/errors";
 
 type Props = {
   title: string;
@@ -13,9 +14,11 @@ type Props = {
   onSubmit: () => Promise<string | null>;
   children: ReactNode;
   disabledReason?: string | null;
+  /** This form's own words for some errors. */
+  wording?: Wording;
 };
 
-export function AccountForm({ title, description, submitLabel, onSubmit, children, disabledReason }: Props) {
+export function AccountForm({ title, description, submitLabel, onSubmit, children, disabledReason, wording }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -39,7 +42,7 @@ export function AccountForm({ title, description, submitLabel, onSubmit, childre
       <h2>{title}</h2>
       <p className="muted">{description}</p>
       {children}
-      <ErrorNotice error={error} />
+      <ErrorNotice error={error} wording={wording} />
       {done && <Notice tone="success">{done}</Notice>}
       <div className="button-row">
         <Button type="submit" busy={busy} disabledReason={disabledReason}>

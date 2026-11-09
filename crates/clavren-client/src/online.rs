@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.244813
-//+ Revised: 	2026/11/03 04:54:11.244813
+//+ Revised: 	2026/11/08 14:55:43.525110
 // -----------------------------------------------------------------------------
 
 //! Going online: activating a key, and the check that renews the token. The state lock is never
@@ -19,15 +19,19 @@ use ed25519_dalek::Signer;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::client::{Client, refusal_outcome, signing_key};
+use zeroize::Zeroize;
+
+use crate::client::{Client, refusal_outcome, server_now, signing_key};
 use crate::outcome::{Outcome, Temporary};
-use crate::state::Refusal;
+use crate::state::{Refusal, State};
 use crate::store::StoreError;
 use crate::transport::Answer;
 
 impl Client {
-    /// Activates `typed_key` on this computer. `Err` only when the device key couldn't be saved
-    /// (activating then would bind the key to a device this computer can't prove it is).
+    /// Activates `typed_key` on this computer. `Err` when the device key couldn't be saved (then
+    /// nothing was sent: the key would be bound to a device this computer can't prove it is), or
+    /// when the activation couldn't be saved after the server accepted it; retrying then is safe,
+    /// because the device key was saved first and the server knows it as the same computer.
     pub fn activate(&self, typed_key: &str) -> Result<Outcome, StoreError> {
         let Some(key) = LicenceKey::parse(typed_key) else { return Ok(Outcome::InvalidKey) };
         let public_key = self.device_public_key()?;
@@ -46,14 +50,29 @@ impl Client {
                 return Ok(Outcome::Unreachable);
             }
         };
-        self.note_server_time(&answer);
         if matches!(answer.status, 200 | 201) {
+            let activation = text(&answer.body, "activation").and_then(|id| Uuid::parse_str(&id).ok());
+            let (Some(activation), Some(token)) = (activation, text(&answer.body, "token")) else {
+                // e.g. a proxy's page with status 200: nothing the client can keep
+                log::error!("activation got HTTP {} without an activation and a token", answer.status);
+                return Ok(Outcome::Unreachable);
+            };
+            let now = self.clock.now();
             let mut state = self.lock();
-            state.activation = text(&answer.body, "activation").and_then(|id| Uuid::parse_str(&id).ok());
-            state.token = text(&answer.body, "token");
-            state.refusal = None;
-            accept_clock(&mut state, self.clock.now());
-            self.save(&state)?;
+            let mut activated = state.clone();
+            activated.activation = Some(activation);
+            activated.refusal = None;
+            accept_clock(&mut activated, now, server_time(&answer));
+            activated.token = match self.usable_claims(&activated, &token, server_now(&activated, now)) {
+                Ok(_) => Some(token),
+                Err(problem) => {
+                    // kept as activated: the next check asks again, with backoff
+                    log::error!("the activation's token can't be used: {problem}");
+                    None
+                }
+            };
+            self.save(&activated)?;
+            *state = activated;
             drop(state);
             log::info!("licence activated");
             return Ok(self.status());
@@ -85,7 +104,7 @@ impl Client {
         };
         let challenge = self.post(&format!("/api/v1/activations/{activation}/challenges"), &json!({}))?;
         if challenge.status != 200 {
-            return self.refused(&challenge);
+            return self.refused(activation, &challenge);
         }
         let (Some(challenge_id), Some(nonce_text)) =
             (text(&challenge.body, "challenge"), text(&challenge.body, "nonce"))
@@ -106,26 +125,36 @@ impl Client {
         });
         let answer = self.post(&format!("/api/v1/activations/{activation}/checks"), &body)?;
         if answer.status != 200 {
-            return self.refused(&answer);
+            return self.refused(activation, &answer);
         }
+        let Some(token) = text(&answer.body, "token") else {
+            return Err(Temporary::Server(format!("HTTP {} without a token", answer.status)));
+        };
+        let now = self.clock.now();
         let mut state = self.lock();
-        state.token = text(&answer.body, "token");
-        state.refusal = None;
-        accept_clock(&mut state, self.clock.now());
-        self.save(&state)?;
+        if state.activation != Some(activation) {
+            return Err(Temporary::Server("the activation changed during the check".into()));
+        }
+        let mut renewed = state.clone();
+        renewed.refusal = None;
+        accept_clock(&mut renewed, now, server_time(&answer));
+        if let Err(problem) = self.usable_claims(&renewed, &token, server_now(&renewed, now)) {
+            return Err(Temporary::Server(format!("the renewed token can't be used: {problem}")));
+        }
+        renewed.token = Some(token);
+        self.save(&renewed)?;
+        *state = renewed;
         drop(state);
         log::info!("licence checked");
         Ok(self.status())
     }
 
     fn post(&self, path: &str, body: &Value) -> Result<Answer, Temporary> {
-        let answer = self.transport.post(path, body).map_err(Temporary::Unreachable)?;
-        self.note_server_time(&answer);
-        Ok(answer)
+        self.transport.post(path, body).map_err(Temporary::Unreachable)
     }
 
     /// Keeps a definitive refusal; reports anything else as temporary.
-    fn refused(&self, answer: &Answer) -> Result<Outcome, Temporary> {
+    fn refused(&self, activation: Uuid, answer: &Answer) -> Result<Outcome, Temporary> {
         let refusal = match error_code(answer) {
             Some(ErrorCode::LicenceRevoked | ErrorCode::ActivationRevoked) => Refusal::Revoked,
             Some(ErrorCode::LicenceExpired) => Refusal::Expired { at: self.licence_expiry() },
@@ -134,6 +163,10 @@ impl Client {
             other => return Err(Temporary::Server(format!("HTTP {} ({other:?})", answer.status))),
         };
         let mut state = self.lock();
+        if state.activation != Some(activation) {
+            // a new activation happened meanwhile; this answer is about the old one
+            return Err(Temporary::Server("the activation changed during the check".into()));
+        }
         state.token = None;
         state.refusal = Some(refusal);
         state.last_check = Some(self.clock.now());
@@ -156,6 +189,7 @@ impl Client {
         getrandom::fill(&mut seed).map_err(|error| StoreError::Protect(std::io::Error::other(error.to_string())))?;
         let key = ed25519_dalek::SigningKey::from_bytes(&seed);
         state.device_key = Some(encoding::encode(&seed));
+        seed.zeroize();
         self.save(&state)?;
         Ok(key.verifying_key().to_bytes())
     }
@@ -166,21 +200,22 @@ impl Client {
         let claims = token::unverified_claims(state.token.as_deref()?)?;
         DateTime::from_timestamp(claims.lic_exp?, 0)
     }
+}
 
-    fn note_server_time(&self, answer: &Answer) {
-        if let Some(server_time) =
-            text(&answer.body, "server_time").and_then(|at| DateTime::parse_from_rfc3339(&at).ok())
-        {
-            self.lock().saw(server_time.to_utc());
-        }
+/// After the server vouched for the licence, the system clock as it is now is the baseline again,
+/// and its distance from the server's clock is measured anew: a computer whose clock is simply
+/// wrong works normally, and a clock set back before a check gains nothing, because tokens are
+/// judged by the server's time.
+fn accept_clock(state: &mut State, now: DateTime<Utc>, server_time: Option<DateTime<Utc>>) {
+    state.last_check = Some(now);
+    state.latest_seen = Some(now);
+    if let Some(server_time) = server_time {
+        state.clock_offset_seconds = (server_time - now).num_seconds();
     }
 }
 
-/// After the server vouched for the licence, the clock as it is now is the baseline again: a
-/// computer whose clock is simply wrong isn't locked out forever, only asked to check in.
-fn accept_clock(state: &mut crate::state::State, now: DateTime<Utc>) {
-    state.last_check = Some(now);
-    state.latest_seen = Some(now);
+fn server_time(answer: &Answer) -> Option<DateTime<Utc>> {
+    text(&answer.body, "server_time").and_then(|at| DateTime::parse_from_rfc3339(&at).ok()).map(|at| at.to_utc())
 }
 
 fn text(body: &Value, field: &str) -> Option<String> {

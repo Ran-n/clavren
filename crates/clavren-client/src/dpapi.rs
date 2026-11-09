@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:10.834248
-//+ Revised: 	2026/11/03 04:54:10.834248
+//+ Revised: 	2026/11/08 14:55:43.459467
 // -----------------------------------------------------------------------------
 
 //! Windows DPAPI in CurrentUser scope: data protected here can only be read back by the same
@@ -32,13 +32,19 @@ fn blob(bytes: &[u8]) -> CRYPT_INTEGER_BLOB {
     CRYPT_INTEGER_BLOB { cbData: bytes.len() as u32, pbData: bytes.as_ptr().cast_mut() }
 }
 
-/// Copies the output blob DPAPI allocated, then frees it.
+/// Copies the output blob DPAPI allocated, wipes it (it may hold the plain device key), then
+/// frees it.
 #[allow(unsafe_code)]
 fn take(output: CRYPT_INTEGER_BLOB) -> Vec<u8> {
-    // SAFETY: on success DPAPI sets `pbData` to a LocalAlloc'd buffer of `cbData` bytes, which is
-    // read once here and freed exactly once.
+    if output.pbData.is_null() {
+        return Vec::new();
+    }
+    let length = output.cbData as usize;
+    // SAFETY: on success DPAPI sets `pbData` (checked non-null above) to a LocalAlloc'd buffer of
+    // `cbData` bytes, which is read once, overwritten in place and freed exactly once here.
     unsafe {
-        let bytes = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
+        let bytes = std::slice::from_raw_parts(output.pbData, length).to_vec();
+        zeroize::Zeroize::zeroize(std::slice::from_raw_parts_mut(output.pbData, length));
         LocalFree(output.pbData.cast());
         bytes
     }

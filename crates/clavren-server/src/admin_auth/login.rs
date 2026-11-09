@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:35.077667
-//+ Revised: 	2026/11/03 04:54:18.121232
+//+ Revised: 	2026/11/08 14:55:44.159696
 // -----------------------------------------------------------------------------
 
 //! Admin login: password and second factor in one request, rate limited per client address and
@@ -20,6 +20,7 @@ use super::repository::{self, AdminRecord};
 use super::sessions::{self, NewSession};
 use crate::audit::{self, AuditEntry};
 use crate::http::AppState;
+use crate::http::client_ip::limit_key;
 use crate::http::error::ApiError;
 
 const MAX_USERNAME_LENGTH: usize = 64;
@@ -49,21 +50,32 @@ enum Failure {
 pub async fn login(state: &AppState, request: LoginRequest, ip: IpAddr) -> Result<SignedInAdmin, ApiError> {
     validate(&request)?;
     let now = state.clock.now();
-    let limit_keys = [format!("ip:{ip}"), format!("user:{}", request.username.to_lowercase())];
-    for key in &limit_keys {
-        state.login_failures.check(key, now).map_err(|wait| {
-            tracing::warn!(%ip, "login refused: too many failed attempts");
-            ApiError::rate_limited(wait)
-        })?;
+    // one spelling of the username for the lookup and the limit: `alice ` is `alice`
+    let username = request.username.trim();
+    let limit_keys = [limit_key(ip), username_key(username)];
+    // counted before the password is checked, so parallel guesses can't all slip under the limit
+    state.login_failures.attempt(&limit_keys, now).map_err(|wait| {
+        tracing::warn!(%ip, "login refused: too many failed attempts");
+        ApiError::rate_limited(wait)
+    })?;
+    let outcome = authenticate(state, &request, username, now).await;
+    if !matches!(outcome, Ok(Err(_))) {
+        // signed in, or the server failed: neither is a wrong guess
+        state.login_failures.forgive(&limit_keys[0], now);
+        state.login_failures.forgive(&limit_keys[1], now);
     }
-    match authenticate(state, &request, now).await? {
+    match outcome? {
         Ok(admin) => succeed(state, admin, ip, now, &limit_keys[1]).await,
         Err(failure) => {
-            limit_keys.iter().for_each(|key| state.login_failures.record_failure(key, now));
             fail(state, failure, ip, now).await?;
             Err(ApiError::invalid_credentials())
         }
     }
+}
+
+/// The limit key for a username, shared by sign-in and account changes.
+pub fn username_key(username: &str) -> String {
+    format!("user:{}", username.trim().to_lowercase())
 }
 
 fn validate(request: &LoginRequest) -> Result<(), ApiError> {
@@ -79,9 +91,10 @@ fn validate(request: &LoginRequest) -> Result<(), ApiError> {
 async fn authenticate(
     state: &AppState,
     request: &LoginRequest,
+    username: &str,
     now: DateTime<Utc>,
 ) -> Result<Result<AdminRecord, Failure>, ApiError> {
-    let Some(admin) = repository::find_by_username(&state.pool, request.username.trim()).await? else {
+    let Some(admin) = repository::find_by_username(&state.pool, username).await? else {
         passwords::verify_against_nothing(request.password.clone()).await;
         return Ok(Err(Failure::UnknownUser));
     };

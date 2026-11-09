@@ -1,12 +1,13 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.617928
-//+ Revised: 	2026/11/03 04:54:11.617928
+//+ Revised: 	2026/11/08 14:55:43.591569
 // -----------------------------------------------------------------------------
 
 //! What the client keeps between runs: the device key, the activation, the cached token, the
-//! latest time it has seen (to notice a clock set back), when it last checked, and a definitive
-//! refusal it was given. All of it is stored protected (see [`crate::store`]).
+//! latest time the system clock showed (to notice a clock set back), how far the system clock was
+//! from the server's at the last answer, when it last checked, and a definitive refusal it was
+//! given. All of it is stored protected (see [`crate::store`]).
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -19,8 +20,13 @@ pub struct State {
     pub device_key: Option<String>,
     pub activation: Option<Uuid>,
     pub token: Option<String>,
-    /// The latest of the system clock, token issue times and server times seen.
+    /// The latest time the system clock showed (system-clock time, so a wrong clock still works).
     pub latest_seen: Option<DateTime<Utc>>,
+    /// Server time minus system-clock time at the last successful answer, in seconds. Tokens are
+    /// judged by the server's time (the system clock plus this), so a clock set back before a
+    /// check doesn't stretch the token past its 30 days.
+    #[serde(default)]
+    pub clock_offset_seconds: i64,
     pub last_check: Option<DateTime<Utc>>,
     /// A definitive answer from the server, kept until a new activation succeeds.
     pub refusal: Option<Refusal>,
@@ -49,6 +55,7 @@ impl std::fmt::Debug for State {
             .field("activation", &self.activation)
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
             .field("latest_seen", &self.latest_seen)
+            .field("clock_offset_seconds", &self.clock_offset_seconds)
             .field("last_check", &self.last_check)
             .field("refusal", &self.refusal)
             .finish()

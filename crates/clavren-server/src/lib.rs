@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 14:18:55.610808
-//+ Revised: 	2026/11/03 04:54:22.347682
+//+ Revised: 	2026/11/09 10:00:41.985411
 // -----------------------------------------------------------------------------
 
 //! The Clavren licensing service: licence generation and storage, atomic activation, device
@@ -28,3 +28,4 @@ pub mod maintenance;
 pub mod overview;
 pub mod products;
 pub mod startup;
+pub mod updates;

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.926414
-//+ Revised: 	2026/11/03 04:54:11.926414
+//+ Revised: 	2026/11/08 14:55:43.724241
 // -----------------------------------------------------------------------------
 
 //! A licence server in memory: answers the public API as Clavren does, with tokens signed by a
@@ -30,6 +30,10 @@ pub enum Mode {
     Refuse(&'static str, u16),
     /// No answer at all (no network).
     Offline,
+    /// Status 200 with a body that isn't Clavren's (a proxy's or captive portal's page).
+    Garbage,
+    /// Tokens signed with a key the client doesn't trust (a signing key it wasn't built with).
+    UntrustedToken,
 }
 
 pub struct FakeServer {
@@ -67,6 +71,7 @@ impl FakeServer {
         let now = self.clock.now();
         let licence_end = *self.licence_expires_at.lock().unwrap();
         let end = licence_end.map_or(now + chrono::Duration::days(30), |at| at.min(now + chrono::Duration::days(30)));
+        let untrusted = *self.mode.lock().unwrap() == Mode::UntrustedToken;
         let claims = Claims {
             iss: "https://licences.example.com".into(),
             aud: PRODUCT.into(),
@@ -80,7 +85,11 @@ impl FakeServer {
         };
         json!({
             "activation": Uuid::from_u128(2),
-            "token": token::sign(&claims, "v1", &self.signing),
+            "token": if untrusted {
+                token::sign(&claims, "v1", &SigningKey::from_bytes(&[7; 32]))
+            } else {
+                token::sign(&claims, "v1", &self.signing)
+            },
             "token_expires_at": end,
             "licence_expires_at": licence_end,
             "server_time": now,
@@ -101,7 +110,8 @@ impl Transport for FakeServer {
             Mode::Refuse(code, status) => {
                 return Ok(answer(status, json!({ "error": code, "message": "no", "server_time": now })));
             }
-            Mode::Normal => {}
+            Mode::Garbage => return Ok(answer(200, Value::Null)),
+            Mode::Normal | Mode::UntrustedToken => {}
         }
         if path == "/api/v1/activations" {
             assert_eq!(body["product"], PRODUCT);

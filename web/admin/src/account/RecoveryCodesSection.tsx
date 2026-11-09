@@ -24,6 +24,7 @@ export function RecoveryCodesSection() {
       description="Each one signs you in once instead of an authenticator code. Making new ones cancels every old one."
       submitLabel="Make new recovery codes"
       onSubmit={regenerate}
+      wording={{ invalid_credentials: "The password or the authenticator code is wrong." }}
     >
       {codes && (
         <div className="recovery-codes">

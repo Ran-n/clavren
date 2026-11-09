@@ -71,7 +71,7 @@ export function onlyOrExcept(name: string, any: string, options: Option[], excep
 
 export function Pager<T>({ list, pageSize, onPageSize }: { list: PagedList<T>; pageSize: number; onPageSize: (size: number) => void }) {
   return (
-    <nav className="pager" aria-label="Pages">
+    <nav className="pager" aria-label="Table pages">
       <Button size="small" onClick={list.goPrevious} disabledReason={list.hasPrevious ? null : "This is the first page"}>
         Previous
       </Button>

@@ -1,0 +1,15 @@
+# Formatting, lints, tests and the dashboard's type check on every push; the steps are in
+# scripts/ci.sh, shared with GitHub and Codeberg.
+checks:
+  image: rust:1.99-bookworm
+  services:
+    - name: postgres:17
+      alias: postgres
+  variables:
+    # the user the tests expect (.cargo/config.toml), a superuser so sqlx::test can create databases
+    POSTGRES_USER: clavren_local
+    POSTGRES_HOST_AUTH_METHOD: trust
+    DATABASE_URL: postgres://clavren_local@postgres:5432/postgres
+  script:
+    - bash scripts/ci-setup.sh
+    - bash scripts/ci.sh

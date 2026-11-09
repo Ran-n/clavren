@@ -1,0 +1,12 @@
+# The dashboard's Update button: the server writes updates/request.json (a file is its only way
+# to ask; it gains no privilege), and this starts the root updater, which checks the request
+# and decides everything else itself.
+[Unit]
+Description=Clavren update on request from the dashboard
+
+[Path]
+PathExists=/var/lib/clavren/updates/request.json
+Unit=clavren-update.service
+
+[Install]
+WantedBy=paths.target

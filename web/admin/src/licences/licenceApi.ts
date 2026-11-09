@@ -4,6 +4,7 @@
 
 import { api, get, query } from "../shared/api";
 import { ApiError } from "../shared/api";
+import { formatNumber } from "../shared/format";
 import type { Licence, Page } from "../shared/types";
 import type { CustomerChoice } from "./CustomerPicker";
 
@@ -58,7 +59,7 @@ export async function matchingIds(filters: LicenceFilters): Promise<string[]> {
     after = page.next_cursor;
   } while (after && ids.length <= MAX_BATCH);
   if (ids.length > MAX_BATCH) {
-    throw new ApiError("invalid_request", `more than ${MAX_BATCH.toLocaleString()} licences match: narrow the filter, or work in parts`, 400);
+    throw new ApiError("invalid_request", `more than ${formatNumber(MAX_BATCH)} licences match: narrow the filter, or work in parts`, 400);
   }
   return ids;
 }

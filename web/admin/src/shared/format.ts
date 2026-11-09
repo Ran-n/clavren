@@ -1,8 +1,16 @@
 // Dates and sizes as people read them. Times are shown in the browser's time zone; expiry dates
 // are whole days in UTC, as the server stores them.
 
-const dateTime = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" });
-const date = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeZone: "UTC" });
+/** The dashboard is in English only: every date and number is written the same way. */
+export const LOCALE = "en-GB";
+
+const dateTime = new Intl.DateTimeFormat(LOCALE, { dateStyle: "medium", timeStyle: "short" });
+const date = new Intl.DateTimeFormat(LOCALE, { dateStyle: "medium", timeZone: "UTC" });
+const number = new Intl.NumberFormat(LOCALE);
+
+export function formatNumber(value: number): string {
+  return number.format(value);
+}
 
 export function formatDateTime(value: string | null | undefined): string {
   return value ? dateTime.format(new Date(value)) : "—";

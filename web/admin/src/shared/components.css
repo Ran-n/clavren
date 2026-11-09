@@ -123,6 +123,15 @@
 .button-reason {
   display: inline-flex;
 }
+/* Read by screen readers, not shown. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 .button-row {
   display: inline-flex;
   flex-wrap: wrap;
@@ -201,6 +210,33 @@
 }
 .notice--info {
   background: var(--color-primary-soft);
+}
+/* The update notice: its text, then its links and button on the same line when they fit. */
+.update-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.9rem;
+}
+.update-notice__text {
+  flex: 1 1 20rem;
+  margin: 0;
+}
+.update-notice__actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+}
+.update-notice .confirm-strip {
+  flex-basis: 100%;
+  margin: 0.25rem 0 0;
+}
+.server-facts {
+  margin: 0 0 0.5rem;
+}
+.server-facts p {
+  margin: 0.2rem 0;
 }
 .inline-error {
   display: block;
@@ -431,6 +467,12 @@
   gap: 0.2rem;
   flex: 1 1 14rem;
   font-size: 0.9rem;
+}
+.confirm-strip__tick {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1 1 100%;
 }
 .confirm-strip__actions {
   display: inline-flex;

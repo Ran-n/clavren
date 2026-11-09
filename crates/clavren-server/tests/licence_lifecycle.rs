@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:17.167017
-//+ Revised: 	2026/11/07 19:37:00.470594
+//+ Revised: 	2026/11/08 14:55:45.390049
 // -----------------------------------------------------------------------------
 
 //! A licence after issuing: editing every field but the product (customer, expiry, notes, the
@@ -130,6 +130,36 @@ async fn expiry_and_notes_are_edited_in_place(pool: PgPool) {
         .await;
     assert_eq!((reply.status, reply.body.get("ids")), (StatusCode::NOT_FOUND, None));
     assert_eq!(licences.audited("licence.updated").await, 3);
+}
+
+/// Regression: an edit that changed nothing was still written and audited as `licence.updated`,
+/// though the API promises it leaves the record and the audit log alone.
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn an_edit_that_changes_nothing_leaves_no_trace(pool: PgPool) {
+    let licences = Licences::new(pool).await;
+    let ids: Vec<String> = licences.issue(2, Value::Null).await.into_iter().map(|(id, _)| id).collect();
+    assert_eq!(licences.patch(&ids[0], json!({ "internal_notes": "Kept" })).await.status, StatusCode::OK);
+    assert_eq!(licences.audited("licence.updated").await, 1);
+
+    let same = licences.patch(&ids[0], json!({ "internal_notes": "Kept", "expires_at": null })).await;
+    assert_eq!((same.status, same.body["internal_notes"].clone()), (StatusCode::OK, json!("Kept")));
+    assert_eq!(licences.audited("licence.updated").await, 1, "nothing changed, nothing audited");
+
+    let reply = licences.post("/bulk/edit", json!({ "ids": ids, "internal_notes": "Kept" })).await;
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(licences.audited("licence.updated").await, 2, "only the licence that changed");
+    let audited: Vec<String> = sqlx::query_scalar(
+        "SELECT entity_id::text FROM audit_logs WHERE action = 'licence.updated' ORDER BY created_at, entity_id",
+    )
+    .fetch_all(licences.admin.pool())
+    .await
+    .unwrap();
+    let mut expected = ids.clone();
+    expected.sort();
+    let mut audited = audited;
+    audited.sort();
+    assert_eq!(audited, expected, "one entry for each licence, once");
+    assert_eq!(licences.get(&ids[1]).await["internal_notes"], "Kept");
 }
 
 #[sqlx::test(migrator = "clavren::database::MIGRATOR")]

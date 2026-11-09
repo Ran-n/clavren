@@ -89,6 +89,7 @@ export function CustomersPage() {
         columns={columns(save, setDeleting)}
         rowKey={(customer) => customer.id}
         loading={list.loading}
+        error={list.error}
         firstRow={adding ? <NewCustomerRow onCreated={() => { setAdding(false); list.reload(); }} onCancel={() => setAdding(false)} /> : null}
         below={(customer) =>
           deleting === customer.id ? (

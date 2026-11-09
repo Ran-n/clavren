@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.624141
-//+ Revised: 	2026/11/07 19:36:59.803436
+//+ Revised: 	2026/11/08 14:55:45.177073
 // -----------------------------------------------------------------------------
 
 //! Database access for licences and their encrypted keys.
@@ -261,14 +261,41 @@ pub struct Changes {
     pub revocation_reason: Option<Option<String>>,
 }
 
-/// Applies `changes` to every licence in `ids`.
-pub async fn update(executor: impl PgExecutor<'_>, ids: &[Uuid], changes: &Changes) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE licenses SET customer_id = CASE WHEN $2 THEN $3 ELSE customer_id END,
-                             expires_at = CASE WHEN $4 THEN $5 ELSE expires_at END,
-                             internal_notes = CASE WHEN $6 THEN $7 ELSE internal_notes END,
-                             revocation_reason = CASE WHEN $8 THEN $9 ELSE revocation_reason END
-         WHERE id = ANY($1)",
+/// Which fields of one licence an update changed, in [`Changes`] order: customer, expiry, notes,
+/// revocation reason.
+pub type Changed = (Uuid, bool, bool, bool, bool);
+
+/// Applies `changes` to the licences in `ids` that it changes; the others stay untouched. Returns
+/// each changed licence with the fields that changed.
+pub async fn update(
+    executor: impl PgExecutor<'_>,
+    ids: &[Uuid],
+    changes: &Changes,
+) -> Result<Vec<Changed>, sqlx::Error> {
+    sqlx::query_as(
+        "WITH old AS (
+             SELECT id, customer_id, expires_at, internal_notes, revocation_reason FROM licenses WHERE id = ANY($1)
+         ), updated AS (
+             UPDATE licenses AS licence
+             SET customer_id = CASE WHEN $2 THEN $3 ELSE licence.customer_id END,
+                 expires_at = CASE WHEN $4 THEN $5 ELSE licence.expires_at END,
+                 internal_notes = CASE WHEN $6 THEN $7 ELSE licence.internal_notes END,
+                 revocation_reason = CASE WHEN $8 THEN $9 ELSE licence.revocation_reason END
+             FROM old
+             WHERE licence.id = old.id
+               AND (($2 AND old.customer_id IS DISTINCT FROM $3)
+                 OR ($4 AND old.expires_at IS DISTINCT FROM $5)
+                 OR ($6 AND old.internal_notes IS DISTINCT FROM $7)
+                 OR ($8 AND old.revocation_reason IS DISTINCT FROM $9))
+             RETURNING licence.id, licence.customer_id, licence.expires_at, licence.internal_notes,
+                       licence.revocation_reason
+         )
+         SELECT updated.id,
+                updated.customer_id IS DISTINCT FROM old.customer_id,
+                updated.expires_at IS DISTINCT FROM old.expires_at,
+                updated.internal_notes IS DISTINCT FROM old.internal_notes,
+                updated.revocation_reason IS DISTINCT FROM old.revocation_reason
+         FROM updated JOIN old USING (id)",
     )
     .bind(ids)
     .bind(changes.customer_id.is_some())
@@ -279,9 +306,8 @@ pub async fn update(executor: impl PgExecutor<'_>, ids: &[Uuid], changes: &Chang
     .bind(changes.internal_notes.as_ref().and_then(Option::as_deref))
     .bind(changes.revocation_reason.is_some())
     .bind(changes.revocation_reason.as_ref().and_then(Option::as_deref))
-    .execute(executor)
-    .await?;
-    Ok(())
+    .fetch_all(executor)
+    .await
 }
 
 /// Revokes every licence in `ids` and deletes their encrypted keys; their lookup hashes stay, so

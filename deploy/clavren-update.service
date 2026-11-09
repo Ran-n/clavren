@@ -1,0 +1,17 @@
+# Installs a newer Clavren release when the dashboard's Update button asks for it. Runs as root:
+# it replaces /usr/local/bin/clavren and the units, which the server must never be able to do.
+# Started by clavren-update.path; the request it reads is checked before anything uses it.
+[Unit]
+Description=Clavren update from the dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/clavren/clavren.env
+ExecStart=/usr/local/lib/clavren/clavren-update.sh
+TimeoutStartSec=15min
+# /var/lib/clavren-update holds status.json: root writes it, the server reads it.
+StateDirectory=clavren-update
+StateDirectoryMode=0755
+PrivateTmp=true

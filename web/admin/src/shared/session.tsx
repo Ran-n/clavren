@@ -1,15 +1,16 @@
 // Who is signed in. The session lives in an HttpOnly cookie; the dashboard only learns about it
-// from the API, and keeps the CSRF token in memory.
+// from the API, and keeps the CSRF token in memory. When another tab signs in as someone else, the
+// page follows the new session (see api.ts).
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { ApiError, api, get, onSessionEnded, setCsrfToken } from "./api";
-
-export type Session = { admin: { id: string; username: string }; csrf_token: string; expires_at: string };
+import { ApiError, api, get, onSessionEnded, onSessionReplaced, setSession } from "./api";
+import type { Session } from "./types";
 
 type SessionState =
   | { status: "loading" }
   | { status: "signed_out"; ended: boolean; error?: unknown }
-  | { status: "signed_in"; session: Session };
+  /** `switched`: the change that found another admin's session in the cookie, refused for it. */
+  | { status: "signed_in"; session: Session; switched?: ApiError };
 
 type SessionContext = {
   state: SessionState;
@@ -23,12 +24,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<SessionState>({ status: "loading" });
 
   const signedIn = useCallback((session: Session) => {
-    setCsrfToken(session.csrf_token);
+    setSession(session);
     setState({ status: "signed_in", session });
   }, []);
 
   useEffect(() => {
     onSessionEnded(() => setState({ status: "signed_out", ended: true }));
+    // another admin signed in in another tab: this page now shows their account
+    onSessionReplaced((session) =>
+      setState({ status: "signed_in", session, switched: new ApiError("session_changed", "", 403) }),
+    );
     get<Session>("/session").then(signedIn, (error: unknown) => {
       const signedOut = error instanceof ApiError && error.code === "unauthorized";
       setState({ status: "signed_out", ended: false, error: signedOut ? undefined : error });
@@ -36,8 +41,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [signedIn]);
 
   const signOut = useCallback(async () => {
-    await api("DELETE", "/session");
-    setCsrfToken("");
+    try {
+      await api("DELETE", "/session");
+    } catch (error: unknown) {
+      // a session that already ended is as signed out as it gets
+      if (!(error instanceof ApiError && error.code === "unauthorized")) throw error;
+    }
+    setSession(null);
     setState({ status: "signed_out", ended: false });
   }, []);
 

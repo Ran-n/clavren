@@ -1,0 +1,24 @@
+# Formatting, lints, tests and the dashboard's type check on every push, on Codeberg (Forgejo
+# Actions: enable Actions in the repository's settings first). The steps are in scripts/ci.sh,
+# shared with GitHub and GitLab.
+on:
+  push:
+  pull_request:
+jobs:
+  checks:
+    runs-on: codeberg-medium
+    container:
+      image: rust:1.99-bookworm
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          # the user the tests expect (.cargo/config.toml), a superuser so sqlx::test can create databases
+          POSTGRES_USER: clavren_local
+          POSTGRES_HOST_AUTH_METHOD: trust
+    env:
+      DATABASE_URL: postgres://clavren_local@postgres:5432/postgres
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - run: bash scripts/ci-setup.sh
+      - run: bash scripts/ci.sh

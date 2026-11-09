@@ -2,7 +2,7 @@
 # ------------------------------------------------------------------------------
 #+ Authors: 	Ran# <ran.hash@proton.me>
 #+ Created: 	2026/11/03 05:07:51.919967
-#+ Revised: 	2026/11/03 05:08:00.356768
+#+ Revised: 	2026/11/08 14:55:47.790924
 # ------------------------------------------------------------------------------
 
 # Restores a Clavren backup made by clavren-backup.sh onto this machine: checks the BLAKE3
@@ -43,7 +43,11 @@ fi
 tar -C "$work" -xf "$tar_file" clavren.dump master.key
 
 systemctl stop clavren
-pg_restore --clean --if-exists --no-owner --exit-on-error --single-transaction --dbname="$database_url" "$work/clavren.dump"
+# One transaction: a failed restore leaves the database as it was, so Clavren can start again on it.
+if ! pg_restore --clean --if-exists --no-owner --exit-on-error --single-transaction --dbname="$database_url" "$work/clavren.dump"; then
+    systemctl start clavren
+    fail "pg_restore failed (see above); nothing was changed and Clavren was started again"
+fi
 install -d -o clavren -g clavren -m 0700 "$data_dir"
 install -o clavren -g clavren -m 0600 "$work/master.key" "$data_dir/master.key"
 systemctl start clavren

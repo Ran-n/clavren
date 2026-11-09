@@ -105,8 +105,12 @@ export function useInfiniteList<T>(path: string | null, pageSize: number): Infin
 
 export type Selection = {
   ids: Set<string>;
-  /** Every row matching the filter, not only the ones ticked. */
+  /** Every row matching the filter, not only the ones ticked... */
   allMatching: boolean;
+  /** ...but these, unticked since. */
+  excluded: Set<string>;
+  /** Whether the row `id` is ticked. */
+  has: (id: string) => boolean;
   toggle: (id: string) => void;
   setPage: (ids: string[], selected: boolean) => void;
   selectAllMatching: () => void;
@@ -117,34 +121,44 @@ export type Selection = {
 export function useSelection(scope: string): Selection {
   const [ids, setIds] = useState<Set<string>>(new Set());
   const [allMatching, setAllMatching] = useState(false);
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [shownScope, setShownScope] = useState(scope);
   if (shownScope !== scope) {
     setShownScope(scope);
     setIds(new Set());
     setAllMatching(false);
+    setExcluded(new Set());
   }
-  const toggle = useCallback((id: string) => {
-    setAllMatching(false);
-    setIds((current) => {
-      const next = new Set(current);
-      if (!next.delete(id)) next.add(id);
-      return next;
-    });
+  const flip = (id: string) => (current: Set<string>) => {
+    const next = new Set(current);
+    if (!next.delete(id)) next.add(id);
+    return next;
+  };
+  // under "all matching", unticking a row excludes it, so every other matching row stays chosen
+  const toggle = useCallback((id: string) => (allMatching ? setExcluded(flip(id)) : setIds(flip(id))), [allMatching]);
+  const setPage = useCallback(
+    (page: string[], selected: boolean) => {
+      const apply = (add: boolean) => (current: Set<string>) => {
+        const next = new Set(current);
+        page.forEach((id) => (add ? next.add(id) : next.delete(id)));
+        return next;
+      };
+      if (allMatching) setExcluded(apply(!selected));
+      else setIds(apply(selected));
+    },
+    [allMatching],
+  );
+  const has = useCallback((id: string) => (allMatching ? !excluded.has(id) : ids.has(id)), [allMatching, excluded, ids]);
+  const selectAllMatching = useCallback(() => {
+    setAllMatching(true);
+    setExcluded(new Set());
   }, []);
-  const setPage = useCallback((page: string[], selected: boolean) => {
-    setAllMatching(false);
-    setIds((current) => {
-      const next = new Set(current);
-      page.forEach((id) => (selected ? next.add(id) : next.delete(id)));
-      return next;
-    });
-  }, []);
-  const selectAllMatching = useCallback(() => setAllMatching(true), []);
   const clear = useCallback(() => {
     setIds(new Set());
     setAllMatching(false);
+    setExcluded(new Set());
   }, []);
-  return { ids, allMatching, toggle, setPage, selectAllMatching, clear };
+  return { ids, allMatching, excluded, has, toggle, setPage, selectAllMatching, clear };
 }
 
 /** `value`, once it has stopped changing for `delayMs`. */

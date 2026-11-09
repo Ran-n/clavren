@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.005194
-//+ Revised: 	2026/11/07 19:36:59.297085
+//+ Revised: 	2026/11/09 10:00:42.534677
 // -----------------------------------------------------------------------------
 
 //! The client against the real server over HTTP, the way avalio-lite will use it: activate, check,
@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clavren::activations::tokens;
-use clavren::config::{AdminAuthSettings, Config, LicensingSettings, ProxySettings};
+use clavren::config::{AdminAuthSettings, Config, LicensingSettings, ProxySettings, UpdateSettings};
 use clavren::crypto::key_ring::KeyRing;
 use clavren::crypto::master_key::{self, MasterKeyFile};
 use clavren::licences::{repository, secrets};
@@ -49,6 +49,7 @@ async fn start(options: PgConnectOptions) -> Running {
         proxies: ProxySettings::default(),
         admin: AdminAuthSettings { secure_cookies: false, ..AdminAuthSettings::default() },
         licensing: LicensingSettings::default(),
+        updates: UpdateSettings { dir: data_dir.path().join("updates"), ..UpdateSettings::default() },
     };
     let server = Server::prepare(&config).await.unwrap();
     let url = format!("http://{}", server.local_address().unwrap());

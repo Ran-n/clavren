@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:36.214266
-//+ Revised: 	2026/11/03 04:54:22.149100
+//+ Revised: 	2026/11/08 14:55:44.962816
 // -----------------------------------------------------------------------------
 
 //! Counting failures per key (a client address, a username) over a sliding window, in memory.
@@ -28,24 +28,45 @@ impl FailureLimiter {
     /// leaves the window.
     pub fn check(&self, key: &str, now: DateTime<Utc>) -> Result<(), Duration> {
         let mut failures = self.lock();
-        let Some(times) = failures.get_mut(key) else { return Ok(()) };
-        self.forget_old(times, now);
-        if times.len() < self.max_failures as usize {
-            return Ok(());
-        }
-        let oldest = times.front().copied().unwrap_or(now);
-        Err((oldest + self.window - now).to_std().unwrap_or(Duration::ZERO))
+        failures.get_mut(key).map_or(Ok(()), |times| self.allowance(times, now))
     }
 
     pub fn record_failure(&self, key: &str, now: DateTime<Utc>) {
         self.lock().entry(key.to_string()).or_default().push_back(now);
     }
 
+    /// Counts an attempt against every key at once, unless one of them has used up its allowance
+    /// (then nothing is counted). Checking and counting happen under one lock, so requests sent
+    /// in parallel can't all slip under the limit before any of them is counted. An attempt that
+    /// turns out well is taken back with [`Self::forgive`].
+    pub fn attempt(&self, keys: &[String], now: DateTime<Utc>) -> Result<(), Duration> {
+        let mut failures = self.lock();
+        for key in keys {
+            if let Some(times) = failures.get_mut(key) {
+                self.allowance(times, now)?;
+            }
+        }
+        for key in keys {
+            failures.entry(key.clone()).or_default().push_back(now);
+        }
+        Ok(())
+    }
+
     /// Counts one request for `key`, unless `key` already used up its allowance.
     pub fn hit(&self, key: &str, now: DateTime<Utc>) -> Result<(), Duration> {
-        self.check(key, now)?;
-        self.record_failure(key, now);
-        Ok(())
+        self.attempt(&[key.to_string()], now)
+    }
+
+    /// Takes back one attempt counted for `key` at `at` by [`Self::attempt`].
+    pub fn forgive(&self, key: &str, at: DateTime<Utc>) {
+        let mut failures = self.lock();
+        let Some(times) = failures.get_mut(key) else { return };
+        if let Some(position) = times.iter().rposition(|&time| time == at) {
+            times.remove(position);
+        }
+        if times.is_empty() {
+            failures.remove(key);
+        }
     }
 
     pub fn clear(&self, key: &str) {
@@ -64,6 +85,15 @@ impl FailureLimiter {
 
     pub fn tracked_keys(&self) -> usize {
         self.lock().len()
+    }
+
+    fn allowance(&self, times: &mut VecDeque<DateTime<Utc>>, now: DateTime<Utc>) -> Result<(), Duration> {
+        self.forget_old(times, now);
+        if times.len() < self.max_failures as usize {
+            return Ok(());
+        }
+        let oldest = times.front().copied().unwrap_or(now);
+        Err((oldest + self.window - now).to_std().unwrap_or(Duration::ZERO))
     }
 
     fn forget_old(&self, times: &mut VecDeque<DateTime<Utc>>, now: DateTime<Utc>) {
@@ -158,6 +188,53 @@ mod tests {
         fail(&limiter, 1, start());
         limiter.clear("key");
         assert!(limiter.check("key", start()).is_ok());
+    }
+
+    #[test]
+    fn an_attempt_counts_against_every_key_or_none() {
+        let limiter = FailureLimiter::new(2, WINDOW);
+        let keys = ["ip".to_string(), "user".to_string()];
+        limiter.record_failure("user", start());
+        limiter.record_failure("user", start());
+        assert_eq!(limiter.attempt(&keys, start()), Err(WINDOW));
+        assert_eq!(limiter.tracked_keys(), 1, "the address wasn't counted for a refused attempt");
+        limiter.clear("user");
+        assert!(limiter.attempt(&keys, start()).is_ok());
+        assert!(limiter.attempt(&keys, start()).is_ok());
+        assert!(limiter.attempt(&keys, start()).is_err(), "counted before the outcome is known");
+    }
+
+    #[test]
+    fn forgiving_takes_back_one_attempt() {
+        let limiter = FailureLimiter::new(1, WINDOW);
+        let keys = ["key".to_string()];
+        assert!(limiter.attempt(&keys, start()).is_ok());
+        limiter.forgive("key", start());
+        assert_eq!(limiter.tracked_keys(), 0);
+        assert!(limiter.attempt(&keys, start()).is_ok());
+        limiter.forgive("key", start() + WINDOW);
+        assert!(limiter.check("key", start()).is_err(), "only an attempt made at that time is taken back");
+        limiter.forgive("unknown", start());
+    }
+
+    /// Regression: the login checked the count, waited for Argon2, then counted; requests sent in
+    /// parallel all passed the check, so the limit didn't bind (and each ran Argon2).
+    #[test]
+    fn parallel_attempts_never_pass_the_limit() {
+        let limiter = std::sync::Arc::new(FailureLimiter::new(5, WINDOW));
+        let passed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let threads: Vec<_> = (0..50)
+            .map(|_| {
+                let (limiter, passed) = (limiter.clone(), passed.clone());
+                std::thread::spawn(move || {
+                    if limiter.attempt(&["key".to_string()], start()).is_ok() {
+                        passed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                })
+            })
+            .collect();
+        threads.into_iter().for_each(|thread| thread.join().unwrap());
+        assert_eq!(passed.load(std::sync::atomic::Ordering::SeqCst), 5);
     }
 
     #[test]

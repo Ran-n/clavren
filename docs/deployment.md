@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/03 04:54:17.627908 )
-[//]: # (+ Revised: 	2026/11/03 15:25:07.576642 )
+[//]: # (+ Revised: 	2026/11/09 11:10:33.847296 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Deployment
@@ -196,7 +196,7 @@ The same as the script, one command at a time. Run them from the folder of step 
 
 ```sh
 sudo apt update
-sudo apt install postgresql postgresql-client b3sum age curl
+sudo apt install postgresql postgresql-client b3sum age curl jq
 ```
 
 **Check**: `systemctl is-active postgresql` prints `active`.
@@ -227,7 +227,7 @@ Clavren runs as its own user, with no login and no home folder of yours:
 
 ```sh
 sudo useradd --system --home-dir /var/lib/clavren --shell /usr/sbin/nologin clavren
-sudo install -d -o clavren -g clavren -m 0700 /var/lib/clavren
+sudo install -d -o clavren -g clavren -m 0700 /var/lib/clavren /var/lib/clavren/updates
 sudo install -d -o root -g clavren -m 0750 /etc/clavren /usr/local/lib/clavren
 ```
 
@@ -258,8 +258,9 @@ values.
 ```sh
 sudo install -m 0755 bin/clavren bin/clavren-admin /usr/local/bin/
 sudo install -m 0755 deploy/clavren-new-admin.sh /usr/local/bin/clavren-new-admin
-sudo install -m 0750 -g clavren deploy/clavren-backup.sh deploy/clavren-restore.sh /usr/local/lib/clavren/
-sudo install -m 0644 deploy/clavren.service deploy/clavren-backup.service deploy/clavren-backup.timer /etc/systemd/system/
+sudo install -m 0750 -g clavren deploy/clavren-backup.sh deploy/clavren-restore.sh deploy/clavren-update-check.sh /usr/local/lib/clavren/
+sudo install -m 0700 deploy/clavren-update.sh /usr/local/lib/clavren/
+sudo install -m 0644 deploy/clavren*.service deploy/clavren*.timer deploy/clavren*.path /etc/systemd/system/
 sudo install -d -m 0755 /usr/local/share/doc/clavren
 sudo install -m 0644 docs/*.md /usr/local/share/doc/clavren/
 ```
@@ -270,7 +271,7 @@ sudo install -m 0644 docs/*.md /usr/local/share/doc/clavren/
 
 ```sh
 sudo systemctl daemon-reload
-sudo systemctl enable --now clavren clavren-backup.timer
+sudo systemctl enable --now clavren clavren-backup.timer clavren-update-check.timer clavren-update-check.path clavren-update.path
 ```
 
 The first start creates `/var/lib/clavren/master.key` and sets up the database tables.
@@ -450,6 +451,7 @@ HTTPS-only.
 | Watch the logs | `journalctl -u clavren -f` |
 | Restart | `sudo systemctl restart clavren` |
 | Back up now | `sudo systemctl start clavren-backup` |
+| Check for an update now | **Check now** on the Overview, or `sudo systemctl start clavren-update-check` |
 | See recent backups | `journalctl -u clavren-backup -n 20`, or the dashboard's Backups page |
 | List admins | `clavren-admin list-admins` |
 | Add an admin | `clavren-new-admin` (nothing stays on screen), or `clavren-admin create-admin NAME` |
@@ -460,11 +462,32 @@ HTTPS-only.
 `~/.bashrc` even if you used the script. All commands are in [api.md](api.md#clavren-admin).
 Logs never contain keys, passwords, tokens, or customer names and emails.
 
-Backups run every night at about 03:15 and keep the last 14.
+Backups run every night at about 03:15 and keep the last 14. Clavren checks for a new release 5
+minutes after the Pi starts and then every 6 hours; the Overview shows the running version and the
+last check, and every page says when a newer release is out.
 
 ---
 
 ## Upgrading
+
+### From the dashboard
+
+When a newer release is out, every page of the dashboard says so, with **What's new** (the release
+notes) and **Update to X.Y.Z**. Click it, read what will happen, and **Confirm**. Clavren backs
+up, downloads the release, checks it against its BLAKE3 checksum, installs it exactly as the
+script below does, and restarts; the dashboard follows along and reloads itself when the new
+version answers. Apps can't activate or check in for about a minute meanwhile; they keep working
+offline.
+
+- **The backup drive isn't mounted**: the confirmation adds "Update without a backup", and
+  Confirm stays off until you tick it. Better: mount the drive first.
+- **It failed**: the notice says why and offers the button again. Nothing was installed when it
+  failed while downloading, checking or backing up. When it failed while installing, it says to
+  go back to the previous version with the commands in [Going back](#going-back).
+- **Details**: `journalctl -u clavren-update`.
+
+The button appears only on installations made from a release bundle (with `install.sh`, or by
+hand as in B5); a server built from source upgrades with `git pull` and the script.
 
 ### With the script
 
@@ -487,7 +510,10 @@ sudo cp /usr/local/bin/clavren /usr/local/bin/clavren.previous        # 2. keep 
 sudo cp /usr/local/bin/clavren-admin /usr/local/bin/clavren-admin.previous
 sudo install -m 0755 bin/clavren bin/clavren-admin /usr/local/bin/   # 3. install the new ones
 sudo install -m 0755 deploy/clavren-new-admin.sh /usr/local/bin/clavren-new-admin
-sudo install -m 0750 -g clavren deploy/clavren-backup.sh deploy/clavren-restore.sh /usr/local/lib/clavren/
+sudo install -m 0750 -g clavren deploy/clavren-backup.sh deploy/clavren-restore.sh deploy/clavren-update-check.sh /usr/local/lib/clavren/
+sudo install -m 0700 deploy/clavren-update.sh /usr/local/lib/clavren/
+sudo install -m 0644 deploy/clavren*.service deploy/clavren*.timer deploy/clavren*.path /etc/systemd/system/
+sudo systemctl daemon-reload
 sudo systemctl restart clavren                                        # 4. restart
 ```
 
@@ -530,6 +556,7 @@ All settings live in `/etc/clavren/clavren.env`. After changing it, run
 | `CLAVREN_BACKUP_DIR` | (required for backups) | The backup drive |
 | `CLAVREN_BACKUP_KEEP` | `14` | How many backups to keep |
 | `CLAVREN_BACKUP_AGE_RECIPIENT` | (none) | An `age1…` public key: backups are encrypted to it |
+| `CLAVREN_UPDATE_SOURCE` | GitHub's latest release of `Ran-n/clavren` | Where to look for a new release (any https:// address that answers in GitHub's release format, such as Codeberg's `/api/v1/repos/Ran-n/clavren/releases/latest`), or `off`: no checks and no Update button |
 
 **Another backup folder**: change `CLAVREN_BACKUP_DIR`, and change both `/mnt/clavren-backups`
 paths in `/etc/systemd/system/clavren-backup.service` to match (the install script does this for
@@ -544,8 +571,9 @@ paths in `/etc/systemd/system/clavren-backup.service` to match (the install scri
 | Settings | `/etc/clavren/clavren.env` (root:clavren, 0640) |
 | `master.key` | `/var/lib/clavren/master.key` (clavren, 0600) |
 | Database | PostgreSQL from `apt`, database and user `clavren`, localhost only |
-| Backup and restore scripts | `/usr/local/lib/clavren/` |
-| Services | `/etc/systemd/system/clavren.service`, `clavren-backup.service`, `clavren-backup.timer` |
+| Backup, restore and update-check scripts | `/usr/local/lib/clavren/`; the updater `clavren-update.sh` there is root's only (0700) |
+| Services | `/etc/systemd/system/clavren.service`, `clavren-backup.service` and `.timer`, `clavren-update-check.service`, `.timer` and `.path`, `clavren-update.service` and `.path` |
+| Update files | `/var/lib/clavren/updates/` (the last check, and the dashboard's requests), `/var/lib/clavren-update/status.json` (how the last update went; root's) |
 | Backups | `CLAVREN_BACKUP_DIR`, nightly at about 03:15 |
 | These guides | `/usr/local/share/doc/clavren/` |
 
@@ -561,6 +589,8 @@ paths in `/etc/systemd/system/clavren-backup.service` to match (the install scri
 | The dashboard signs in, then shows the sign-in page again | Open it at your `https://` address, not the Pi's IP |
 | Everyone gets "too many attempts" at once | The proxy's visitor-address header isn't set: [Caddy](#caddy-or-another-reverse-proxy) step 2 |
 | Clavren won't start because `master.key` is missing | Restore a backup ([backup-and-recovery.md](backup-and-recovery.md#restoring)). Clavren never makes a new key for a database that has data |
+| "Last check failed" on the Overview | The reason is there in words; `journalctl -u clavren-update-check -n 20` has the rest. A rate limit or a network outage clears by itself at the next check |
+| An update from the dashboard failed | The notice says why; `journalctl -u clavren-update -n 50` has every step. If it stopped while installing, [go back](#going-back) |
 | An admin lost their phone | Sign in with a recovery code and set up the new phone under **Account**, or `clavren-admin reset-password NAME` |
 
 ---

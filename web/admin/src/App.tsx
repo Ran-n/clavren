@@ -15,6 +15,7 @@ import { Loading, Notice } from "./shared/components/Notice";
 import { PreferencesProvider, usePreferences } from "./shared/preferences";
 import { Link, navigate, useLocation } from "./shared/router";
 import { SessionProvider, useSession } from "./shared/session";
+import { UpdatesProvider } from "./shared/updates";
 import { Layout } from "./shell/Layout";
 
 const LICENCE_PATH = /^\/licences\/([0-9a-f-]{36})$/;
@@ -60,13 +61,16 @@ function RestoreLastPage() {
   return null;
 }
 
-function SignedIn() {
+/** `switched`: this page just changed to another admin's session; it stays on the same page. */
+function SignedIn({ switched }: { switched: boolean }) {
   return (
     <PreferencesProvider loading={<Loading label="Loading your settings…" />}>
-      <RestoreLastPage />
-      <Layout>
-        <Page />
-      </Layout>
+      {!switched && <RestoreLastPage />}
+      <UpdatesProvider>
+        <Layout>
+          <Page />
+        </Layout>
+      </UpdatesProvider>
     </PreferencesProvider>
   );
 }
@@ -75,7 +79,8 @@ function Root() {
   const { state } = useSession();
   if (state.status === "loading") return <Loading />;
   if (state.status === "signed_out") return <LoginPage ended={state.ended} error={state.error} />;
-  return <SignedIn />;
+  // another admin's session starts afresh: none of the previous admin's settings or state carry over
+  return <SignedIn key={state.session.admin.id} switched={state.switched !== undefined} />;
 }
 
 export function App() {

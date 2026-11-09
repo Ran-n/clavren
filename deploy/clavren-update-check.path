@@ -1,0 +1,11 @@
+# The dashboard's "Check now": the server writes updates/check-request (it can't start a unit
+# itself, and must not be able to), and this starts the check, which removes the file.
+[Unit]
+Description=Clavren update check on request
+
+[Path]
+PathExists=/var/lib/clavren/updates/check-request
+Unit=clavren-update-check.service
+
+[Install]
+WantedBy=paths.target

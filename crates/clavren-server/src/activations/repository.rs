@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.890784
-//+ Revised: 	2026/11/03 08:25:52.516058
+//+ Revised: 	2026/11/08 14:55:44.003890
 // -----------------------------------------------------------------------------
 
 //! Database access for activations.
@@ -181,6 +181,17 @@ pub async fn is_active(executor: impl PgExecutor<'_>, id: Uuid) -> Result<bool, 
         .bind(id)
         .fetch_one(executor)
         .await
+}
+
+/// Whether the activation is the licence's active one.
+pub async fn is_active_for(executor: impl PgExecutor<'_>, id: Uuid, licence: Uuid) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM activations WHERE id = $1 AND license_id = $2 AND revoked_at IS NULL)",
+    )
+    .bind(id)
+    .bind(licence)
+    .fetch_one(executor)
+    .await
 }
 
 pub async fn insert_challenge(

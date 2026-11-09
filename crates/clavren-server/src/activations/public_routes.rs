@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.829876
-//+ Revised: 	2026/11/03 04:54:12.829876
+//+ Revised: 	2026/11/08 14:55:43.932168
 // -----------------------------------------------------------------------------
 
 //! `/api/v1`: the endpoints applications call. Every answer, errors included, carries the server's
@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use super::{activate, checks};
 use crate::http::AppState;
-use crate::http::client_ip::ClientIp;
+use crate::http::client_ip::{ClientIp, limit_key};
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath};
 use crate::http::rate_limit::FailureLimiter;
@@ -43,7 +43,7 @@ async fn activation(
 ) -> Result<Response, ApiError> {
     let now = state.clock.now();
     let answer = async {
-        limit(&state.public_limits.activations, &format!("ip:{ip}"), now)?;
+        limit(&state.public_limits.activations, &limit_key(ip), now)?;
         let ApiJson(request) = request?;
         let activated = activate::activate(&state, &request, ip, now).await?;
         let status = if activated.created { StatusCode::CREATED } else { StatusCode::OK };
@@ -69,7 +69,7 @@ async fn challenge(
 ) -> Result<Json<ChallengeResponse>, ApiError> {
     let now = state.clock.now();
     let answer = async {
-        limit(&state.public_limits.checks_per_ip, &format!("ip:{ip}"), now)?;
+        limit(&state.public_limits.checks_per_ip, &limit_key(ip), now)?;
         let activation = activation_id(path)?;
         let challenge = checks::challenge(&state, activation, now).await?;
         Ok(Json(ChallengeResponse {
@@ -90,7 +90,7 @@ async fn check(
 ) -> Result<Json<CheckResponse>, ApiError> {
     let now = state.clock.now();
     let answer = async {
-        limit(&state.public_limits.checks_per_ip, &format!("ip:{ip}"), now)?;
+        limit(&state.public_limits.checks_per_ip, &limit_key(ip), now)?;
         let activation = activation_id(path)?;
         limit(&state.public_limits.checks_per_activation, &activation.to_string(), now)?;
         let ApiJson(request) = request?;

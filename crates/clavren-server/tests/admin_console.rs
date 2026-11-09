@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.689302
-//+ Revised: 	2026/11/07 19:37:00.319082
+//+ Revised: 	2026/11/09 08:54:53.894382
 // -----------------------------------------------------------------------------
 
 //! The admin endpoints behind the dashboard's other pages: activations, the overview, the audit
@@ -78,6 +78,40 @@ async fn revoking_an_activation_resets_its_licence(pool: PgPool) {
     let unknown =
         licensing.admin_post(&format!("/api/admin/activations/{}/revoke", uuid::Uuid::now_v7()), json!({})).await;
     assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+}
+
+/// Regression: revoking an activation reset its licence, ending whichever computer was using it by
+/// then. When the licence had moved to another computer between reading the activation and the
+/// reset (another admin's reset, then a new activation), that other computer was ended instead.
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn ending_an_activation_never_ends_the_computer_that_took_its_place(pool: PgPool) {
+    let licensing = Licensing::new(pool).await;
+    let (licence, key) = licensing.issue(json!({})).await;
+    let first = Device::new(1).activate(licensing.app(), PRODUCT, &key).await.body["activation"].clone();
+    licensing.admin_post(&format!("/api/admin/licences/{licence}/reset"), json!({})).await;
+    let second = Device::new(2).activate(licensing.app(), PRODUCT, &key).await.body["activation"].clone();
+
+    let state = &licensing.admin.fixture.state;
+    let actor = clavren::audit::Actor {
+        admin_id: licensing.admin.fixture.admin.id,
+        ip: common::api::client().ip(),
+        at: licensing.now(),
+    };
+    let licence_id: uuid::Uuid = licence.parse().unwrap();
+    let first_id: uuid::Uuid = first.as_str().unwrap().parse().unwrap();
+    let refused = clavren::licences::end_activation(state, &actor, licence_id, first_id).await.unwrap_err();
+    assert_eq!(refused.code(), "activation_revoked");
+    let activations = licensing.admin.get("/api/admin/activations?state=active").await.body;
+    assert_eq!(activations["data"][0]["id"], second, "the second computer still runs");
+    assert_eq!(licensing.licence(&licence).await["state"], "redeemed");
+
+    // an activation is only ever ended through its own licence
+    let (other, _) = licensing.issue(json!({})).await;
+    let second_id: uuid::Uuid = second.as_str().unwrap().parse().unwrap();
+    let mismatched =
+        clavren::licences::end_activation(state, &actor, other.parse().unwrap(), second_id).await.unwrap_err();
+    assert_eq!(mismatched.code(), "activation_revoked");
+    assert_eq!(licensing.licence(&licence).await["state"], "redeemed", "the second computer still runs");
 }
 
 #[sqlx::test(migrator = "clavren::database::MIGRATOR")]
@@ -185,7 +219,10 @@ async fn preferences_are_saved_restored_and_checked(pool: PgPool) {
         "version": 1,
         "theme": "dark",
         "last_page": "/licences",
-        "tables": { "licences": { "filters": { "state": "unused" }, "search": "López", "order": "expiry", "page_size": 25, "columns": ["key", "customer"] } }
+        "tables": { "licences": {
+            "filters": { "state": "unused" }, "search": "López", "order": "expiry", "page_size": 25, "columns": ["key", "customer"],
+            "issue": { "open": true, "product": licensing.product_id, "quantity": 3, "expires_at": "2027-12-31" }
+        } }
     });
     let saved = licensing.admin.call(Method::PUT, "/api/admin/preferences", Some(chosen.clone())).await;
     assert_eq!(saved.status, StatusCode::OK, "{:?}", saved.body);
@@ -197,6 +234,11 @@ async fn preferences_are_saved_restored_and_checked(pool: PgPool) {
         json!({ "version": 1, "tables": { "licences": { "page_size": 5 } } }),
         json!({ "version": 3 }),
         json!({ "version": 1, "colour": "red" }),
+        json!({ "version": 1, "tables": { "customers": { "issue": { "open": true } } } }),
+        json!({ "version": 1, "tables": { "licences": { "issue": { "open": true, "quantity": 0 } } } }),
+        json!({ "version": 1, "tables": { "licences": { "issue": { "open": true, "notes": "School order" } } } }),
+        json!({ "version": 1, "tables": { "licences": { "issue": { "open": true, "customer": "Ana López" } } } }),
+        json!({ "version": 1, "tables": { "licences": { "issue": { "open": true, "expires_at": "someday" } } } }),
     ] {
         let reply = licensing.admin.call(Method::PUT, "/api/admin/preferences", Some(bad.clone())).await;
         assert_eq!((reply.status, reply.error()), (StatusCode::BAD_REQUEST, "invalid_request"), "{bad}");

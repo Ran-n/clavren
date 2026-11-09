@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.495003
-//+ Revised: 	2026/11/07 19:36:59.643116
+//+ Revised: 	2026/11/08 14:55:45.037911
 // -----------------------------------------------------------------------------
 
 //! Changing licences after issuing: editing every field but the product (customer, expiry, notes,
@@ -70,15 +70,14 @@ fn parse(changes: LicenceChanges) -> Result<Parsed, ApiError> {
         internal_notes: text("internal_notes", changes.internal_notes, MAX_NOTES)?,
         revocation_reason: text("revocation_reason", changes.revocation_reason, MAX_REASON)?,
     };
-    let fields: Vec<&'static str> = [
-        ("customer", customer.is_some()),
-        ("expires_at", changes.expires_at.is_some()),
-        ("internal_notes", changes.internal_notes.is_some()),
-        ("revocation_reason", changes.revocation_reason.is_some()),
-    ]
-    .into_iter()
-    .filter_map(|(field, on)| on.then_some(field))
-    .collect();
+    let asked = [
+        customer.is_some(),
+        changes.expires_at.is_some(),
+        changes.internal_notes.is_some(),
+        changes.revocation_reason.is_some(),
+    ];
+    let fields: Vec<&'static str> =
+        CHANGEABLE.into_iter().zip(asked).filter_map(|(field, on)| on.then_some(field)).collect();
     if fields.is_empty() {
         return Err(ApiError::invalid_request(
             "give at least one of customer, expires_at, internal_notes, revocation_reason",
@@ -103,13 +102,31 @@ pub async fn edit(state: &AppState, actor: &Actor, ids: &[Uuid], changes: Licenc
         Some(None) => Some(None),
         Some(Some(choice)) => Some(Some(customers::choose(&mut transaction, actor, choice).await?.id)),
     };
-    repository::update(&mut *transaction, ids, &changes).await?;
-    audit::record_for_each(&mut *transaction, actor, "licence.updated", ENTITY, ids, json!({ "fields": fields }))
-        .await?;
+    let changed = repository::update(&mut *transaction, ids, &changes).await?;
+    // one audit entry per licence that changed, naming the fields that did
+    let mut by_fields: Vec<(Vec<&str>, Vec<Uuid>)> = Vec::new();
+    for (id, customer, expires_at, notes, reason) in changed.iter().copied() {
+        let names: Vec<&str> = CHANGEABLE
+            .iter()
+            .zip([customer, expires_at, notes, reason])
+            .filter_map(|(name, on)| on.then_some(*name))
+            .collect();
+        match by_fields.iter_mut().find(|(group, _)| *group == names) {
+            Some((_, group_ids)) => group_ids.push(id),
+            None => by_fields.push((names, vec![id])),
+        }
+    }
+    for (names, group_ids) in &by_fields {
+        let metadata = json!({ "fields": names });
+        audit::record_for_each(&mut *transaction, actor, "licence.updated", ENTITY, group_ids, metadata).await?;
+    }
     transaction.commit().await?;
-    tracing::info!(count = ids.len(), ?fields, "licences updated");
+    tracing::info!(asked = ids.len(), changed = changed.len(), ?fields, "licences updated");
     Ok(())
 }
+
+/// The fields [`repository::update`] reports on, in its order.
+const CHANGEABLE: [&str; 4] = ["customer", "expires_at", "internal_notes", "revocation_reason"];
 
 /// Revokes for good: the keys are deleted, and the computers using them lock at their next check.
 pub async fn revoke(state: &AppState, actor: &Actor, ids: &[Uuid], reason: Option<&str>) -> Result<(), ApiError> {
@@ -180,9 +197,25 @@ pub async fn delete_locked(
 /// Frees a licence in use so the same key can be activated on another computer; the old computer
 /// locks at its next check.
 pub async fn reset(state: &AppState, actor: &Actor, id: Uuid) -> Result<(), ApiError> {
+    reset_unless_moved(state, actor, id, None).await
+}
+
+/// [`reset`], but only while `activation` is still the licence's computer: an admin ending one
+/// computer's activation never ends another's that took its place meanwhile.
+pub async fn end_activation(state: &AppState, actor: &Actor, id: Uuid, activation: Uuid) -> Result<(), ApiError> {
+    reset_unless_moved(state, actor, id, Some(activation)).await
+}
+
+async fn reset_unless_moved(state: &AppState, actor: &Actor, id: Uuid, expected: Option<Uuid>) -> Result<(), ApiError> {
     let mut transaction = state.pool.begin().await?;
     if !lock_existing(&mut transaction, &[id]).await?.is_empty() {
         return Err(ApiError::conflict("licence_revoked", "a revoked licence can't be reset"));
+    }
+    // the licence's lock keeps new activations out, so the answer holds until the commit
+    if let Some(activation) = expected
+        && !activations::repository::is_active_for(&mut *transaction, activation, id).await?
+    {
+        return Err(ApiError::conflict("activation_revoked", "this activation has already ended"));
     }
     let freed =
         activations::repository::revoke_active(&mut *transaction, &[id], RevocationReason::Reset, actor.at).await?;

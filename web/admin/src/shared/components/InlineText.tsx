@@ -2,7 +2,7 @@
 // Escape cancels. In a multi-line field Enter is a new line and Ctrl+Enter saves. A failed save
 // keeps the field open with the reason under it.
 
-import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { describe } from "../errors";
 
 type Props = {
@@ -18,6 +18,7 @@ type Props = {
 };
 
 export function InlineText({ value, onSave, label, placeholder = "Add", multiline, type = "text", display, maxLength }: Props) {
+  const valueId = useId();
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,8 +66,9 @@ export function InlineText({ value, onSave, label, placeholder = "Add", multilin
 
   if (draft === null) {
     return (
-      <button type="button" className="inline-value" onClick={start} aria-label={`Edit ${label}`}>
-        {value ? (display ?? value) : <span className="inline-value__placeholder">{placeholder}</span>}
+      <button type="button" className="inline-value" onClick={start} aria-label={`Edit ${label}`} aria-describedby={valueId}>
+        {/* the label names the action; the value, shown inside, is read as its description */}
+        <span id={valueId}>{value ? (display ?? value) : <span className="inline-value__placeholder">{placeholder}</span>}</span>
       </button>
     );
   }

@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/03 16:07:10.331288 )
-[//]: # (+ Revised: 	2026/11/07 19:37:01.452970 )
+[//]: # (+ Revised: 	2026/11/09 14:17:20.897475 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # TODO
@@ -10,7 +10,7 @@ The backlog. Each item is self-contained: reading it alone is enough to
 implement it fully, without asking anything. Work top to bottom unless an item
 says otherwise.
 
-Next item number: 7
+Next item number: 13
 
 ## Index
 

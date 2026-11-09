@@ -65,6 +65,7 @@ export function AuthenticatorSection() {
       description="Scan the code with the new app (or type the key in by hand), then confirm with your password and a code from the new app."
       submitLabel="Confirm the new app"
       onSubmit={confirm}
+      wording={{ invalid_credentials: "The password is wrong." }}
     >
       <img className="qr" src={qrSource(fresh.qr_svg)} alt="QR code for the authenticator app" width={200} height={200} />
       <p>

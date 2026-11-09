@@ -11,7 +11,24 @@ export function ActivationHistory({ licenceId }: { licenceId: string }) {
   const [activations, setActivations] = useState<Activation[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   useEffect(() => {
-    get<Page<Activation>>(`/activations?licence=${licenceId}&limit=100`).then((page) => setActivations(page.data), setError);
+    let current = true;
+    // every page: a licence moved between computers often enough has more than one
+    async function load() {
+      const all: Activation[] = [];
+      let after: string | null = null;
+      do {
+        const page: Page<Activation> = await get(`/activations?licence=${licenceId}&limit=100${after ? `&after=${encodeURIComponent(after)}` : ""}`);
+        all.push(...page.data);
+        after = page.next_cursor;
+      } while (after);
+      if (current) setActivations(all);
+    }
+    setActivations(null);
+    setError(null);
+    load().catch((failure: unknown) => current && setError(failure));
+    return () => {
+      current = false;
+    };
   }, [licenceId]);
 
   if (error) return <ErrorNotice error={error} />;

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:36.097530
-//+ Revised: 	2026/11/03 04:54:20.346924
+//+ Revised: 	2026/11/09 10:00:41.925039
 // -----------------------------------------------------------------------------
 
 //! Every error the API returns: `{ "error": "<code>", "message": "<English, for logs>" }` with the
@@ -93,6 +93,11 @@ impl ApiError {
     /// The request clashes with the current data; `code` says how, e.g. `product_code_taken`.
     pub fn conflict(code: &'static str, message: impl Into<String>) -> Self {
         Self::new(StatusCode::CONFLICT, code, message)
+    }
+
+    /// A file the update scripts wrote can't be read; `message` says what to run on the server.
+    pub fn update_file_unreadable(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::INTERNAL_SERVER_ERROR, "update_file_unreadable", message)
     }
 
     pub fn weak_password(message: impl Into<String>) -> Self {

@@ -27,17 +27,19 @@ type Props<T> = {
   below?: (row: T) => ReactNode;
   empty: ReactNode;
   loading: boolean;
+  /** Why the rows couldn't be loaded; then the table says nothing about being empty. */
+  error?: unknown;
 };
 
 export function shownColumns<T>(columns: Column<T>[], visible?: string[]): Column<T>[] {
   return columns.filter((column) => !column.optional || !visible || visible.includes(column.key));
 }
 
-export function DataTable<T>({ rows, columns, visible, rowKey, label, selection, hasMore, firstRow, below, empty, loading }: Props<T>) {
+export function DataTable<T>({ rows, columns, visible, rowKey, label, selection, hasMore, firstRow, below, empty, loading, error }: Props<T>) {
   const shown = shownColumns(columns, visible);
   const span = shown.length + (selection ? 1 : 0);
   const pageIds = rows.map(rowKey);
-  const pageSelected = pageIds.length > 0 && pageIds.every((id) => selection?.ids.has(id));
+  const pageSelected = pageIds.length > 0 && pageIds.every((id) => selection?.has(id));
   return (
     <div className="table-wrap" aria-busy={loading || undefined}>
       {selection && pageSelected && hasMore && !selection.allMatching && (
@@ -56,7 +58,7 @@ export function DataTable<T>({ rows, columns, visible, rowKey, label, selection,
                 <input
                   type="checkbox"
                   aria-label="Select every row on this page"
-                  checked={pageSelected || selection.allMatching}
+                  checked={pageSelected}
                   onChange={(event) => selection.setPage(pageIds, event.target.checked)}
                 />
               </th>
@@ -75,13 +77,13 @@ export function DataTable<T>({ rows, columns, visible, rowKey, label, selection,
             const extra = below?.(row);
             return (
               <Fragment key={id}>
-                <tr className={selection?.ids.has(id) || selection?.allMatching ? "is-selected" : undefined}>
+                <tr className={selection?.has(id) ? "is-selected" : undefined}>
                   {selection && (
                     <td className="table__check">
                       <input
                         type="checkbox"
                         aria-label="Select this row"
-                        checked={selection.allMatching || selection.ids.has(id)}
+                        checked={selection.has(id)}
                         onChange={() => selection.toggle(id)}
                       />
                     </td>
@@ -100,7 +102,7 @@ export function DataTable<T>({ rows, columns, visible, rowKey, label, selection,
               </Fragment>
             );
           })}
-          {!loading && rows.length === 0 && (
+          {!loading && !error && rows.length === 0 && (
             <tr>
               <td colSpan={span} className="table__empty">
                 {empty}

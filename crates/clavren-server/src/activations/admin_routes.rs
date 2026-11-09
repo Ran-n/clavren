@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.653413
-//+ Revised: 	2026/11/03 04:54:12.653413
+//+ Revised: 	2026/11/08 14:55:43.857992
 // -----------------------------------------------------------------------------
 
 //! `/api/admin/activations`: every computer a licence was used on. Revoking an activation is the
@@ -84,12 +84,13 @@ async fn list(
     } else {
         Default::default()
     };
-    Ok(Json(page.map(|activation| {
+    let page = page.try_map(|activation| {
         let licence: Expandable<LicenceView> = Expandable::of(activation.license_id, &licences);
-        let mut view = serde_json::to_value(&activation).unwrap_or_default();
-        view["licence"] = serde_json::to_value(licence).unwrap_or_default();
-        view
-    })))
+        let mut view = serde_json::to_value(&activation)?;
+        view["licence"] = serde_json::to_value(licence)?;
+        Ok::<_, serde_json::Error>(view)
+    });
+    Ok(Json(page.map_err(ApiError::internal)?))
 }
 
 /// Revoking a computer's activation frees its licence: the same as a reset.
@@ -102,6 +103,6 @@ async fn revoke(
     if activation.revoked_at.is_some() {
         return Err(ApiError::conflict("activation_revoked", "this activation has already ended"));
     }
-    licences::reset(&state, &admin.actor, activation.license_id).await?;
+    licences::end_activation(&state, &admin.actor, activation.license_id, id).await?;
     super::repository::find_many(&state.pool, &[id]).await?.pop().map(Json).ok_or_else(ApiError::not_found)
 }

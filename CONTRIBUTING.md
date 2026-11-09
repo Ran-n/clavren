@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.039726 )
-[//]: # (+ Revised: 	2026/11/02 14:53:30.653505 )
+[//]: # (+ Revised: 	2026/11/09 08:54:53.487099 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 Thank you for your interest in contributing.
@@ -53,7 +53,7 @@ Open an issue and include:
 1. Fork the repository
 2. Branch from `main`
 3. Make your change, with tests of every kind it touches (see [docs/spec.md](docs/spec.md#15-testing)): a bug fix starts with a regression test that fails without it
-4. Check that `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, `.\scripts\coverage.ps1` (all tests plus the coverage gate) and, for dashboard changes, `npm run build` in `web/admin` pass (see [docs/development.md](docs/development.md))
+4. Check that `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, `.\scripts\coverage.ps1` (all tests plus the coverage gate) and, for dashboard changes, `npm run build` and `npm run e2e` in `web/admin` pass (see [docs/development.md](docs/development.md)); formatting, lints, tests and the type check also run on every push, and a pull request needs them green
 5. Commit following the style below
 6. Open a pull request against `main` and describe *why* the change is needed
 
