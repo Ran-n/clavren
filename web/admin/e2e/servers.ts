@@ -9,11 +9,21 @@ export const REPOSITORY = join(dirname(fileURLToPath(import.meta.url)), "..", ".
 const TARGET = join(REPOSITORY, "target");
 
 export type ServerName = "flows" | "rendered";
-export type ServerSpec = { port: number; url: string; database: string; dataDir: string; infoFile: string; stateFile: string };
+export type ServerSpec = {
+  port: number;
+  url: string;
+  database: string;
+  dataDir: string;
+  infoFile: string;
+  stateFile: string;
+  /** A second admin, for the tests where another admin signs in in another tab. */
+  otherAdmin: boolean;
+};
 
-function spec(name: ServerName, port: number): ServerSpec {
+function spec(name: ServerName, port: number, otherAdmin: boolean): ServerSpec {
   return {
     port,
+    otherAdmin,
     url: `http://127.0.0.1:${port}`,
     database: `clavren_e2e_${name}`,
     dataDir: join(TARGET, `e2e-${name}-data`),
@@ -22,7 +32,11 @@ function spec(name: ServerName, port: number): ServerSpec {
   };
 }
 
-export const SERVERS: Record<ServerName, ServerSpec> = { flows: spec("flows", 8091), rendered: spec("rendered", 8092) };
+export const SERVERS: Record<ServerName, ServerSpec> = {
+  flows: spec("flows", 8091, true),
+  // no second admin: its creation would show in the screenshots' audit log
+  rendered: spec("rendered", 8092, false),
+};
 
 /** What e2e_server prints when it is ready. */
 export type ServerInfo = {
@@ -32,4 +46,5 @@ export type ServerInfo = {
   secret: string;
   recovery_codes: string[];
   frozen_at: string;
+  other: { username: string; password: string; recovery_codes: string[] } | null;
 };

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 14:53:29.378030
-//+ Revised: 	2026/11/03 04:54:19.212422
+//+ Revised: 	2026/11/09 10:00:41.632218
 // -----------------------------------------------------------------------------
 
 //! Server configuration, read from `CLAVREN_*` environment variables (on the Pi, from
@@ -32,6 +32,11 @@ pub const LOGIN_MAX_FAILURES_VAR: &str = "CLAVREN_LOGIN_MAX_FAILURES";
 pub const LOGIN_WINDOW_MINUTES_VAR: &str = "CLAVREN_LOGIN_WINDOW_MINUTES";
 pub const TOKEN_DAYS_VAR: &str = "CLAVREN_TOKEN_DAYS";
 pub const SIGNING_KEY_VERSION_VAR: &str = "CLAVREN_SIGNING_KEY_VERSION";
+/// Read by `clavren-update-check.sh`; the server only needs to know whether it is `off`.
+pub const UPDATE_SOURCE_VAR: &str = "CLAVREN_UPDATE_SOURCE";
+/// Where `install.sh` put the root updater, and where it reports; only tests change these.
+pub const UPDATE_SCRIPT_VAR: &str = "CLAVREN_UPDATE_SCRIPT";
+pub const UPDATE_STATUS_VAR: &str = "CLAVREN_UPDATE_STATUS";
 
 /// Localhost only: on the Pi, `cloudflared` is the only thing that should reach Clavren.
 const DEFAULT_LISTEN: &str = "127.0.0.1:8080";
@@ -45,6 +50,12 @@ const DEFAULT_LOGIN_MAX_FAILURES: u32 = 5;
 const DEFAULT_LOGIN_WINDOW_MINUTES: u64 = 15;
 const DEFAULT_TOKEN_DAYS: u64 = 30;
 const DEFAULT_SIGNING_KEY_VERSION: u32 = 1;
+const DEFAULT_UPDATE_SCRIPT: &str = "/usr/local/lib/clavren/clavren-update.sh";
+/// In a folder only root can write (`StateDirectory=` of `clavren-update.service`): the root
+/// updater never writes where the clavren user could plant a link.
+const DEFAULT_UPDATE_STATUS: &str = "/var/lib/clavren-update/status.json";
+/// The folder under the data directory the update scripts and the server share.
+pub const UPDATES_FOLDER: &str = "updates";
 
 #[derive(Clone)]
 pub struct Config {
@@ -57,6 +68,7 @@ pub struct Config {
     pub proxies: ProxySettings,
     pub admin: AdminAuthSettings,
     pub licensing: LicensingSettings,
+    pub updates: UpdateSettings,
 }
 
 /// Which peers may tell Clavren the real client address, and in which header.
@@ -87,6 +99,19 @@ pub struct LicensingSettings {
     pub signing_key_version: u32,
 }
 
+/// Updates are found and installed by scripts outside the server (`deploy/clavren-update*.sh`); the
+/// server reads what they write and writes requests for them in `dir`.
+#[derive(Clone, Debug)]
+pub struct UpdateSettings {
+    pub dir: PathBuf,
+    /// `false` when `CLAVREN_UPDATE_SOURCE=off`.
+    pub checking: bool,
+    /// The root updater; when it isn't installed (a source installation), there is no Update button.
+    pub installer: PathBuf,
+    /// How the current or last update went, written by the root updater.
+    pub status: PathBuf,
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ConfigError {
     #[error("{0} is not set")]
@@ -106,10 +131,17 @@ impl Config {
         let required = |name: &'static str| read(name).ok_or(ConfigError::Missing(name));
         let database = parse::database_url(DATABASE_URL_VAR, &required(DATABASE_URL_VAR)?)?;
         let public_url = parse::public_url(PUBLIC_URL_VAR, &required(PUBLIC_URL_VAR)?)?;
+        let data_dir = PathBuf::from(read(DATA_DIR_VAR).unwrap_or_else(|| DEFAULT_DATA_DIR.into()));
         Ok(Self {
             database,
             listen_address: parse::socket_address(LISTEN_VAR, read(LISTEN_VAR).as_deref().unwrap_or(DEFAULT_LISTEN))?,
-            data_dir: PathBuf::from(read(DATA_DIR_VAR).unwrap_or_else(|| DEFAULT_DATA_DIR.into())),
+            updates: UpdateSettings {
+                dir: data_dir.join(UPDATES_FOLDER),
+                checking: parse::update_source(UPDATE_SOURCE_VAR, read(UPDATE_SOURCE_VAR).as_deref())?,
+                installer: PathBuf::from(read(UPDATE_SCRIPT_VAR).unwrap_or_else(|| DEFAULT_UPDATE_SCRIPT.into())),
+                status: PathBuf::from(read(UPDATE_STATUS_VAR).unwrap_or_else(|| DEFAULT_UPDATE_STATUS.into())),
+            },
+            data_dir,
             proxies: ProxySettings {
                 trusted: parse::ip_list(
                     TRUSTED_PROXIES_VAR,
@@ -121,30 +153,38 @@ impl Config {
                 )?,
             },
             admin: AdminAuthSettings {
-                session_idle: hours(parse::positive(
+                session_idle: hours(parse::span(
                     SESSION_IDLE_HOURS_VAR,
                     read(SESSION_IDLE_HOURS_VAR),
                     DEFAULT_SESSION_IDLE_HOURS,
+                    TEN_YEARS_IN_DAYS * 24,
                 )?),
-                session_lifetime: days(parse::positive(
+                session_lifetime: days(parse::span(
                     SESSION_MAX_DAYS_VAR,
                     read(SESSION_MAX_DAYS_VAR),
                     DEFAULT_SESSION_MAX_DAYS,
+                    TEN_YEARS_IN_DAYS,
                 )?),
                 login_max_failures: parse::positive(
                     LOGIN_MAX_FAILURES_VAR,
                     read(LOGIN_MAX_FAILURES_VAR),
                     DEFAULT_LOGIN_MAX_FAILURES,
                 )?,
-                login_failure_window: minutes(parse::positive(
+                login_failure_window: minutes(parse::span(
                     LOGIN_WINDOW_MINUTES_VAR,
                     read(LOGIN_WINDOW_MINUTES_VAR),
                     DEFAULT_LOGIN_WINDOW_MINUTES,
+                    TEN_YEARS_IN_DAYS * 24 * 60,
                 )?),
                 secure_cookies: public_url.starts_with("https://"),
             },
             licensing: LicensingSettings {
-                token_lifetime: days(parse::positive(TOKEN_DAYS_VAR, read(TOKEN_DAYS_VAR), DEFAULT_TOKEN_DAYS)?),
+                token_lifetime: days(parse::span(
+                    TOKEN_DAYS_VAR,
+                    read(TOKEN_DAYS_VAR),
+                    DEFAULT_TOKEN_DAYS,
+                    TEN_YEARS_IN_DAYS,
+                )?),
                 signing_key_version: parse::positive(
                     SIGNING_KEY_VERSION_VAR,
                     read(SIGNING_KEY_VERSION_VAR),
@@ -177,11 +217,25 @@ impl Default for AdminAuthSettings {
     }
 }
 
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            dir: PathBuf::from(DEFAULT_DATA_DIR).join(UPDATES_FOLDER),
+            checking: true,
+            installer: PathBuf::from(DEFAULT_UPDATE_SCRIPT),
+            status: PathBuf::from(DEFAULT_UPDATE_STATUS),
+        }
+    }
+}
+
 impl Default for LicensingSettings {
     fn default() -> Self {
         Self { token_lifetime: days(DEFAULT_TOKEN_DAYS), signing_key_version: DEFAULT_SIGNING_KEY_VERSION }
     }
 }
+
+/// The longest any configured length of time may be.
+const TEN_YEARS_IN_DAYS: u64 = 3650;
 
 fn minutes(count: u64) -> Duration {
     Duration::from_secs(count * 60)
@@ -207,6 +261,7 @@ impl fmt::Debug for Config {
             .field("proxies", &self.proxies)
             .field("admin", &self.admin)
             .field("licensing", &self.licensing)
+            .field("updates", &self.updates)
             .finish()
     }
 }

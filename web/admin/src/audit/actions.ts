@@ -28,6 +28,7 @@ const ACTIONS: Record<string, string> = {
   "licence.exported": "Exported to CSV",
   "activation.created": "Computer activated",
   "check.refused": "Check refused",
+  "server.update_requested": "Server update requested",
 };
 
 export function describeAction(action: string): string {
@@ -35,6 +36,15 @@ export function describeAction(action: string): string {
   if (known) return known;
   const words = action.replace(/[._]/g, " ");
   return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** The action in words, with the details that matter for it (an update's versions). */
+export function describeEntry(action: string, metadata: Record<string, unknown>): string {
+  const words = describeAction(action);
+  if (action !== "server.update_requested") return words;
+  const { from, to, skip_backup: skipBackup } = metadata;
+  if (typeof from !== "string" || typeof to !== "string") return words;
+  return `${words}: ${from} to ${to}${skipBackup === true ? ", without a backup" : ""}`;
 }
 
 export const ACTION_FILTERS = [
@@ -45,5 +55,6 @@ export const ACTION_FILTERS = [
   { value: "customer.", label: "Customers" },
   { value: "product.", label: "Products" },
   { value: "admin.", label: "Admins and sign-ins" },
+  { value: "server.", label: "Server" },
   ...Object.entries(ACTIONS).map(([value, label]) => ({ value, label: `· ${label}` })),
 ];

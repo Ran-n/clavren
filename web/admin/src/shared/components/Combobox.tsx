@@ -77,9 +77,11 @@ export function Combobox<T>(props: Props<T>) {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       move(event.key === "ArrowDown" ? 1 : -1);
-    } else if (event.key === "Enter" && active >= 0) {
-      event.preventDefault(); // a pick, not a form submit
-      choices[active]?.pick();
+    } else if (event.key === "Enter") {
+      // a pick (or nothing yet), never the surrounding form's submit: typing a new name and
+      // pressing Enter mustn't issue anything
+      event.preventDefault();
+      if (active >= 0) choices[active]?.pick();
     } else if (event.key === "Escape" && open) {
       event.stopPropagation(); // the first Escape closes the list; the next is the surrounding editor's
       onOpen(false);

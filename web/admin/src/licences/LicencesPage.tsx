@@ -1,21 +1,23 @@
 // The licences: search by key, customer or ID, filter (each filter can also exclude, and a hide
 // box removes what it matches), select, act in bulk, and issue new ones (the page's primary action).
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { LICENCE_STATE_OPTIONS } from "../shared/components/Badge";
 import { Button } from "../shared/components/Button";
 import { DataTable } from "../shared/components/DataTable";
 import { ColumnPicker, FilterSelect, onlyOrExcept, Pager, SearchBox, Toolbar } from "../shared/components/ListControls";
 import { ErrorNotice, Notice } from "../shared/components/Notice";
 import { DEFAULT_PAGE_SIZE, useDebounced, usePagedList, useSelection, useTitle } from "../shared/hooks";
-import { useTablePreferences } from "../shared/preferences";
+import { useTablePreferences, type IssueDraft } from "../shared/preferences";
 import { navigate, useLocation } from "../shared/router";
 import type { Licence } from "../shared/types";
 import { BulkBar } from "./BulkBar";
 import { licenceColumns } from "./columns";
 import { IssuePanel } from "./IssuePanel";
 import { listPath, type LicenceFilters } from "./licenceApi";
-import { useProducts } from "./useProducts";
+import { useDropDeletedProducts, useProducts } from "./useProducts";
+
+const PRODUCT_FILTERS = ["product", "not_product"] as const;
 
 const EXPIRY_OPTIONS = [
   { value: "permanent", label: "Permanent" },
@@ -38,7 +40,14 @@ export function LicencesPage() {
   const [table, setTable] = useTablePreferences("licences");
   const [search, setSearch] = useState(table.search ?? "");
   const [hide, setHide] = useState(table.filters?.not_q ?? "");
-  const [issuing, setIssuing] = useState(false);
+  const issuing = table.issue?.open ?? false;
+  // the keys just issued stay on screen this visit, though the panel is remembered as closed
+  const [showingKeys, setShowingKeys] = useState(false);
+  const issueDraft = table.issue;
+  const setIssue = useCallback(
+    (change: Partial<IssueDraft>) => setTable({ issue: { open: issueDraft?.open ?? false, ...issueDraft, ...change } }),
+    [issueDraft, setTable],
+  );
   const [notice, setNotice] = useState<string | null>(null);
   const { products, loaded: productsLoaded, error: productsError } = useProducts();
   const settledHide = useDebounced(hide);
@@ -66,16 +75,7 @@ export function LicencesPage() {
 
   useEffect(() => setTable({ search: filters.q || undefined }), [filters.q, setTable]);
 
-  // A remembered filter naming a product that has been deleted would hide everything: drop it.
-  useEffect(() => {
-    if (!productsLoaded) return;
-    const gone = (["product", "not_product"] as const).filter((name) => {
-      const id = table.filters?.[name];
-      return id && !products.some((product) => product.id === id);
-    });
-    if (gone.length > 0) setFilters(Object.fromEntries(gone.map((name) => [name, ""])));
-    // only once the products are in, and whenever they change
-  }, [productsLoaded, products]);
+  useDropDeletedProducts(table.filters, PRODUCT_FILTERS, { products, loaded: productsLoaded }, setFilters);
 
   // The hide text is a filter like the others, saved with them once typing settles.
   useEffect(() => {
@@ -102,10 +102,28 @@ export function LicencesPage() {
   return (
     <section className="page">
       <h1>Licences</h1>
-      {issuing ? (
-        <IssuePanel products={products} onClose={() => setIssuing(false)} onIssued={list.reload} />
+      {issuing || showingKeys ? (
+        <IssuePanel
+          products={products}
+          productsLoaded={productsLoaded}
+          draft={table.issue ?? { open: true }}
+          onDraft={setIssue}
+          onClose={() => {
+            setShowingKeys(false);
+            setIssue({ open: false });
+          }}
+          onIssued={() => {
+            setShowingKeys(true);
+            setIssue({ open: false });
+            list.reload();
+          }}
+          onMore={() => {
+            setShowingKeys(false);
+            setIssue({ open: true });
+          }}
+        />
       ) : (
-        <Button variant="primary" size="large" className="page__primary" onClick={() => setIssuing(true)}>
+        <Button variant="primary" size="large" className="page__primary" onClick={() => setIssue({ open: true })}>
           Issue licences
         </Button>
       )}
@@ -150,6 +168,7 @@ export function LicencesPage() {
         selection={selection}
         hasMore={Boolean(list.next) || list.hasPrevious}
         loading={list.loading}
+        error={list.error}
         empty={search || hide || Object.values(shown).some(Boolean) ? "No licence matches." : "No licences yet: issue some above."}
       />
       <Pager list={list} pageSize={pageSize} onPageSize={(size) => setTable({ page_size: size })} />

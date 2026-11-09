@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:36.274628
-//+ Revised: 	2026/11/03 04:54:19.016000
+//+ Revised: 	2026/11/09 10:00:42.040225
 // -----------------------------------------------------------------------------
 
 //! The audit log: who did what to which entity, when, from where. Entries never hold keys,
@@ -49,6 +49,11 @@ impl<'a> AuditEntry<'a> {
             ip_address: Some(actor.ip),
             at: actor.at,
         }
+    }
+
+    /// `actor` did `action` to something that has no ID, such as the server itself.
+    pub fn by_without_id(actor: &Actor, action: &'a str, entity_type: &'a str) -> Self {
+        Self { entity_id: None, ..Self::by(actor, action, entity_type, Uuid::nil()) }
     }
 
     /// Something that happened to an admin account. `actor` is the signed-in admin who did it

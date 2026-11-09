@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 19:43:36.881392 )
-[//]: # (+ Revised: 	2026/11/07 19:37:00.703125 )
+[//]: # (+ Revised: 	2026/11/09 13:58:24.629378 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # HTTP API
@@ -52,7 +52,9 @@ be shown to end users.
 What applications call, under `/api/v1`. The [`clavren-client`](../crates/clavren-client) crate
 does all of it for Rust applications. Bodies are JSON, up to 16 KiB. Binary values are unpadded
 base64url, IDs are lowercase hyphenated UUIDs, and times are RFC 3339 in UTC. **Every answer,
-errors included, has `server_time`**, which clients use to notice a clock that was set back.
+errors included, has `server_time`** (except a path that doesn't exist and a request cut off after
+30 seconds). Clients judge tokens by it rather than by the computer's clock, so a wrong clock
+still works and a clock set back gains nothing.
 
 ### `POST /api/v1/activations`
 
@@ -140,14 +142,15 @@ them (see below).
 | `licence_revoked` | 403 | Revoked | Yes |
 | `licence_expired` | 403 | Past its expiry date | Yes |
 | `product_unavailable` | 403 | The product was deactivated | Yes |
-| `activation_revoked` | 403 | This computer was reset or revoked, or the activation doesn't exist | Yes |
-| `challenge_invalid` | 401 | Unknown, used, expired or foreign challenge, wrong nonce or signature | Ask for a new challenge |
+| `activation_revoked` | 403 | This computer was reset or revoked, or (asking for a challenge) the activation doesn't exist | Yes |
+| `challenge_invalid` | 401 | Unknown, used, expired or foreign challenge (a check for an activation that doesn't exist included), wrong nonce or signature | Ask for a new challenge |
 | `rate_limited` | 429 | See `Retry-After` | No |
 | `invalid_request` | 400 | Malformed request | No |
 | `internal_error` | 500 | Server failure | No |
 
 **Limits:** 10 activations per hour per client address; 120 challenges and checks per hour per
-client address; 30 checks per hour per activation.
+client address; 30 checks per hour per activation. An IPv6 client address counts by its /64
+network.
 
 ### Test vectors
 
@@ -185,15 +188,21 @@ reset with `clavren-admin`.
 
 **CSRF.** Every request except `GET` must send the session's CSRF token in `X-CSRF-Token`. The
 token comes back from sign-in and from `GET /api/admin/session`, so a reloaded page can fetch it
-again.
+again. When the cookie now holds another session (signed in again in another tab), a change
+answers `csrf_failed`; the dashboard then fetches the current token with `GET /api/admin/session`
+and sends the change again once, unless the session now belongs to another admin.
 
-**Rate limit.** 5 failed attempts in 15 minutes per client address and per username, after which
-sign-in answers `429`. Wrong passwords on the account endpoints count towards the same per-username
-limit. A successful sign-in clears that username's count.
+**Rate limit.** 5 failed attempts in 15 minutes per client address and per username (however it
+is spelt: case and surrounding spaces don't matter), after which sign-in answers `429`. An attempt
+is counted before the password is checked, so attempts sent at once can't all get through; one
+that signs in is taken back. Wrong passwords on the account endpoints count towards the same
+per-username limit. A successful sign-in clears that username's count. An IPv6 client address
+counts by its /64 network. At most two password checks run at a time; more wait their turn.
 
 **Client address.** Behind Cloudflare Tunnel, the client's address comes from `CF-Connecting-IP`.
 That header is believed only from the trusted proxies (localhost by default; see
-[development.md](development.md#configuration)).
+[development.md](development.md#configuration)). When it is a list (`X-Forwarded-For`), the last
+entry is used: the one the proxy added, not the ones the client sent.
 
 ### `POST /api/admin/session`: sign in
 
@@ -519,6 +528,53 @@ same key works on another computer. Answer: the activation. Errors: `not_found`,
 hours; `checks_last_24h` counts successful checks, by the hour (the current hour and the 23 before
 it). `backup_overdue` is `true` when there is no backup or the last one is more than 48 hours old.
 
+## Updates
+
+`GET /api/admin/updates`: the running version, the last check for a newer release, and the
+current or last update. The check and the update are done by scripts on the server
+([deployment.md](deployment.md#upgrading)); the server only reads what they write.
+
+```json
+{
+  "running_version": "0.3.0",
+  "checking": "on",
+  "last_check": { "checked_at": "2027-01-15T14:02:00Z", "error": null },
+  "available": { "version": "0.4.0", "release_url": "https://github.com/Ran-n/clavren/releases/tag/v0.4.0", "published_at": "2027-01-15T10:00:00Z", "installable": true },
+  "backup_drive_mounted": true,
+  "update": null,
+  "updater_installed": true,
+  "can_install": true
+}
+```
+
+- `checking`: `on`, `off` (`CLAVREN_UPDATE_SOURCE=off`: `last_check` and `available` are `null`)
+  or `never_checked`.
+- `last_check.error`: why the last check failed, in one English sentence; the release it knew
+  before stays in `available`.
+- `available`: set only for a release newer than `running_version`; `installable` once both its
+  bundle and checksum are uploaded.
+- `update`: `{version, state, stage, message, started_at, finished_at}` while it matters (running,
+  or it was for a newer version than the one running). `state` is `running`, `succeeded` or
+  `failed`; `stage` is `starting`, `downloading`, `checking`, `backing_up`, `installing` or
+  `restarting`; `message` says what went wrong and what to do, in plain English. A request the
+  updater hasn't picked up yet is `running` at `starting`; after two minutes it is `failed` (the
+  path unit isn't running), and Update can be sent again.
+- `updater_installed`: the root updater exists (an installation from a release bundle).
+- `can_install`: an installable newer release, the updater, and no update running.
+
+Errors: `update_file_unreadable` (500) when a file the scripts wrote can't be read (the log names
+it).
+
+`POST /api/admin/updates/check`: check now. Answers `202 {"requested": true}`; the result shows in
+`last_check` a few seconds later. Errors: `updates_off` (409).
+
+`POST /api/admin/updates/install` with `{"version": "0.4.0", "skip_backup": false}` (both
+required, nothing else): install that release. Answers `202 {"requested": true}`, and audits
+`server.update_requested` (entity type `server`, no ID) with `{"from", "to", "skip_backup"}`.
+Errors, all 409: `updates_unsupported` (no updater), `update_running`, `update_not_available` (not
+the available release, or not installable yet), `backup_required` (the backup drive isn't mounted
+and `skip_backup` is `false`).
+
 ## Audit log
 
 `GET /api/admin/audit` lists what admins and the application API did, newest first:
@@ -553,10 +609,17 @@ returns what was saved.
   "theme": "dark",
   "last_page": "/licences",
   "tables": {
-    "licences": { "filters": { "state": "unused" }, "search": "López", "order": "expiry", "page_size": 25, "columns": ["key", "customer"] }
+    "licences": {
+      "filters": { "state": "unused" }, "search": "López", "order": "expiry", "page_size": 25, "columns": ["key", "customer"],
+      "issue": { "open": true, "product": "0190…", "quantity": 3, "expires_at": "2027-12-31" }
+    }
   }
 }
 ```
+
+`issue` (the licences table only) is the Issue panel as the admin left it: whether it is open,
+and the product, quantity (1 to 1,000) and expiry date chosen in it. Its customer and notes are
+personal data or free text and are never stored.
 
 `theme` is `system` (the default), `light` or `dark`. Tables are `licences`, `customers`,
 `products`, `activations`, `audit` and `backups`. `page_size` is 10–100; texts are up to 200

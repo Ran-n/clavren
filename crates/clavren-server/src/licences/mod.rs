@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.557866
-//+ Revised: 	2026/11/07 19:36:59.728140
+//+ Revised: 	2026/11/08 14:55:45.107115
 // -----------------------------------------------------------------------------
 
 //! Licences: one key for one product, optionally for a customer, optionally until a date. The key
@@ -23,7 +23,7 @@ use serde::Serialize;
 use sqlx::FromRow;
 use uuid::Uuid;
 
-pub use lifecycle::{Deleted, delete_locked, reset};
+pub use lifecycle::{Deleted, delete_locked, end_activation, reset};
 pub use routes::routes;
 pub use views::{LicenceView, present};
 

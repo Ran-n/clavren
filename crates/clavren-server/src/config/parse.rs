@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:35.848432
-//+ Revised: 	2026/11/03 04:54:19.272808
+//+ Revised: 	2026/11/09 11:10:33.337138
 // -----------------------------------------------------------------------------
 
 //! Parsing and validating single configuration values. Each error names its variable.
@@ -50,6 +50,19 @@ pub(super) fn public_url(name: &'static str, value: &str) -> Result<String, Conf
     Ok(url.to_string())
 }
 
+/// `off`, or the https:// address the update check asks; answers whether checking is on. Never
+/// plain http: the root updater takes the bundle and its checksum from that answer.
+pub(super) fn update_source(name: &'static str, value: Option<&str>) -> Result<bool, ConfigError> {
+    let Some(value) = value.map(str::trim) else { return Ok(true) };
+    if value.eq_ignore_ascii_case("off") {
+        return Ok(false);
+    }
+    match value.strip_prefix("https://") {
+        Some(rest) if !rest.is_empty() && !rest.contains(char::is_whitespace) => Ok(true),
+        _ => Err(invalid(name, "expected off or an https:// address that answers in GitHub's release format")),
+    }
+}
+
 fn is_local_host(host_and_port: &str) -> bool {
     let host = host_and_port.rsplit_once(':').map_or(host_and_port, |(host, _port)| host);
     matches!(host, "localhost" | "127.0.0.1" | "[::1]")
@@ -69,6 +82,16 @@ pub(super) fn ip_list(name: &'static str, value: &str) -> Result<Vec<IpAddr>, Co
 
 pub(super) fn header_name(name: &'static str, value: &str) -> Result<HeaderName, ConfigError> {
     HeaderName::from_str(value.trim()).map_err(|_| invalid(name, format!("{value:?} is not a header name")))
+}
+
+/// [`positive`], at most `max`: for lengths of time, where a huge value would overflow the calendar
+/// when added to today.
+pub(super) fn span(name: &'static str, value: Option<String>, default: u64, max: u64) -> Result<u64, ConfigError> {
+    let number = positive(name, value, default)?;
+    if number > max {
+        return Err(invalid(name, format!("at most {max} (ten years), got {number}")));
+    }
+    Ok(number)
 }
 
 /// A whole number above zero, or `default` when unset.

@@ -8,7 +8,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { Credentials } from "./credentials";
 import { SERVERS, type ServerName } from "./servers";
 
-type Session = { cookie: string; csrf: string };
+export type Session = { cookie: string; csrf: string };
 
 export const DEFAULT_PREFERENCES = { version: 1, theme: "system", tables: {} };
 
@@ -33,6 +33,15 @@ export class AdminApi {
   }
 }
 
+/** A new session through the API, as signing in in another tab makes one. */
+export async function newSession(context: APIRequestContext, username: string, password: string, code: string): Promise<Session> {
+  const response = await context.post("/api/admin/session", { data: { username, password, code } });
+  expect(response.ok(), await response.text()).toBe(true);
+  const cookie = /clavren_session=([^;]+)/.exec(response.headers()["set-cookie"] ?? "")?.[1];
+  if (!cookie) throw new Error("sign-in set no session cookie");
+  return { cookie, csrf: ((await response.json()) as { csrf_token: string }).csrf_token };
+}
+
 /** Signs in through the API with the next spare code; the session is kept in a file. */
 async function signIn(context: APIRequestContext, credentials: Credentials, sessionFile: string): Promise<Session> {
   if (existsSync(sessionFile)) {
@@ -41,11 +50,7 @@ async function signIn(context: APIRequestContext, credentials: Credentials, sess
     if (check.ok()) return saved;
   }
   const { username, password } = credentials.info;
-  const response = await context.post("/api/admin/session", { data: { username, password, code: credentials.recoveryCode() } });
-  expect(response.ok(), await response.text()).toBe(true);
-  const cookie = /clavren_session=([^;]+)/.exec(response.headers()["set-cookie"] ?? "")?.[1];
-  if (!cookie) throw new Error("sign-in set no session cookie");
-  const session = { cookie, csrf: ((await response.json()) as { csrf_token: string }).csrf_token };
+  const session = await newSession(context, username, password, credentials.recoveryCode());
   writeFileSync(sessionFile, JSON.stringify(session));
   return session;
 }

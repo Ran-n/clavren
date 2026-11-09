@@ -13,10 +13,11 @@ import { DEFAULT_PAGE_SIZE, useDebounced, usePagedList, useTitle } from "../shar
 import { useTablePreferences } from "../shared/preferences";
 import { Link } from "../shared/router";
 import { expanded, idOf, type Activation } from "../shared/types";
-import { useProducts } from "../licences/useProducts";
+import { useDropDeletedProducts, useProducts } from "../licences/useProducts";
 import { activationState } from "./activationState";
 
 const EXPAND = "licence.product,licence.customer";
+const PRODUCT_FILTERS = ["product"] as const;
 const STATE_OPTIONS = [
   { value: "active", label: "In use" },
   { value: "revoked", label: "Ended" },
@@ -53,7 +54,7 @@ export function ActivationsPage() {
   const [table, setTable] = useTablePreferences("activations");
   const [search, setSearch] = useState(table.search ?? "");
   const [revoking, setRevoking] = useState<string | null>(null);
-  const { products, error: productsError } = useProducts();
+  const { products, loaded: productsLoaded, error: productsError } = useProducts();
   const q = useDebounced(search);
   const state = table.filters?.state ?? "active";
   const product = table.filters?.product ?? "";
@@ -64,6 +65,9 @@ export function ActivationsPage() {
   function setFilter(name: string, value: string) {
     setTable({ filters: { ...table.filters, state, [name]: value } });
   }
+  useDropDeletedProducts(table.filters, PRODUCT_FILTERS, { products, loaded: productsLoaded }, (changes) =>
+    setTable({ filters: { ...table.filters, state, ...changes } }),
+  );
   async function revoke(id: string) {
     await api("POST", `/activations/${id}/revoke`, {});
     setRevoking(null);
@@ -92,6 +96,7 @@ export function ActivationsPage() {
         visible={table.columns}
         rowKey={(activation) => activation.id}
         loading={list.loading}
+        error={list.error}
         below={(activation) =>
           revoking === activation.id ? (
             <ConfirmStrip

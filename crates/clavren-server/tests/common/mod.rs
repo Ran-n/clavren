@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 14:53:30.025571
-//+ Revised: 	2026/11/03 04:54:23.111089
+//+ Revised: 	2026/11/09 10:00:42.341591
 // -----------------------------------------------------------------------------
 
 //! Helpers shared by the integration tests: a config for a test database, log capture, and a
@@ -18,7 +18,7 @@ use axum::Router;
 use axum::extract::connect_info::MockConnectInfo;
 use chrono::{DateTime, Utc};
 use clavren::clock::{Clock, ManualClock};
-use clavren::config::{AdminAuthSettings, Config, LicensingSettings, ProxySettings};
+use clavren::config::{AdminAuthSettings, Config, LicensingSettings, ProxySettings, UpdateSettings};
 use clavren::crypto::key_ring::KeyRing;
 use clavren::crypto::master_key::MasterKey;
 use clavren::http::{AppState, Settings, router};
@@ -39,6 +39,7 @@ pub fn test_config(database: PgConnectOptions, data_dir: &Path) -> Config {
         proxies: ProxySettings::default(),
         admin: AdminAuthSettings { secure_cookies: false, ..AdminAuthSettings::default() },
         licensing: LicensingSettings::default(),
+        updates: UpdateSettings { dir: data_dir.join("updates"), ..UpdateSettings::default() },
     }
 }
 
@@ -53,14 +54,20 @@ pub fn test_settings() -> Settings {
         proxies: ProxySettings::default(),
         admin: AdminAuthSettings::default(),
         licensing: LicensingSettings::default(),
+        updates: UpdateSettings::default(),
     }
 }
 
 /// Server state on `pool` with a clock the test moves, and the master key `TEST_MASTER_KEY`.
 pub fn test_state(pool: PgPool) -> (AppState, Arc<ManualClock>) {
+    test_state_with(pool, test_settings())
+}
+
+/// [`test_state`] with other settings.
+pub fn test_state_with(pool: PgPool, settings: Settings) -> (AppState, Arc<ManualClock>) {
     let clock = Arc::new(ManualClock::new(test_start()));
     let shared: Arc<dyn Clock> = clock.clone();
-    let state = AppState::new(pool, KeyRing::new(MasterKey::from_bytes(TEST_MASTER_KEY)), shared, test_settings());
+    let state = AppState::new(pool, KeyRing::new(MasterKey::from_bytes(TEST_MASTER_KEY)), shared, settings);
     (state, clock)
 }
 

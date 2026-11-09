@@ -2,7 +2,7 @@
 // every computer using it locks at its next check), see their licences, delete, with their
 // licences (counted by the server first; with licences, the code must be typed to confirm).
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api, get, query } from "../shared/api";
 import { Badge } from "../shared/components/Badge";
 import { Button } from "../shared/components/Button";
@@ -67,6 +67,8 @@ export function ProductsPage() {
   const [table, setTable] = useTablePreferences("products");
   const [adding, setAdding] = useState(false);
   const [pending, setPending] = useState<Pending>(null);
+  // which question about a product is the latest, so a slow answer about another one is dropped
+  const asked = useRef(0);
   const [error, setError] = useState<unknown>(null);
   const active = table.filters?.active ?? "";
   const pageSize = table.page_size ?? DEFAULT_PAGE_SIZE;
@@ -83,10 +85,14 @@ export function ProductsPage() {
   /** A delete is counted by the server first; without the count there is no warning to show. */
   async function ask(product: Product, action: "deactivate" | "delete") {
     setError(null);
+    const asking = ++asked.current;
     if (action === "deactivate") return setPending({ id: product.id, action });
     try {
-      setPending({ id: product.id, action, usage: await get<Usage>(`/products/${product.id}/usage`) });
+      const usage = await get<Usage>(`/products/${product.id}/usage`);
+      // another product was picked meanwhile: its question stands
+      if (asking === asked.current) setPending({ id: product.id, action, usage });
     } catch (failure) {
+      if (asking !== asked.current) return;
       setPending(null);
       setError(failure);
     }
@@ -122,6 +128,7 @@ export function ProductsPage() {
         columns={columns(save, setActive, (product, action) => void ask(product, action))}
         rowKey={(product) => product.id}
         loading={list.loading}
+        error={list.error}
         firstRow={adding ? <NewProductRow onCreated={() => { setAdding(false); list.reload(); }} onCancel={() => setAdding(false)} /> : null}
         below={(product) =>
           pending?.id === product.id ? (

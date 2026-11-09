@@ -2,7 +2,7 @@
 # ------------------------------------------------------------------------------
 #+ Authors: 	Ran# <ran.hash@proton.me>
 #+ Created: 	2026/11/03 14:36:22.589520
-#+ Revised: 	2026/11/03 15:25:05.560042
+#+ Revised: 	2026/11/09 10:00:42.649060
 # ------------------------------------------------------------------------------
 
 # Installs or upgrades Clavren on a Debian-based server with systemd (Raspberry Pi OS Bookworm or
@@ -104,7 +104,10 @@ done
 if ! output=$("$source_bin/clavren-admin" --help 2>&1); then
     fail "the binaries in $source_bin don't run on this $(uname -m) machine: $output"
 fi
-for file in clavren.service clavren-backup.service clavren-backup.timer clavren-backup.sh clavren-restore.sh clavren-new-admin.sh clavren.env.example; do
+readonly UNITS=(clavren.service clavren-backup.service clavren-backup.timer
+    clavren-update-check.service clavren-update-check.timer clavren-update-check.path
+    clavren-update.service clavren-update.path)
+for file in "${UNITS[@]}" clavren-backup.sh clavren-restore.sh clavren-new-admin.sh clavren-update-check.sh clavren-update.sh clavren.env.example; do
     [[ -f $root/deploy/$file ]] || fail "missing $root/deploy/$file"
 done
 # psql and friends complain when they start in a folder the postgres user cannot read.
@@ -128,7 +131,7 @@ if ! $upgrading; then
 
     say "installing packages"
     apt-get update -q
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -q postgresql postgresql-client b3sum age curl
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -q postgresql postgresql-client b3sum age curl jq
     systemctl enable --now postgresql
 
     if ! id clavren >/dev/null 2>&1; then
@@ -160,6 +163,13 @@ else
     [[ -z $public_url && -z $backup_dir ]] || warn "--public-url and --backup-dir only apply to a first installation; edit $ENV_FILE instead"
     backup_dir=$(env_value CLAVREN_BACKUP_DIR "$DEFAULT_BACKUP_DIR")
 
+    # The update check and the updater read JSON with jq, which installations before 0.4 lack.
+    if ! command -v jq >/dev/null; then
+        say "installing jq"
+        apt-get update -q
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -q jq
+    fi
+
     if $skip_backup; then
         warn "upgrading without a backup (--skip-backup)"
     elif backup_drive_mounted "$backup_dir"; then
@@ -181,11 +191,17 @@ fi
 
 say "installing files"
 install -d -o clavren -g clavren -m 0700 "$DATA_DIR"
+# Shared with the update scripts: the server writes requests here, the check its findings.
+install -d -o clavren -g clavren -m 0700 "$DATA_DIR/updates"
 install -d -o root -g clavren -m 0750 "$LIB_DIR"
 install -m 0755 "$source_bin/clavren" "$source_bin/clavren-admin" "$BIN_DIR/"
 install -m 0755 "$root/deploy/clavren-new-admin.sh" "$BIN_DIR/clavren-new-admin"
-install -m 0750 -g clavren "$root/deploy/clavren-backup.sh" "$root/deploy/clavren-restore.sh" "$LIB_DIR/"
-install -m 0644 "$root/deploy/clavren.service" "$root/deploy/clavren-backup.service" "$root/deploy/clavren-backup.timer" "$UNIT_DIR/"
+install -m 0750 -g clavren "$root/deploy/clavren-backup.sh" "$root/deploy/clavren-restore.sh"     "$root/deploy/clavren-update-check.sh" "$LIB_DIR/"
+# The updater runs as root: only root may read or change it.
+install -m 0700 "$root/deploy/clavren-update.sh" "$LIB_DIR/"
+for unit in "${UNITS[@]}"; do
+    install -m 0644 "$root/deploy/$unit" "$UNIT_DIR/"
+done
 if [[ $backup_dir != "$DEFAULT_BACKUP_DIR" ]]; then
     sed -i "s|$DEFAULT_BACKUP_DIR|$backup_dir|g" "$UNIT_DIR/clavren-backup.service"
 fi
@@ -210,9 +226,9 @@ fi
 
 say "starting clavren"
 systemctl daemon-reload
-systemctl enable clavren clavren-backup.timer
+systemctl enable clavren clavren-backup.timer clavren-update-check.timer clavren-update-check.path clavren-update.path
 systemctl restart clavren
-systemctl start clavren-backup.timer
+systemctl start clavren-backup.timer clavren-update-check.timer clavren-update-check.path clavren-update.path
 
 listen=$(env_value CLAVREN_LISTEN 127.0.0.1:8080)
 listen=${listen/#0.0.0.0:/127.0.0.1:}

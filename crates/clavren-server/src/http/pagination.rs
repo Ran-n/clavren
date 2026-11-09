@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:13.854795
-//+ Revised: 	2026/11/03 04:54:13.854795
+//+ Revised: 	2026/11/08 14:55:44.880949
 // -----------------------------------------------------------------------------
 
 //! Cursor pagination for every admin list: `?limit=50&after=<cursor>` answers
@@ -80,6 +80,11 @@ impl<T> Page<T> {
 
     pub fn map<U>(self, convert: impl FnMut(T) -> U) -> Page<U> {
         Page { data: self.data.into_iter().map(convert).collect(), next_cursor: self.next_cursor }
+    }
+
+    /// [`Self::map`] with a conversion that can fail: the first failure is the answer.
+    pub fn try_map<U, E>(self, convert: impl FnMut(T) -> Result<U, E>) -> Result<Page<U>, E> {
+        Ok(Page { data: self.data.into_iter().map(convert).collect::<Result<_, _>>()?, next_cursor: self.next_cursor })
     }
 }
 

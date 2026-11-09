@@ -1,0 +1,12 @@
+# Checks for a new Clavren release 5 minutes after boot, then every 6 hours. The random delay
+# keeps many installations from asking the forge at the same moment.
+[Unit]
+Description=Regular Clavren update check
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=6h
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target

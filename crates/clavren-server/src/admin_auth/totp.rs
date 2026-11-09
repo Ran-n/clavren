@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:35.493531
-//+ Revised: 	2026/11/03 04:54:18.647655
+//+ Revised: 	2026/11/08 14:55:44.366091
 // -----------------------------------------------------------------------------
 
 //! Authenticator-app codes (TOTP, RFC 6238): SHA-1, 6 digits, 30-second steps, one step of
@@ -72,7 +72,14 @@ pub fn matching_step(secret: &[u8], username: &str, code: &str, now: DateTime<Ut
     if !is_code {
         return None;
     }
-    totp(secret, username).ok()?.check(code, seconds)
+    match totp(secret, username) {
+        Ok(totp) => totp.check(code, seconds),
+        Err(error) => {
+            // not a wrong code: the stored secret or the username can't make a generator
+            tracing::error!("can't check one-time codes for {username}: {error}");
+            None
+        }
+    }
 }
 
 pub fn seal(keys: &KeyRing, admin_id: Uuid, secret: &[u8]) -> Result<Sealed, TotpError> {

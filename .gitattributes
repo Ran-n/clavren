@@ -2,4 +2,5 @@
 *.sh      text eol=lf
 *.service text eol=lf
 *.timer   text eol=lf
+*.path    text eol=lf
 deploy/*.example text eol=lf

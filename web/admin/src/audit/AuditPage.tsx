@@ -9,17 +9,25 @@ import { DEFAULT_PAGE_SIZE, usePagedList, useTitle } from "../shared/hooks";
 import { useTablePreferences } from "../shared/preferences";
 import { Link } from "../shared/router";
 import { expanded, type AuditEntry } from "../shared/types";
-import { ACTION_FILTERS, describeAction } from "./actions";
+import { ACTION_FILTERS, describeEntry } from "./actions";
+
+/** A `2027-03-01` date input's day, at its start in the browser's time zone; none if it isn't one. */
+function day(value: string | undefined): Date | undefined {
+  if (!value) return undefined;
+  const start = new Date(`${value}T00:00:00`);
+  // a remembered filter may hold anything: an unreadable date is no filter, not a blank page
+  return Number.isNaN(start.getTime()) ? undefined : start;
+}
 
 /** The first day included and the first day not: whole days in the browser's time zone. */
-function dayStart(value: string | undefined): string | undefined {
-  return value ? new Date(`${value}T00:00:00`).toISOString() : undefined;
+export function dayStart(value: string | undefined): string | undefined {
+  return day(value)?.toISOString();
 }
-function dayAfter(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  const day = new Date(`${value}T00:00:00`);
-  day.setDate(day.getDate() + 1);
-  return day.toISOString();
+export function dayAfter(value: string | undefined): string | undefined {
+  const after = day(value);
+  if (!after) return undefined;
+  after.setDate(after.getDate() + 1);
+  return after.toISOString();
 }
 
 /** Without an admin, an entry comes from the application API or from `clavren-admin`. */
@@ -57,7 +65,7 @@ function columns(onAdmin: (id: string) => void, onEntity: (id: string) => void):
         return <button type="button" className="link-button" onClick={() => onAdmin(admin.id)}>{admin.username}</button>;
       },
     },
-    { key: "what", label: "What", render: (entry) => describeAction(entry.action) },
+    { key: "what", label: "What", render: (entry) => describeEntry(entry.action, entry.metadata) },
     { key: "record", label: "Record", render: (entry) => <Entity entry={entry} onPick={onEntity} /> },
     { key: "ip", label: "From", render: (entry) => entry.ip_address ?? "—" },
   ];
@@ -105,6 +113,7 @@ export function AuditPage() {
         columns={columns((id) => setFilter("admin", id), (id) => setFilter("entity", id))}
         rowKey={(entry) => entry.id}
         loading={list.loading}
+        error={list.error}
         empty="Nothing recorded matches."
       />
       <Pager list={list} pageSize={pageSize} onPageSize={(size) => setTable({ page_size: size })} />

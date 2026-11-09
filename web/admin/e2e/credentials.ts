@@ -10,7 +10,7 @@ import type { ServerInfo, ServerSpec } from "./servers";
 const STEP_SECONDS = 30;
 const BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
-type State = { secret: string; lastStep: number; recoveryCodes: string[] };
+type State = { secret: string; lastStep: number; recoveryCodes: string[]; otherRecoveryCodes: string[] };
 
 function base32Decode(text: string): Buffer {
   let bits = "";
@@ -45,7 +45,12 @@ export class Credentials {
   private load(): State {
     if (existsSync(this.spec.stateFile)) return JSON.parse(readFileSync(this.spec.stateFile, "utf8")) as State;
     // The admin was enrolled an hour before the frozen time: every step around it is still unused.
-    return { secret: this.info.secret, lastStep: 0, recoveryCodes: [...this.info.recovery_codes] };
+    return {
+      secret: this.info.secret,
+      lastStep: 0,
+      recoveryCodes: [...this.info.recovery_codes],
+      otherRecoveryCodes: [...(this.info.other?.recovery_codes ?? [])],
+    };
   }
 
   private save(state: State): void {
@@ -73,6 +78,15 @@ export class Credentials {
     const [code, ...rest] = state.recoveryCodes;
     if (!code) throw new Error("no recovery code left");
     this.save({ ...state, recoveryCodes: rest });
+    return code;
+  }
+
+  /** A recovery code of the second admin (the flows server only). */
+  otherRecoveryCode(): string {
+    const state = this.load();
+    const [code, ...rest] = state.otherRecoveryCodes;
+    if (!code) throw new Error("no recovery code left for the other admin (only the flows server has one)");
+    this.save({ ...state, otherRecoveryCodes: rest });
     return code;
   }
 

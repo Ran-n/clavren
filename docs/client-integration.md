@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/03 04:54:17.447469 )
-[//]: # (+ Revised: 	2026/11/03 04:54:17.447469 )
+[//]: # (+ Revised: 	2026/11/08 14:55:48.549705 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Client integration
@@ -25,7 +25,11 @@ is in [api.md](api.md#application-api), for a client in another language.
   60 minutes) when the server can't be reached.
 - **Reports outcomes**, never text: the application shows its own translated message for each.
 - **Notices a clock set back** by more than an hour and asks for an online check instead of
-  trusting it.
+  trusting it. Tokens are judged by the server's time (the system clock plus the difference
+  measured at the last answer), so a computer whose clock is simply wrong works normally, and
+  setting the clock back before a check doesn't stretch the 30 days.
+- **Keeps nothing it can't use**: an answer that isn't Clavren's (a proxy's page) or a token it
+  can't verify changes nothing, and the check is retried with backoff.
 
 Logs go through the `log` crate; keys, tokens and device keys are never logged.
 
@@ -82,7 +86,14 @@ checks.stop();
 
 The background checker calls `check()` whenever one is due and reports only when the outcome's
 kind changes (a renewed token is not a change). `stop()` wakes it and waits for it to finish, so
-the application shuts down cleanly.
+the application shuts down cleanly; a check under way finishes first (two requests, up to 15
+seconds each), so call `stop()` (or drop it) off the UI thread when that matters. A panic in the
+callback is logged and checking goes on.
+
+`status()` never touches the disk, so calling it often costs nothing. The time it saw (for
+noticing a clock set back between runs) is saved by the background checker every ten minutes and
+when it stops; an application that runs no checker calls `save_time_seen()` off the UI thread
+now and then.
 
 ## Activating
 
@@ -94,7 +105,11 @@ match client.activate(&typed_key)? {
 }
 ```
 
-`activate` returns `Err` only when the device key couldn't be saved; then nothing was sent.
+`activate` returns `Err` when the device key couldn't be saved (then nothing was sent), or when
+the server accepted the activation but it couldn't be saved; retrying is then safe, because the
+device key was saved first and the server knows the same computer again. When the saved state
+existed but couldn't be read at start (another program had the file open), nothing is saved over
+it and `activate` fails until the application starts again.
 
 ---
 
@@ -141,7 +156,8 @@ To change the signing key without locking anyone out:
 ## Testing an integration
 
 `Client::new` takes the store, transport and clock as traits, so an application's tests can run
-the client against a fake server, in memory, with a clock they move:
+the client with state in memory and a clock they move, against a test Clavren server (or their
+own `Transport` that answers in memory):
 
 ```rust
 use std::sync::Arc;

@@ -1,7 +1,8 @@
 // A reviewed baseline screenshot of every page, light and dark, at desktop and phone width, from
 // a fixed data set on a server whose clock stands still, plus the states that open in place (the
-// customer list, the customer editor, the delete warnings). Also: nothing makes the page scroll
-// sideways, and disabled actions are dimmed. Keys stay hidden; IDs are masked.
+// customer list, the customer editor, the delete warnings, an update). Also: nothing makes the page
+// scroll sideways, and disabled actions are dimmed. Keys stay hidden; IDs are masked. The update
+// state is a fixed answer, so the server's own version never changes a baseline.
 
 import type { Page } from "@playwright/test";
 import { Device, expect, test, type AdminApi } from "./fixtures";
@@ -35,6 +36,34 @@ async function seed(api: AdminApi, request: import("@playwright/test").APIReques
   return { activeLicence: active.id, revokedLicence: revoked.id };
 }
 
+/** `GET /updates` as every capture sees it, unless a test answers otherwise. */
+const NO_UPDATE = {
+  running_version: "1.0.0",
+  checking: "on",
+  last_check: { checked_at: "2027-03-01T06:12:00Z", error: null },
+  available: null,
+  backup_drive_mounted: true,
+  update: null,
+  updater_installed: true,
+  can_install: false,
+};
+const UPDATE_AVAILABLE = {
+  ...NO_UPDATE,
+  available: { version: "1.1.0", release_url: "https://github.com/Ran-n/clavren/releases/tag/v1.1.0", published_at: "2027-02-28T10:00:00Z", installable: true },
+  backup_drive_mounted: false,
+  can_install: true,
+};
+const UPDATE_RUNNING = {
+  ...UPDATE_AVAILABLE,
+  update: { version: "1.1.0", state: "running", stage: "backing_up", message: null, started_at: "2027-03-01T09:29:00Z", finished_at: null },
+  can_install: false,
+};
+
+async function answerUpdates(page: Page, body: object): Promise<void> {
+  await page.unroute("**/api/admin/updates");
+  await page.route("**/api/admin/updates", (route) => route.fulfill({ json: body }));
+}
+
 type Locators = (page: Page) => import("@playwright/test").Locator[];
 const masked: (selector: string) => Locators = (selector) => (page) => [page.locator(selector)];
 const LICENCE_ID = masked("code.licence-id");
@@ -57,8 +86,9 @@ async function capture(page: Page, name: string, path: string, masks: Locators =
 
 test.describe("every page, light and dark, desktop and phone", () => {
   let seeded: Seeded;
-  test.beforeEach(async ({ api, request }) => {
+  test.beforeEach(async ({ api, request, page }) => {
     seeded = await seed(api, request);
+    await answerUpdates(page, NO_UPDATE);
   });
 
   test("sign-in", async ({ page }) => capture(page, "sign-in", "/"));
@@ -75,7 +105,9 @@ test.describe("every page, light and dark, desktop and phone", () => {
   });
   test("issuing, with the list of every customer open", async ({ admin }) =>
     capture(admin, "issue-customers", "/licences", undefined, async (page) => {
-      await page.getByRole("button", { name: "Issue licences" }).click();
+      // the panel is remembered open after the first size and scheme
+      const open = page.getByRole("button", { name: "Issue licences" });
+      if (await open.isVisible()) await open.click();
       await page.getByRole("combobox", { name: "Customer (optional)" }).focus();
       await expect(page.getByRole("option", { name: /Carla Gómez/ })).toBeVisible();
     }));
@@ -99,4 +131,20 @@ test.describe("every page, light and dark, desktop and phone", () => {
   test("activations", async ({ admin }) => capture(admin, "activations", "/activations"));
   test("audit log", async ({ admin }) => capture(admin, "audit", "/audit", masked('td[data-label="Record"]')));
   test("account", async ({ admin }) => capture(admin, "account", "/account"));
+  test("an update being confirmed without a backup drive", async ({ admin }) => {
+    await answerUpdates(admin, UPDATE_AVAILABLE);
+    await capture(admin, "update-confirm", "/", undefined, async (page) => {
+      await page.getByRole("button", { name: "Update to 1.1.0" }).click();
+      await expect(page.getByRole("group", { name: "Confirm" })).toContainText("Update without a backup");
+    });
+    const confirm = admin.getByRole("group", { name: "Confirm" }).getByRole("button", { name: "Confirm" });
+    await expect(confirm).toBeDisabled();
+    expect(Number(await confirm.evaluate((element) => getComputedStyle(element).opacity))).toBeLessThan(0.6);
+  });
+  test("an update running", async ({ admin }) => {
+    await answerUpdates(admin, UPDATE_RUNNING);
+    await capture(admin, "update-running", "/licences", undefined, async (page) => {
+      await expect(page.getByText("Updating to 1.1.0…")).toBeVisible();
+    });
+  });
 });

@@ -5,7 +5,8 @@ import { api } from "../shared/api";
 import { Button } from "../shared/components/Button";
 import { ErrorNotice, Notice } from "../shared/components/Notice";
 import { useTitle } from "../shared/hooks";
-import { useSession, type Session } from "../shared/session";
+import { useSession } from "../shared/session";
+import type { Session } from "../shared/types";
 
 export function LoginPage({ ended, error: loadError }: { ended: boolean; error?: unknown }) {
   useTitle("Sign in");

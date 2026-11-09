@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:35.918280
-//+ Revised: 	2026/11/03 04:54:19.332812
+//+ Revised: 	2026/11/09 11:10:33.412079
 // -----------------------------------------------------------------------------
 
 use std::collections::HashMap;
@@ -176,9 +176,56 @@ fn durations_and_limits_must_be_whole_numbers_above_zero() {
     }
 }
 
+/// Regression: any length of time was accepted, and adding a huge one to today panicked the
+/// request that made a session or a token.
+#[test]
+fn lengths_of_time_stop_at_ten_years() {
+    for (name, longest) in [
+        (SESSION_IDLE_HOURS_VAR, "87600"),
+        (SESSION_MAX_DAYS_VAR, "3650"),
+        (LOGIN_WINDOW_MINUTES_VAR, "5256000"),
+        (TOKEN_DAYS_VAR, "3650"),
+    ] {
+        assert!(with(&[(name, longest)]).is_ok(), "{name}={longest}");
+        let longer: &'static str = (longest.parse::<u64>().unwrap() + 1).to_string().leak();
+        assert_invalid(with(&[(name, longer)]), name);
+    }
+    assert_invalid(with(&[(TOKEN_DAYS_VAR, "18446744073709551615")]), TOKEN_DAYS_VAR);
+}
+
 #[test]
 fn debug_output_hides_the_database_password() {
     let printed = format!("{:?}", with(&[]).unwrap());
     assert!(!printed.contains("secret"), "{printed}");
     assert!(printed.contains("<redacted>"));
+}
+
+#[test]
+fn updates_are_checked_and_live_in_the_data_dir_by_default() {
+    let config = with(&[(DATA_DIR_VAR, "/srv/clavren")]).unwrap();
+    assert_eq!(config.updates.dir, PathBuf::from("/srv/clavren/updates"));
+    assert!(config.updates.checking);
+    assert_eq!(config.updates.installer, UpdateSettings::default().installer);
+    assert_eq!(config.updates.status, PathBuf::from("/var/lib/clavren-update/status.json"));
+    assert_eq!(with(&[]).unwrap().updates.dir, UpdateSettings::default().dir);
+}
+
+#[test]
+fn update_checks_can_be_turned_off_or_pointed_elsewhere() {
+    assert!(!with(&[(UPDATE_SOURCE_VAR, "off")]).unwrap().updates.checking);
+    assert!(!with(&[(UPDATE_SOURCE_VAR, " OFF ")]).unwrap().updates.checking);
+    let forgejo = "https://codeberg.org/api/v1/repos/Ran-n/clavren/releases/latest";
+    assert!(with(&[(UPDATE_SOURCE_VAR, forgejo)]).unwrap().updates.checking);
+    let config = with(&[(UPDATE_SCRIPT_VAR, "/tmp/updater.sh"), (UPDATE_STATUS_VAR, "/tmp/status.json")]).unwrap();
+    assert_eq!(config.updates.installer, PathBuf::from("/tmp/updater.sh"));
+    assert_eq!(config.updates.status, PathBuf::from("/tmp/status.json"));
+}
+
+#[test]
+fn an_unusable_update_source_is_refused() {
+    for value in
+        ["no", "ftp://example.com/release", "http://example.com/release", "https://", "https://example.com/a b"]
+    {
+        assert_invalid(with(&[(UPDATE_SOURCE_VAR, value)]), UPDATE_SOURCE_VAR);
+    }
 }

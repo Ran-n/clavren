@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 14:53:29.794899
-//+ Revised: 	2026/11/03 04:54:21.964675
+//+ Revised: 	2026/11/09 10:00:41.870192
 // -----------------------------------------------------------------------------
 
 //! The HTTP side: the router, its shared state and the layers every request goes through.
@@ -30,10 +30,11 @@ use tower_http::trace::TraceLayer;
 use tracing::Span;
 
 use crate::clock::Clock;
-use crate::config::{AdminAuthSettings, Config, LicensingSettings, ProxySettings};
+use crate::config::{AdminAuthSettings, Config, LicensingSettings, ProxySettings, UpdateSettings};
 use crate::crypto::key_ring::KeyRing;
 use crate::{
     activations, admin_auth, admin_preferences, audit, backups, customers, dashboard, licences, overview, products,
+    updates,
 };
 use rate_limit::{FailureLimiter, PublicLimits};
 
@@ -59,6 +60,7 @@ pub struct Settings {
     pub proxies: ProxySettings,
     pub admin: AdminAuthSettings,
     pub licensing: LicensingSettings,
+    pub updates: UpdateSettings,
 }
 
 impl AppState {
@@ -83,6 +85,7 @@ impl From<&Config> for Settings {
             proxies: config.proxies.clone(),
             admin: config.admin.clone(),
             licensing: config.licensing.clone(),
+            updates: config.updates.clone(),
         }
     }
 }
@@ -113,6 +116,7 @@ fn admin_routes() -> Router<AppState> {
         .merge(backups::routes())
         .merge(overview::routes())
         .merge(admin_preferences::routes())
+        .merge(updates::routes())
         .layer(no_store())
 }
 

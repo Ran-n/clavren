@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:34.824500
-//+ Revised: 	2026/11/03 04:54:17.865772
+//+ Revised: 	2026/11/08 14:55:44.077661
 // -----------------------------------------------------------------------------
 
 //! What a signed-in admin can change about their own account: password, recovery codes and
@@ -83,11 +83,8 @@ pub async fn regenerate_recovery_codes(
         return Err(ApiError::invalid_credentials());
     }
     let codes = recovery_codes::generate().map_err(ApiError::internal)?;
-    let hashes: Vec<[u8; 32]> = codes
-        .iter()
-        .filter_map(|code| recovery_codes::normalize(code))
-        .map(|code| recovery_codes::hash(&code))
-        .collect();
+    let hashes = recovery_codes::hash_all(&codes)
+        .ok_or_else(|| ApiError::internal("a new recovery code doesn't read back as one"))?;
     let mut transaction = state.pool.begin().await?;
     repository::replace_recovery_codes(&mut transaction, admin.id, &hashes).await?;
     let entry =
@@ -139,16 +136,17 @@ async fn confirm_password(
         .ok_or_else(ApiError::unauthorized)?;
     let key = username_key(&admin);
     let now = state.clock.now();
-    state.login_failures.check(&key, now).map_err(ApiError::rate_limited)?;
+    // counted first, as at sign-in, and taken back when the password is right
+    state.login_failures.attempt(std::slice::from_ref(&key), now).map_err(ApiError::rate_limited)?;
     if passwords::verify(password, admin.password_hash.clone()).await {
+        state.login_failures.forgive(&key, now);
         return Ok(admin);
     }
-    state.login_failures.record_failure(&key, now);
     tracing::warn!(admin = %admin.username, %ip, "wrong password when changing account settings");
     Err(ApiError::invalid_credentials())
 }
 
 /// The same key login uses, so both kinds of failure share one limit.
 fn username_key(admin: &AdminRecord) -> String {
-    format!("user:{}", admin.username.to_lowercase())
+    super::login::username_key(&admin.username)
 }

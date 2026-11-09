@@ -1,11 +1,12 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:13.060231
-//+ Revised: 	2026/11/03 04:54:13.060231
+//+ Revised: 	2026/11/09 08:54:53.814544
 // -----------------------------------------------------------------------------
 
-//! What the dashboard remembers for each admin, on any browser: theme, the last page, and per
-//! table its filters, search, order, page size and columns. Stored as JSON, checked against a
+//! What the dashboard remembers for each admin, on any browser: theme, the last page, per table
+//! its filters, search, order, page size and columns, and whether the Issue panel is open with
+//! the product, quantity and expiry chosen in it (never its customer or notes). Stored as JSON, checked against a
 //! versioned schema; unknown fields are refused, and so is anything that looks like a licence key,
 //! so a key typed into a search box is never saved.
 
@@ -14,9 +15,11 @@ use std::collections::BTreeMap;
 use axum::extract::State;
 use axum::routing::get;
 use axum::{Json, Router};
+use chrono::NaiveDate;
 use clavren_protocol::licence_key::LicenceKey;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use uuid::Uuid;
 
 use crate::admin_auth::guard::Admin;
 use crate::http::AppState;
@@ -62,6 +65,23 @@ pub struct Table {
     pub page_size: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub columns: Option<Vec<String>>,
+    /// The Issue panel, on the licences table only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<IssueDraft>,
+}
+
+/// The Issue panel as the admin left it. Only what isn't personal or free text: the customer and
+/// the notes are never remembered.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IssueDraft {
+    pub open: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantity: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<NaiveDate>,
 }
 
 impl Preferences {
@@ -97,6 +117,15 @@ impl Table {
         }
         if self.page_size.is_some_and(|size| !(10..=100).contains(&size)) {
             return Err(ApiError::invalid_request(format!("{name}: page_size must be between 10 and 100")));
+        }
+        if let Some(issue) = &self.issue {
+            if name != "licences" {
+                return Err(ApiError::invalid_request(format!("{name}: only the licences table has an issue panel")));
+            }
+            let most = crate::licences::MAX_BATCH;
+            if issue.quantity.is_some_and(|quantity| !(1..=most).contains(&(quantity as usize))) {
+                return Err(ApiError::invalid_request(format!("{name}: issue.quantity must be between 1 and {most}")));
+            }
         }
         let looks_like_a_key =
             self.search.iter().chain(self.filters.values()).any(|text| LicenceKey::parse(text).is_some());
@@ -161,6 +190,12 @@ mod tests {
             order: Some("expiry".into()),
             page_size: Some(50),
             columns: Some(vec!["key".into(), "customer".into()]),
+            issue: Some(IssueDraft {
+                open: true,
+                product: Some(Uuid::nil()),
+                quantity: Some(1000),
+                expires_at: NaiveDate::from_ymd_opt(2027, 12, 31),
+            }),
         };
         let preferences = Preferences { theme: Theme::Dark, last_page: Some("/licences".into()), ..with_table(table) };
         assert!(preferences.check().is_ok());
@@ -185,6 +220,22 @@ mod tests {
             with_table(Table { page_size: Some(1000), ..Table::default() }),
             with_table(Table { search: Some("x".repeat(201)), ..Table::default() }),
             with_table(Table { columns: Some(vec!["c".into(); 31]), ..Table::default() }),
+            with_table(Table {
+                issue: Some(IssueDraft { quantity: Some(0), ..IssueDraft::default() }),
+                ..Table::default()
+            }),
+            with_table(Table {
+                issue: Some(IssueDraft { quantity: Some(1001), ..IssueDraft::default() }),
+                ..Table::default()
+            }),
+            Preferences {
+                version: VERSION,
+                tables: BTreeMap::from([(
+                    "customers".to_string(),
+                    Table { issue: Some(IssueDraft::default()), ..Table::default() },
+                )]),
+                ..Preferences::default()
+            },
             Preferences {
                 version: VERSION,
                 tables: BTreeMap::from([("secrets".to_string(), Table::default())]),

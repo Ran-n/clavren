@@ -1,18 +1,20 @@
-// The first page: products, licences by state, computers, and the backups, with a warning when
-// the last backup is too old.
+// The first page: products, licences by state, computers, the backups (with a warning when the
+// last one is too old), and the server: its version and the last check for a newer release.
 
 import { useEffect, useState } from "react";
 import { get } from "../shared/api";
+import { Button } from "../shared/components/Button";
 import { ErrorNotice, Loading, Notice } from "../shared/components/Notice";
-import { formatBytes, formatDateTime } from "../shared/format";
+import { formatBytes, formatDateTime, formatNumber } from "../shared/format";
 import { useTitle } from "../shared/hooks";
 import { Link } from "../shared/router";
-import type { BackupRun, Overview } from "../shared/types";
+import type { BackupRun, Overview, Updates } from "../shared/types";
+import { useUpdates } from "../shared/updates";
 
 function Stat({ value, label, to }: { value: number; label: string; to?: string }) {
   const content = (
     <>
-      <span className="stat__value">{value.toLocaleString()}</span>
+      <span className="stat__value">{formatNumber(value)}</span>
       <span className="stat__label">{label}</span>
     </>
   );
@@ -66,6 +68,53 @@ function Backups({ runs }: { runs: BackupRun[] }) {
   );
 }
 
+/** A sentence from the update check's reason, which comes without a final full stop. */
+function sentence(text: string): string {
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+function lastCheck(updates: Updates): string {
+  if (updates.checking === "off") return "Checking for updates is off.";
+  if (!updates.last_check) return "Not checked yet.";
+  const { checked_at: at, error } = updates.last_check;
+  if (error) return `Last check failed at ${formatDateTime(at)}: ${sentence(error)}`;
+  const newest = updates.available ? `Clavren ${updates.available.version} is available.` : "This is the newest release.";
+  return `Last checked ${formatDateTime(at)}. ${newest}`;
+}
+
+function Server() {
+  const { updates, error, check, checkNow } = useUpdates();
+  const [checkError, setCheckError] = useState<unknown>(null);
+  if (error) return <ErrorNotice error={error} />;
+  if (!updates) return <Loading />;
+  return (
+    <div className="server-facts">
+      <p>Version {updates.running_version}</p>
+      <p>
+        {lastCheck(updates)}{" "}
+        <Button
+          size="small"
+          variant="quiet"
+          busy={check === "waiting"}
+          disabledReason={updates.checking === "off" ? "Checking for updates is off" : null}
+          onClick={() => {
+            setCheckError(null);
+            checkNow().catch(setCheckError);
+          }}
+        >
+          Check now
+        </Button>
+      </p>
+      {check === "slow" && (
+        <Notice tone="warning">
+          The check is taking longer than usual; see <code>journalctl -u clavren-update-check</code>.
+        </Notice>
+      )}
+      <ErrorNotice error={checkError} />
+    </div>
+  );
+}
+
 export function OverviewPage() {
   useTitle("Overview");
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -103,6 +152,8 @@ export function OverviewPage() {
       )}
       <h2>Backups</h2>
       {backups ? <Backups runs={backups} /> : !error && <Loading />}
+      <h2>Server</h2>
+      <Server />
     </section>
   );
 }

@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.098038 )
-[//]: # (+ Revised: 	2026/11/07 19:37:01.329688 )
+[//]: # (+ Revised: 	2026/11/09 10:31:39.903740 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Clavren — Specification
@@ -108,7 +108,7 @@ The `clavren-client` crate does all of this for Rust applications; others follow
 
 ### When the client checks
 
-- **At start**: validate the cached token offline (signature with the embedded public key, `aud` = this product, not expired, device fingerprint matches, no clock rollback). Valid → the application starts at once. If the last successful check is more than 24 hours old, check online in the background.
+- **At start**: validate the cached token offline (signature with the embedded public key, `aud` = this product, not expired, the token's `dev` claim matches this device's key, no clock rollback). Valid → the application starts at once. If the last successful check is more than 24 hours old, check online in the background.
 - **While running**: check online once 24 hours have passed since the last successful check. The interval is configurable in the client.
 - **Always online first**: without a valid cached token (first activation, token expired, clock rolled back) the application checks at once, whatever the interval.
 - **After a network failure**: retry with backoff (1, 5, 15, 60 minutes), never more often.
@@ -134,7 +134,7 @@ The application receives one typed outcome and shows its own translated message:
 
 ### Clock rollback
 
-The client stores the latest time it has seen (system clock, token `iat`, server time from each response). If the system clock is ever more than 1 hour earlier than that, the cached token is treated as invalid until an online check succeeds.
+The client keeps the latest system-clock time it has seen and, at each successful answer, the difference between the server's time and its own; it judges the cached token by its clock plus that difference. If the system clock is ever more than 1 hour earlier than the latest time seen, the cached token is treated as invalid until an online check succeeds. A wrong clock therefore works normally, and a clock set back before a check gains nothing.
 
 ### Never
 
@@ -270,7 +270,8 @@ A polished, responsive web application (React, TypeScript, Vite) embedded in the
 
 ### Pages
 
-- **Overview**: products, licences by state, active computers, computers that checked in and checks made in the last 24 hours, last successful backup (warning if over 48 hours old).
+- **Overview**: products, licences by state, active computers, computers that checked in and checks made in the last 24 hours, last successful backup (warning if over 48 hours old), and the server: its version, the last check for a newer release (or why it failed) and **Check now**.
+- **Every page**: when a newer release is out, a notice with the version, **What's new** (the release page) and **Update to X.Y.Z**, which turns into an inline confirmation (with "Update without a backup" to tick when the backup drive isn't mounted), then shows the update's progress and, after the dashboard reloads itself, "Updated to X.Y.Z".
 - **Licences**: table with key (hidden, **Reveal** / **Copy**), product, customer, state, issued, redeemed, last check, customer, expiry and notes (inline; revocation reason inline on revoked licences); the product, key, state and dates are read-only. Search by key (normalized and looked up by hash), customer name or email, licence ID. Filters by product, state, expiry (permanent, expiring within 30 days, expired), each of which can also exclude ("Except revoked"), plus a hide box for key, customer or licence ID. Primary action **Issue licences**: inline panel with product, customer (picked from a searchable list of every customer, or typed as a new one), quantity (up to 1,000), optional expiry and notes; the new keys appear there with **Copy message** (one customer) and **Download CSV**. Bulk: set customer, edit expiry, edit notes, edit reason, export CSV, revoke, delete (with the server's count of what goes).
 - **Licence detail**: all fields, Reveal/Copy, **Copy message**, Reset (only when in use), Revoke (unless revoked), Delete (any state), and the activation history (every computer it was on, with reasons).
 - **Customers**: table (inline editing and creation), search by name or email, each with their licences; delete with inline confirmation ("their licences keep working; their name and email are erased").
@@ -294,7 +295,7 @@ Under `/api/admin`, authenticated by session cookie plus CSRF header; same-origi
 - **Expand**: related entities are IDs by default and full objects with `?expand=<field>` (repeatable). No `*_id` fields and no copied convenience fields. Licence: `product`, `customer`, `active_activation`. Activation: `license`. Audit entry: `admin_user`. Expanding a page runs one query per field, never one per row.
 - **Pagination** on every list (cursor-based, page size up to 100).
 - **Bulk endpoints**: issue N licences (one multi-row insert), revoke a selection, edit expiry and/or notes of a selection, export a selection or the current filter. Up to 1,000 IDs, one transaction, all-or-nothing with an error naming the IDs that blocked it, one audit entry per item.
-- Resources: products, customers, licences (+ reveal, message, reset, revoke), activations (+ revoke), audit log, overview stats, backup status, session (login, logout, logout others), account (password, TOTP, recovery codes), preferences.
+- Resources: products, customers, licences (+ reveal, message, reset, revoke), activations (+ revoke), audit log, overview stats, backup status, updates (status, check now, install), session (login, logout, logout others), account (password, TOTP, recovery codes), preferences.
 
 ---
 
@@ -337,7 +338,7 @@ Under `/api/admin`, authenticated by session cookie plus CSRF header; same-origi
 - Clavren is one `aarch64` binary with the dashboard embedded, plus `clavren-admin`. Migrations run at startup.
 - `clavren` system user without a login shell; `clavren.service` (systemd) runs as it with `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `ReadWritePaths=/var/lib/clavren`, restart on failure.
 - `cloudflared` exposes Clavren over HTTPS; Clavren itself listens on localhost. Nothing in Clavren depends on Cloudflare.
-- **Upgrade**: replace the binary, restart; keep the previous binary to roll back, and a fresh backup before every upgrade.
+- **Upgrade**: replace the binary, restart; keep the previous binary to roll back, and a fresh backup before every upgrade. From the dashboard: the server only writes request files in `/var/lib/clavren/updates`; `clavren-update-check` (clavren user, timer every 6 hours and on request) finds new releases on GitHub (`CLAVREN_UPDATE_SOURCE`, `off` to stop), and the root `clavren-update` (on request, through a path unit) re-checks the request and the forge, verifies the bundle's BLAKE3 checksum and runs its `install.sh`. Requests are audited as `server.update_requested`.
 
 ### Backups
 
@@ -393,7 +394,7 @@ Every step ships with its tests; none are left for the end.
 - **Contract**: pinned JSON for every public response and error, the token claim set, the CSV columns, and golden test vectors (normalization, check message, fingerprint).
 - **Migrations**: up from empty, down and up again; data inserted at each step survives the next.
 - **Schema**: every table matches its documented functional dependencies; `license_states` matches section 7.
-- **Client**: against a real server: offline start, background check, definitive vs temporary failures, clock rollback, backoff, nothing on the UI thread.
+- **Client**: against a real server: offline start, background check, definitive vs temporary failures, clock rollback, a wrong clock, and a clock set back before a check, backoff, nothing on the UI thread.
 - **Dashboard E2E** (Playwright, headless, never the real mouse or keyboard): login with TOTP, issue, copy message, reveal, export, inline edit (Enter, blur, Escape), reset, revoke, bulk actions, preferences restored after logging in again; results checked through the API.
 - **Rendered**: a reviewed baseline screenshot of every page in light and dark, at normal and phone width; disabled actions dimmed; nothing clipped.
 - **Entry points and lifecycle**: server start with and without a master key, graceful shutdown, every CLI command and its output.

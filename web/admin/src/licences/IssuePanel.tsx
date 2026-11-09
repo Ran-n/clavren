@@ -2,7 +2,7 @@
 // a new one typed in place, or none), quantity, optional expiry and notes. The new keys stay on
 // screen only until the panel closes.
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { api, download } from "../shared/api";
 import { Button } from "../shared/components/Button";
 import { CopyButton } from "../shared/components/Copy";
@@ -10,11 +10,22 @@ import { ErrorNotice } from "../shared/components/Notice";
 import { plural } from "../shared/errors";
 import { fromDateInput } from "../shared/format";
 import type { Customer, Licence, Product } from "../shared/types";
+import type { IssueDraft } from "../shared/preferences";
 import { CustomerPicker, type CustomerChoice } from "./CustomerPicker";
 import { MAX_BATCH, csvName, customerBody } from "./licenceApi";
 
 type Issued = { licences: (Licence & { key: string })[]; customer: Customer | null; message: string | null };
-type Props = { products: Product[]; onClose: () => void; onIssued: () => void };
+type Props = {
+  products: Product[];
+  /** Whether `products` is the complete list. */
+  productsLoaded: boolean;
+  /** The product, quantity and expiry chosen last time (remembered with the preferences). */
+  draft: IssueDraft;
+  onDraft: (change: Partial<IssueDraft>) => void;
+  onClose: () => void;
+  onIssued: () => void;
+  onMore: () => void;
+};
 
 function IssuedKeys({ issued, onMore, onClose }: { issued: Issued; onMore: () => void; onClose: () => void }) {
   const [error, setError] = useState<unknown>(null);
@@ -44,17 +55,22 @@ function IssuedKeys({ issued, onMore, onClose }: { issued: Issued; onMore: () =>
   );
 }
 
-export function IssuePanel({ products, onClose, onIssued }: Props) {
+export function IssuePanel({ products, productsLoaded, draft, onDraft, onClose, onIssued, onMore }: Props) {
   const active = products.filter((product) => product.is_active);
   const [product, setProduct] = useState("");
+  // a remembered product that was deleted or deactivated since is no choice any more
+  const remembered = active.some((option) => option.id === draft.product) ? draft.product : undefined;
+  useEffect(() => {
+    if (productsLoaded && draft.product && !remembered) onDraft({ product: undefined });
+  }, [productsLoaded, draft.product, remembered, onDraft]);
   const [customer, setCustomer] = useState<CustomerChoice>({ kind: "new", name: "", email: "" });
-  const [quantity, setQuantity] = useState(1);
-  const [expiry, setExpiry] = useState("");
+  const [quantity, setQuantity] = useState(draft.quantity ?? 1);
+  const [expiry, setExpiry] = useState(draft.expires_at ?? "");
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [issued, setIssued] = useState<Issued | null>(null);
-  const chosenProduct = product || active[0]?.id || "";
+  const chosenProduct = product || remembered || active[0]?.id || "";
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -63,7 +79,7 @@ export function IssuePanel({ products, onClose, onIssued }: Props) {
     try {
       const body = { product: chosenProduct, customer: customerBody(customer), quantity, expires_at: fromDateInput(expiry) ?? undefined, internal_notes: notes.trim() || undefined };
       setIssued(await api<Issued>("POST", "/licences", body));
-      onIssued();
+      onIssued(); // the keys stay on screen, but a later visit starts with the panel closed
     } catch (failure) {
       setError(failure);
     } finally {
@@ -71,14 +87,14 @@ export function IssuePanel({ products, onClose, onIssued }: Props) {
     }
   }
 
-  if (issued) return <section className="panel" aria-label="Issue licences"><IssuedKeys issued={issued} onMore={() => setIssued(null)} onClose={onClose} /></section>;
+  if (issued) return <section className="panel" aria-label="Issue licences"><IssuedKeys issued={issued} onMore={() => { setIssued(null); onMore(); }} onClose={onClose} /></section>;
   return (
     <section className="panel" aria-label="Issue licences">
       <form className="issue-form" onSubmit={(event) => void submit(event)}>
         <h2>Issue licences</h2>
         <label className="field">
           <span className="field__label">Product</span>
-          <select value={chosenProduct} onChange={(event) => setProduct(event.target.value)} required>
+          <select value={chosenProduct} onChange={(event) => { setProduct(event.target.value); onDraft({ product: event.target.value }); }} required>
             {active.length === 0 && <option value="">No active product: add one on the Products page</option>}
             {active.map((option) => (
               <option key={option.id} value={option.id}>
@@ -90,11 +106,16 @@ export function IssuePanel({ products, onClose, onIssued }: Props) {
         <CustomerPicker choice={customer} onChange={setCustomer} />
         <label className="field field--narrow">
           <span className="field__label">How many</span>
-          <input type="number" min={1} max={MAX_BATCH} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} required />
+          <input type="number" min={1} max={MAX_BATCH} value={quantity} onChange={(event) => {
+              const value = Number(event.target.value);
+              setQuantity(value);
+              // only a count the server accepts is remembered
+              if (Number.isInteger(value) && value >= 1 && value <= MAX_BATCH) onDraft({ quantity: value });
+            }} required />
         </label>
         <label className="field field--narrow">
           <span className="field__label">Expires (optional)</span>
-          <input type="date" value={expiry} onChange={(event) => setExpiry(event.target.value)} />
+          <input type="date" value={expiry} onChange={(event) => { setExpiry(event.target.value); onDraft({ expires_at: event.target.value || undefined }); }} />
         </label>
         <label className="field">
           <span className="field__label">Notes (optional)</span>

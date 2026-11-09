@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:36.519572
-//+ Revised: 	2026/11/03 04:54:23.045297
+//+ Revised: 	2026/11/09 10:00:42.403791
 // -----------------------------------------------------------------------------
 
 //! Calling the HTTP API in-process, as a browser would: JSON bodies, the session cookie, and the
@@ -15,13 +15,13 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use clavren::clock::ManualClock;
-use clavren::http::AppState;
+use clavren::http::{AppState, Settings};
 use serde_json::Value;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
 use super::admin::{PASSWORD, SeededAdmin, seed_admin};
-use super::{test_app, test_state};
+use super::{test_app, test_settings, test_state_with};
 
 pub struct Reply {
     pub status: StatusCode,
@@ -134,7 +134,11 @@ pub struct Fixture {
 
 impl Fixture {
     pub async fn new(pool: PgPool) -> Self {
-        let (state, clock) = test_state(pool.clone());
+        Self::with_settings(pool, test_settings()).await
+    }
+
+    pub async fn with_settings(pool: PgPool, settings: Settings) -> Self {
+        let (state, clock) = test_state_with(pool.clone(), settings);
         let admin = seed_admin(&pool, &clock, "ran").await;
         Self { app: test_app(state.clone(), client()), state, clock, admin }
     }
@@ -164,7 +168,11 @@ pub struct Admin {
 
 impl Admin {
     pub async fn new(pool: PgPool) -> Self {
-        let fixture = Fixture::new(pool).await;
+        Self::with_settings(pool, test_settings()).await
+    }
+
+    pub async fn with_settings(pool: PgPool, settings: Settings) -> Self {
+        let fixture = Fixture::with_settings(pool, settings).await;
         let browser = fixture.sign_in().await;
         Self { fixture, browser }
     }

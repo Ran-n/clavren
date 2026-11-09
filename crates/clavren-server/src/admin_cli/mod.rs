@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:35.673534
-//+ Revised: 	2026/11/03 04:54:18.833609
+//+ Revised: 	2026/11/08 14:55:44.503947
 // -----------------------------------------------------------------------------
 
 //! `clavren-admin`: managing administrator accounts on the server itself (there is no
@@ -81,6 +81,8 @@ pub enum CliError {
     Totp(#[from] TotpError),
     #[error(transparent)]
     Random(#[from] RandomError),
+    #[error("a new recovery code doesn't read back as one; nothing was changed")]
+    RecoveryCodes,
 }
 
 pub async fn run(command: &Command, context: &CliContext, terminal: &mut dyn Terminal) -> Result<(), CliError> {

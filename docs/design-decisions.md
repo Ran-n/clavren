@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.155237 )
-[//]: # (+ Revised: 	2026/11/07 19:37:00.933296 )
+[//]: # (+ Revised: 	2026/11/09 10:00:42.941215 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Design decisions
@@ -47,6 +47,25 @@ the Pi is down.
 
 Checks use a server challenge rather than a device timestamp, because school PCs often have the
 wrong time and a timestamp-based check would fail on them.
+
+## IPv6 clients are limited by their /64
+
+Rate limits key an IPv6 client by its /64 network, not its full address: a connection usually gets
+a whole /64 and can pick a new address for every request, which would make a per-address limit
+meaningless. Computers on one IPv6 network (a school) then share one allowance, as they already do
+over IPv4 behind one NAT address. The limits (10 activations, 120 checks per hour) are sized for
+that: a school activates a handful of computers at a time, and each checks once a day.
+
+## Tokens are judged by the server's clock
+
+The client keeps how far the computer's clock was from the server's at its last answer, and judges
+the cached token by the computer's clock plus that difference. The alternative, the computer's
+clock alone with the latest time seen as a rollback guard, either locks out a computer whose clock
+is simply wrong (one set ahead never runs) or, when the guard is reset after every check, lets a
+clock set back before a check stretch the 30 days by as much as it was set back. With the
+difference, a wrong clock works normally, a clock set back after a check is noticed against the
+latest time seen (system-clock time) and asks for a check, and one set back before a check gains
+nothing.
 
 ## Customers are recorded
 
@@ -185,12 +204,62 @@ how to build it. `index.html` is never cached (it names the build's files); the 
 `assets/` are cached for good. Pages get a strict Content-Security-Policy: no inline scripts,
 nothing from elsewhere, no framing.
 
+## Updates are found and installed outside the server
+
+The server makes no outgoing connection and runs as an unprivileged user under
+`NoNewPrivileges` and `ProtectSystem=strict`: it can't replace its own binary or restart itself,
+and must not be able to, or a stolen admin session would own the Pi. So two scripts do the work,
+each started by a systemd path unit when the server writes a file in `/var/lib/clavren/updates`,
+the only folder it can write:
+
+- **Checking** (`clavren-update-check.sh`, as the clavren user) runs from a timer every 6 hours
+  and when **Check now** writes `check-request`. It writes `latest.json`, which the server only
+  reads. Same split as backups: a script the system runs, a server that reports.
+- **Installing** (`clavren-update.sh`, as root) runs when **Update** writes `request.json`. The
+  request is untrusted (the unprivileged server wrote it): it may only name a version, three plain
+  numbers, and whether to skip the backup, both checked before use and never put in a command
+  unchecked. Everything else is decided by the root script: it asks the forge again and requires
+  the version to be the newest release right now and newer than the installed one, takes the
+  bundle and checksum from that release, checks the BLAKE3 sum, and runs the bundle's own
+  `install.sh`, so a release's new install steps apply as in an upgrade by hand.
+
+The alternatives give the server too much. `sudo` for one command, a polkit rule allowing it to
+start a unit, or running the server as root all let a compromised server choose what runs as
+root; a request file lets it ask for one thing, which root checks.
+
+Root never writes in the clavren-owned folder (the clavren user could plant a link there that
+root would follow): it moves the request aside by name and writes its progress to
+`/var/lib/clavren-update/status.json`, in a folder only root can write. The server reads both and
+treats an update still "running" after 20 minutes (the service times out at 15) as failed.
+
+A BLAKE3 checksum next to the bundle only catches a broken download, not a compromised forge
+account. Signing releases is a separate step, not taken yet.
+
 ## The dashboard's tests run against a frozen clock
 
 The E2E and screenshot tests drive a real server (`examples/e2e_server.rs`) whose clock stands
 still, so every date on screen is the same in every run and the screenshot baselines never drift.
 A frozen clock leaves three authenticator codes (the frozen step and either side) plus the ten
 recovery codes; the tests spend them carefully (`web/admin/e2e/credentials.ts`).
+
+## Limits accepted at this size
+
+Two weaknesses found in the 2026-11-08 audit are left as they are, because Clavren is sized for
+hundreds to a few thousand licences ([spec.md](spec.md)) and fixing them costs more than they
+risk at that size. Revisit them if that changes.
+
+- **Deleting a huge product.** Deleting a product removes all its licences and their activations
+  in one transaction (`crates/clavren-server/src/products/mod.rs`), and every request is cut off
+  after 30 seconds (`crates/clavren-server/src/http/mod.rs`). Somewhere around 100,000 licences
+  on a Raspberry Pi the delete would take longer, roll back, and answer `408` every time. A few
+  thousand licences delete in well under a second. The fix, if ever needed: delete in batches in
+  the background, or mark the product deleted and let the hourly clean-up remove its rows.
+- **Using up an activation's checks.** The limit of 30 checks per hour per activation is counted
+  before the device's signature is checked (`crates/clavren-server/src/activations/public_routes.rs`),
+  so anyone who knows an activation's ID can spend them and keep that computer from checking for
+  an hour. The computer keeps working on its cached token (30 days), and the ID only exists on the
+  computer itself and in the dashboard, so it can't be guessed. The fix, if ever needed: count only
+  failed checks (wrong challenge or signature) against the activation.
 
 ## Normalization (BCNF) check
 

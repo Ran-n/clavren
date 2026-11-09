@@ -20,7 +20,8 @@ function buildDashboard(): void {
 function start(spec: ServerSpec): Promise<ChildProcess> {
   rmSync(spec.stateFile, { force: true });
   rmSync(`${spec.stateFile}.session`, { force: true });
-  const child = spawn("cargo", ["run", "--quiet", "--example", "e2e_server", "--", String(spec.port), spec.dataDir, spec.database], {
+  const args = [String(spec.port), spec.dataDir, spec.database, ...(spec.otherAdmin ? ["--other-admin"] : [])];
+  const child = spawn("cargo", ["run", "--quiet", "--example", "e2e_server", "--", ...args], {
     cwd: REPOSITORY,
     stdio: ["pipe", "pipe", "inherit"],
     env: { ...process.env, CLAVREN_LOG: "warn" },

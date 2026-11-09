@@ -1,13 +1,13 @@
 // Messages in the page: errors (with what to do), successes, and the loading state.
 
 import type { ReactNode } from "react";
-import { describe } from "../errors";
+import { describe, type Wording } from "../errors";
 
-export function ErrorNotice({ error, children }: { error: unknown; children?: ReactNode }) {
+export function ErrorNotice({ error, children, wording }: { error: unknown; children?: ReactNode; wording?: Wording }) {
   if (!error) return null;
   return (
     <div className="notice notice--error" role="alert">
-      <span>{describe(error)}</span>
+      <span>{describe(error, wording)}</span>
       {children}
     </div>
   );

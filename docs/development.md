@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.213599 )
-[//]: # (+ Revised: 	2026/11/07 19:37:01.228241 )
+[//]: # (+ Revised: 	2026/11/09 13:58:25.134436 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Development
@@ -43,6 +43,13 @@ cargo test
 .\scripts\coverage.ps1   # the full suite under coverage, with the line gate
 ```
 
+**On every push** the same checks run on GitHub (`.github/workflows/checks.yml`), GitLab
+(`.gitlab-ci.yml`) and Codeberg (`.forgejo/workflows/checks.yml`; Actions must be enabled in the
+repository's settings). All three run `scripts/ci-setup.sh` (Node.js 22 and the PostgreSQL 17
+client on Debian or Ubuntu) and then `scripts/ci.sh`: the dashboard's `npm ci`, type check and
+build, then `cargo fmt --check`, clippy and `cargo test --workspace` against a PostgreSQL 17
+service. The end-to-end tests and the coverage gate stay local: run them before a release.
+
 ## Tests
 
 Development and tests use a **local, disposable PostgreSQL cluster** in `target/local-postgres`,
@@ -73,6 +80,7 @@ or the development database. An explicit `DATABASE_URL` in the environment wins.
 | `tests/checks.rs` | Challenges and checks: signed tokens, the device signature, replayed and expired challenges, reset, revoked and deleted licences and products, per-activation limits |
 | `tests/admin_console.rs` | Activations list and revoke, the overview and its backup warning, the audit log, backups, preferences |
 | `tests/dashboard.rs` | The embedded dashboard: its files, every page path, cache and security headers, API paths that stay JSON errors |
+| `tests/updates.rs` | Updates: what the scripts' files say (newer only, failed checks, unreadable files), Check now, the install request and its refusals, audit and rollback, session and CSRF |
 | `tests/backup_restore.rs` | A `pg_dump` archive restores into an empty database and everything still works with the same master key; the deploy scripts parse |
 | `crates/clavren-client/tests/offline_and_online.rs` | The client against a fake server: offline days, refusals, clock rollback, the background checker |
 | `crates/clavren-client/tests/against_server.rs` | The client against the real server over HTTP: activate, check, reset, a second computer, revoke, a deleted licence or product |
@@ -163,7 +171,8 @@ dashboard.
 mouse or keyboard). `npm run e2e` builds the dashboard, then starts two servers from
 `crates/clavren-server/examples/e2e_server.rs` on ports 8091 and 8092, each with its own fresh
 database in the local cluster (`.\scripts\local-db.ps1` must be running) and a clock frozen at
-2027-03-01 09:30 UTC. The `flows` project signs in, issues, copies, reveals, exports, edits in
+2027-03-01 09:30 UTC; the `flows` one also has a second admin (`--other-admin`), for the tests
+where another admin signs in in another tab. The `flows` project signs in, issues, copies, reveals, exports, edits in
 place, resets, revokes, deletes, works in bulk, and checks every result through the API. The `rendered`
 project compares every page, light and dark, at desktop and phone width, with the reviewed
 baselines in `web/admin/e2e/baselines`, and checks that no page scrolls sideways and that disabled
@@ -189,8 +198,10 @@ from Windows with [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild)
 4. In `target/dist/`, put together `bin/clavren` and `bin/clavren-admin` (from
    `target/aarch64-unknown-linux-gnu/release/`), `deploy/*`, `docs/`, `LICENSE`, `README.md` and
    `CHANGELOG.md`. Binaries and `deploy/*.sh` are mode 755, everything else 644, and the `.sh`
-   files must have LF line endings. Archive it as `clavren-X.Y.Z-aarch64-linux.tar.gz` with a
-   BLAKE3 checksum next to it (`b3sum … > ….tar.gz.b3`).
+   files must have LF line endings. Archive it as `clavren-X.Y.Z-aarch64-linux.tar.gz` (one
+   folder `clavren-X.Y.Z-aarch64-linux/` inside) with a BLAKE3 checksum next to it, made from
+   the archive's own folder so the line names the bare file (`b3sum clavren-X.Y.Z-aarch64-linux.tar.gz > clavren-X.Y.Z-aarch64-linux.tar.gz.b3`):
+   the dashboard's updater refuses any other name.
 
 How it is installed from there is in [deployment.md](deployment.md).
 

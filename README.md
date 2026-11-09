@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:54.923033 )
-[//]: # (+ Revised: 	2026/11/08 04:55:55.017113 )
+[//]: # (+ Revised: 	2026/11/09 15:27:40.549440 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 <h1 align="center">Clavren</h1>
@@ -87,7 +87,7 @@ Download `clavren-X.Y.Z-aarch64-linux.tar.gz` from the [latest release](https://
 sudo ./deploy/install.sh --public-url https://licences.example.com
 ```
 
-It sets up PostgreSQL, the service, nightly backups and your admin account; run it again from a newer release to upgrade. Then point HTTPS (Cloudflare Tunnel or a reverse proxy) at it.
+It sets up PostgreSQL, the service, nightly backups, update checks and your admin account. Then point HTTPS (Cloudflare Tunnel or a reverse proxy) at it. When a newer release is out, the dashboard says so, and its **Update** button installs it (backing up first); running the script again from a newer release upgrades too.
 
 [docs/deployment.md](docs/deployment.md) walks through it step by step, with or without the script, with a check after each step.
 

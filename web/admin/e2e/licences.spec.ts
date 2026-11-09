@@ -4,7 +4,7 @@
 
 import { readFileSync } from "node:fs";
 import { createProduct, issue, licence, unique } from "./data";
-import { Device, expect, test } from "./fixtures";
+import { Device, expect, newSession, signedInPage, test } from "./fixtures";
 
 test.use({ permissions: ["clipboard-read", "clipboard-write"] });
 
@@ -326,5 +326,70 @@ test("bulk delete warns with the server's counts, for a selection and for everyt
   await strip.getByRole("button", { name: "Delete" }).click();
   await expect(admin.getByText("12 licences deleted.")).toBeVisible();
   await expect(admin.getByText("No licence matches.")).toBeVisible();
+  expect((await api.get<{ data: unknown[] }>(`/licences?product=${product.id}`)).data).toHaveLength(0);
+});
+
+// Regression: Enter in the customer field, with no suggestion highlighted, submitted the form:
+// typing a new customer's name and pressing Enter issued licences at once.
+test("Enter in the customer field never issues", async ({ admin, api }) => {
+  const product = await createProduct(api);
+  await admin.goto("/licences");
+  await admin.getByRole("button", { name: "Issue licences" }).click();
+  const panel = admin.getByRole("region", { name: "Issue licences" });
+  await panel.getByLabel("Product").selectOption({ label: product.name });
+  await panel.getByRole("combobox", { name: "Customer (optional)" }).fill(unique("Typed then Enter"));
+  await panel.getByRole("combobox", { name: "Customer (optional)" }).press("Enter");
+  await admin.waitForTimeout(300);
+  await expect(panel.getByRole("button", { name: "Issue", exact: true })).toBeVisible();
+  expect((await api.get<{ data: unknown[] }>(`/licences?product=${product.id}`)).data).toHaveLength(0);
+});
+
+// Regression: unticking one row while "all that match" was selected unticked every other row.
+test("unticking a row of all that match keeps the rest of the page ticked", async ({ admin, api }) => {
+  const product = await createProduct(api);
+  await issue(api, product.id, { quantity: 12 });
+  await admin.goto("/licences");
+  await productFilter(admin).selectOption({ label: product.name });
+  await admin.getByLabel("Rows").selectOption("10");
+  const boxes = admin.getByRole("table", { name: "Licences" }).getByLabel("Select this row");
+  await expect(boxes).toHaveCount(10);
+  await admin.getByLabel("Select every row on this page").check();
+  await admin.getByRole("button", { name: "Select all that match the filter" }).click();
+  await admin.getByRole("navigation", { name: "Table pages" }).getByRole("button", { name: "Next" }).click();
+  await expect(boxes).toHaveCount(2);
+  await expect(boxes.first()).toBeChecked();
+  await boxes.first().uncheck();
+  await expect(boxes.first()).not.toBeChecked();
+  await expect(boxes.nth(1)).toBeChecked();
+  await admin.getByRole("navigation", { name: "Table pages" }).getByRole("button", { name: "Previous" }).click();
+  await expect(boxes).toHaveCount(10);
+  for (let index = 0; index < 10; index += 1) await expect(boxes.nth(index)).toBeChecked();
+
+  // the bulk action takes every matching licence but the one left out
+  const bar = admin.getByRole("region", { name: "Selected licences" });
+  await expect(bar).toContainText("except 1 unticked licence");
+  const download = admin.waitForEvent("download");
+  await bar.getByRole("button", { name: "Export CSV" }).click();
+  const csv = readFileSync(await (await download).path(), "utf8").trim().split("\r\n").slice(1);
+  expect(csv).toHaveLength(11);
+});
+
+// The retried request carries its body again: a bulk change after signing in again in another tab.
+test("a bulk delete after signing in again in another tab deletes every selected licence", async ({ admin, api, request, credentials, baseURL }) => {
+  const product = await createProduct(api);
+  await issue(api, product.id, { quantity: 2 });
+  await admin.goto("/licences");
+  await productFilter(admin).selectOption({ label: product.name });
+  const rows = admin.getByRole("row").filter({ hasText: product.name });
+  await expect(rows).toHaveCount(2);
+  await admin.waitForTimeout(600); // the filter is saved by now: Delete is the next change
+  const { username, password } = credentials.info;
+  await signedInPage(admin, await newSession(request, username, password, credentials.recoveryCode()), baseURL as string);
+  await admin.getByLabel("Select every row on this page").check();
+  const bar = admin.getByRole("region", { name: "Selected licences" });
+  await bar.getByRole("button", { name: "Delete" }).click();
+  await bar.getByRole("group", { name: "Delete" }).getByRole("button", { name: "Delete" }).click();
+  await expect(admin.getByText("2 licences deleted.")).toBeVisible();
+  await expect(admin.getByText("This page is out of date")).toHaveCount(0);
   expect((await api.get<{ data: unknown[] }>(`/licences?product=${product.id}`)).data).toHaveLength(0);
 });

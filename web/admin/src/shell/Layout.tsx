@@ -1,5 +1,6 @@
-// The frame around every page once signed in: the navigation, the theme, who is signed in, and a
-// notice when settings can't be saved.
+// The frame around every page once signed in: the navigation, the theme, who is signed in, a
+// notice when settings can't be saved, one when a newer Clavren release is out, and one after
+// another admin's session took over this page.
 
 import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "../shared/components/Button";
@@ -7,6 +8,7 @@ import { ErrorNotice, Notice } from "../shared/components/Notice";
 import { usePreferences, type Theme } from "../shared/preferences";
 import { Link, useLocation } from "../shared/router";
 import { useSession, useSignedIn } from "../shared/session";
+import { UpdateNotice } from "./UpdateNotice";
 
 const PAGES = [
   { path: "/", label: "Overview" },
@@ -30,10 +32,16 @@ function isCurrent(page: string, path: string): boolean {
 
 export function Layout({ children }: { children: ReactNode }) {
   const { path, search } = useLocation();
-  const { preferences, update, saveError } = usePreferences();
-  const { signOut } = useSession();
+  const { preferences, update, flush, saveError } = usePreferences();
+  const { state, signOut } = useSession();
   const session = useSignedIn();
   const [signOutError, setSignOutError] = useState<unknown>(null);
+  // the switch is news on the page it happened on, until the admin goes elsewhere
+  const switched = state.status === "signed_in" ? state.switched : undefined;
+  const [switchedOn, setSwitchedOn] = useState<string | null>(switched ? path : null);
+  useEffect(() => {
+    if (switchedOn !== null && path !== switchedOn) setSwitchedOn(null);
+  }, [path, switchedOn]);
 
   useEffect(() => {
     const page = path + (search.size ? `?${search}` : "");
@@ -66,12 +74,14 @@ export function Layout({ children }: { children: ReactNode }) {
             ))}
           </select>
           <span className="app-header__user">{session.admin.username}</span>
-          <Button size="small" variant="quiet" onClick={() => signOut().catch(setSignOutError)}>
+          <Button size="small" variant="quiet" onClick={() => flush().then(signOut).catch(setSignOutError)}>
             Sign out
           </Button>
         </div>
       </header>
       <main className="app-main">
+        {switchedOn !== null && <ErrorNotice error={switched} />}
+        <UpdateNotice />
         {saveError && <Notice tone="warning">{saveError}</Notice>}
         <ErrorNotice error={signOutError} />
         {children}

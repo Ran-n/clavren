@@ -88,3 +88,30 @@ export function idOf<T extends { id: Id }>(value: Related<T> | null | undefined)
   if (value === null || value === undefined) return null;
   return typeof value === "string" ? value : value.id;
 }
+
+export type UpdateStage = "starting" | "downloading" | "checking" | "backing_up" | "installing" | "restarting";
+
+/** How the current or last update to a newer version went. */
+export type UpdateStatus = {
+  version: string | null;
+  state: "running" | "succeeded" | "failed";
+  stage: UpdateStage | null;
+  message: string | null;
+  started_at: string;
+  finished_at: string | null;
+};
+
+/** `GET /updates`: the running version, the last check, a newer release and the update status. */
+export type Updates = {
+  running_version: string;
+  checking: "on" | "off" | "never_checked";
+  last_check: { checked_at: string; error: string | null } | null;
+  available: { version: string; release_url: string | null; published_at: string | null; installable: boolean } | null;
+  backup_drive_mounted: boolean;
+  update: UpdateStatus | null;
+  updater_installed: boolean;
+  can_install: boolean;
+};
+
+/** The signed-in admin's session, from signing in and from `GET /session`. */
+export type Session = { admin: { id: Id; username: string }; csrf_token: string; expires_at: string };

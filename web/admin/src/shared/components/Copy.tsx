@@ -23,10 +23,18 @@ export function CopyButton({ text, label, size = "small" }: { text: () => Promis
     setState("busy");
     setError(null);
     try {
+      // only on HTTPS or localhost; elsewhere the browser has no clipboard to offer
+      if (!navigator.clipboard) throw new DOMException("no clipboard", "NotAllowedError");
       await navigator.clipboard.writeText(await text());
       setState("copied");
     } catch (failure) {
-      setError(failure instanceof DOMException ? "The browser didn't allow copying. Copy it by hand." : describe(failure));
+      setError(
+        failure instanceof DOMException
+          ? navigator.clipboard
+            ? "The browser didn't allow copying. Copy it by hand."
+            : "This browser only copies on HTTPS or localhost. Copy it by hand."
+          : describe(failure),
+      );
       setState("idle");
     }
   }
