@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:54.923033 )
-[//]: # (+ Revised: 	2026/11/09 15:27:40.549440 )
+[//]: # (+ Revised: 	2026/11/09 16:06:16.256661 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 <h1 align="center">Clavren</h1>
@@ -16,7 +16,7 @@ Clavren makes the keys you hand out, makes sure each one works on a single compu
 </p>
 
 > [!NOTE]
-> Clavren 0.3.0: the server, the dashboard, the client library and the Raspberry Pi deployment are built and tested, and `deploy/install.sh` installs or upgrades it on a Pi from the release bundle. Apps add it with the client library ([docs/client-integration.md](docs/client-integration.md)); avalio-lite is the first planned.
+> Clavren 0.4.0: the server, the dashboard, the client library and the Raspberry Pi deployment are built and tested, and `deploy/install.sh` installs or upgrades it on a Pi from the release bundle. Apps add it with the client library ([docs/client-integration.md](docs/client-integration.md)); avalio-lite is the first planned.
 
 <p align="center">
   <a href="#why-clavren">Why</a> ·
