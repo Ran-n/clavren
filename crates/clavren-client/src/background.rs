@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:09.222740
-//+ Revised: 	2026/11/08 14:55:43.319932
+//+ Revised: 	2026/11/09 22:30:52.782718
 // -----------------------------------------------------------------------------
 
 //! Checking in the background: a thread that checks whenever a check is due, retries a failed one
@@ -12,7 +12,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::client::Client;
 use crate::outcome::{Outcome, Temporary};
@@ -36,12 +36,14 @@ impl Background {
         let (stop, stopped) = mpsc::channel();
         let thread = std::thread::Builder::new().name("licence-checks".into()).spawn(move || {
             let mut reported = client.status();
-            let mut failures = 0usize;
+            let mut retry = Retry::default();
             loop {
-                let wait = if client.needs_check() {
+                let wait = if let Some(wait) = retry.pending(Instant::now()) {
+                    wait
+                } else if client.needs_check() {
                     match client.check() {
                         Ok(outcome) => {
-                            failures = 0;
+                            retry = Retry::default();
                             // a renewal moves `offline_until`; only a different kind of outcome is news
                             if std::mem::discriminant(&outcome) != std::mem::discriminant(&reported) {
                                 reported = outcome.clone();
@@ -52,16 +54,11 @@ impl Background {
                             // never again at once: a check that answered but left nothing to run
                             // on would otherwise ask the server in a tight loop
                             let due = client.time_until_due();
-                            if due.is_zero() { BACKOFF[0] } else { due }
+                            if due.is_zero() { retry.wait_at_least(Instant::now(), BACKOFF[0]) } else { due }
                         }
                         Err(problem) => {
                             log::warn!("licence check failed, retrying later: {problem}");
-                            let backoff = BACKOFF[failures.min(BACKOFF.len() - 1)];
-                            failures += 1;
-                            match problem {
-                                Temporary::RateLimited(retry_after) => backoff.max(retry_after),
-                                _ => backoff,
-                            }
+                            retry.failed(Instant::now(), &problem)
                         }
                     }
                 } else {
@@ -101,6 +98,37 @@ impl Background {
     }
 }
 
+/// When the next check may go out after a failed one. The loop wakes up at least every
+/// [`LONGEST_SLEEP`], so the backoff is kept here rather than in how long it sleeps.
+#[derive(Default)]
+struct Retry {
+    failures: usize,
+    not_before: Option<Instant>,
+}
+
+impl Retry {
+    /// How long until a check may go out again, or `None` when it may now.
+    fn pending(&self, now: Instant) -> Option<Duration> {
+        self.not_before.filter(|at| now < *at).map(|at| at - now)
+    }
+
+    /// Records a failed check; the wait grows along [`BACKOFF`], or is what the server asked for.
+    fn failed(&mut self, now: Instant, problem: &Temporary) -> Duration {
+        let backoff = BACKOFF[self.failures.min(BACKOFF.len() - 1)];
+        self.failures += 1;
+        let wait = match problem {
+            Temporary::RateLimited(retry_after) => backoff.max(*retry_after),
+            _ => backoff,
+        };
+        self.wait_at_least(now, wait)
+    }
+
+    fn wait_at_least(&mut self, now: Instant, wait: Duration) -> Duration {
+        self.not_before = Some(now + wait);
+        wait
+    }
+}
+
 fn save_time_seen(client: &Client) {
     if let Err(error) = client.save_time_seen() {
         log::error!("couldn't save the time seen: {error}");
@@ -110,5 +138,36 @@ fn save_time_seen(client: &Client) {
 impl Drop for Background {
     fn drop(&mut self) {
         self.shut_down();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MINUTE: Duration = Duration::from_secs(60);
+
+    #[test]
+    fn failed_checks_back_off_1_5_15_then_60_minutes() {
+        let (mut retry, start) = (Retry::default(), Instant::now());
+        let waits: Vec<_> =
+            (0..5).map(|_| retry.failed(start, &Temporary::Unreachable("offline".into())) / 60).collect();
+        assert_eq!(waits, [Duration::from_secs(1), Duration::from_secs(5), Duration::from_secs(15), MINUTE, MINUTE]);
+    }
+
+    /// Regression: the loop wakes up every 10 minutes, and each wake-up used to check again, so
+    /// the 15 and 60 minute steps (and a server's Retry-After) were never kept.
+    #[test]
+    fn no_check_goes_out_before_the_backoff_ends() {
+        let (mut retry, start) = (Retry::default(), Instant::now());
+        retry.failed(start, &Temporary::RateLimited(60 * MINUTE));
+        assert_eq!(retry.pending(start + LONGEST_SLEEP), Some(50 * MINUTE));
+        assert_eq!(retry.pending(start + 59 * MINUTE), Some(MINUTE));
+        assert_eq!(retry.pending(start + 60 * MINUTE), None);
+    }
+
+    #[test]
+    fn a_fresh_retry_never_waits() {
+        assert_eq!(Retry::default().pending(Instant::now()), None);
     }
 }

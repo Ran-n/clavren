@@ -14,6 +14,8 @@ export function NewProductRow({ onCreated, onCancel }: { onCreated: () => void; 
   const [error, setError] = useState<string | null>(null);
 
   async function save() {
+    // Enter saves too, and must not get past what disables the button
+    if (!name.trim() || busy) return;
     setBusy(true);
     setError(null);
     try {

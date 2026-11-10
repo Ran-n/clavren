@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.910282
-//+ Revised: 	2026/11/03 04:54:16.910282
+//+ Revised: 	2026/11/09 22:30:56.032679
 // -----------------------------------------------------------------------------
 
 //! `/api/admin/customers` against a real database: creating, searching, editing and deleting
@@ -180,4 +180,21 @@ async fn customer_endpoints_need_a_session_and_csrf(pool: PgPool) {
         .send(&admin.fixture.app)
         .await;
     assert_eq!(reply.status, StatusCode::FORBIDDEN);
+}
+
+/// Regression: a customer picked for a licence wasn't locked, so deleting them at the same moment
+/// made the licence point at nothing (a server error) or deadlocked with the licence edit.
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn a_customer_being_given_to_licences_cant_be_deleted_meanwhile(pool: PgPool) {
+    let admin = Admin::new(pool.clone()).await;
+    let customer = create(&admin, json!({ "name": "Ada" })).await;
+    let id = Uuid::parse_str(customer["id"].as_str().unwrap()).unwrap();
+    let mut picking = pool.begin().await.unwrap();
+    assert!(clavren::customers::repository::find_for_share(&mut picking, id).await.unwrap().is_some());
+
+    let mut deleting = pool.begin().await.unwrap();
+    sqlx::query("SET LOCAL lock_timeout = '200ms'").execute(&mut *deleting).await.unwrap();
+    let error = sqlx::query("DELETE FROM customers WHERE id = $1").bind(id).execute(&mut *deleting).await.unwrap_err();
+    assert_eq!(error.as_database_error().and_then(|error| error.code()).as_deref(), Some("55P03"), "lock timeout");
+    picking.commit().await.unwrap();
 }

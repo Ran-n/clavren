@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:17.000102
-//+ Revised: 	2026/11/03 04:54:17.000102
+//+ Revised: 	2026/11/09 22:30:56.099548
 // -----------------------------------------------------------------------------
 
 //! The embedded dashboard: its files, `index.html` for every page path, security and cache
@@ -81,4 +81,18 @@ async fn missing_files_and_api_paths_are_not_pages(pool: PgPool) {
         assert_eq!(body["error"], "not_found", "{path}");
     }
     assert_eq!(send(&app, Method::POST, "/licences").await.status, StatusCode::METHOD_NOT_ALLOWED);
+}
+
+/// Regression: the 0.4.0 release left the dashboard's `package.json` at 0.3.0. The dashboard and
+/// its lockfile carry the server's version.
+#[test]
+fn the_dashboard_carries_the_server_version() {
+    let read = |file: &str| -> serde_json::Value {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../web/admin/").to_owned() + file;
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
+    let (package, lock) = (read("package.json"), read("package-lock.json"));
+    assert_eq!(package["version"], env!("CARGO_PKG_VERSION"), "package.json");
+    assert_eq!(lock["version"], env!("CARGO_PKG_VERSION"), "package-lock.json");
+    assert_eq!(lock["packages"][""]["version"], env!("CARGO_PKG_VERSION"), "package-lock.json root package");
 }

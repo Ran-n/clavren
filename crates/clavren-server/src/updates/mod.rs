@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/09 09:57:45.588285
-//+ Revised: 	2026/11/09 11:22:44.900492
+//+ Revised: 	2026/11/09 23:01:00.855967
 // -----------------------------------------------------------------------------
 
 //! Server updates: which version runs, whether a newer release is out, and installing it.
@@ -214,10 +214,15 @@ async fn check_now(
         tracing::warn!(admin = %admin.username, "update check refused: CLAVREN_UPDATE_SOURCE is off");
         return Err(ApiError::conflict("updates_off", "checking for updates is off (CLAVREN_UPDATE_SOURCE=off)"));
     }
+    let _one_at_a_time = REQUESTS.lock().await;
     files::write(&settings.dir, files::CHECK_REQUEST, b"").await.map_err(write_failed)?;
     tracing::info!(admin = %admin.username, "update check requested");
     Ok((StatusCode::ACCEPTED, Json(json!({ "requested": true }))))
 }
+
+/// Held while a request for the scripts is checked and written (Clavren runs as one process): two
+/// at once would share the temporary file and refuse each other.
+static REQUESTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 async fn install(
     State(state): State<AppState>,
@@ -225,6 +230,8 @@ async fn install(
     ApiJson(body): ApiJson<InstallRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
     let settings = &state.settings.updates;
+    // One request written at a time: a second install waits, then sees the first as running.
+    let _one_at_a_time = REQUESTS.lock().await;
     let found = find(settings).await?;
     let updates = view(&found, settings, admin.actor.at);
     if !found.installer_present {
@@ -253,17 +260,28 @@ async fn install(
 
     let contents = serde_json::to_vec(&body).map_err(ApiError::internal)?;
     let metadata = json!({ "from": updates.running_version, "to": release.version, "skip_backup": body.skip_backup });
-    // The audit entry and the request stand or fall together: no request without its entry.
+    // No request without its audit entry: the request is written whole first (a failure there
+    // rolls the entry back), and the updater only sees it once the entry is committed. A crash or
+    // a failed rename between the two leaves an entry for a request that never went out (the
+    // admin is told it failed), never a request without its entry.
     let mut transaction = state.pool.begin().await?;
     audit::record(
         &mut *transaction,
         AuditEntry::by_without_id(&admin.actor, "server.update_requested", "server").with_metadata(metadata),
     )
     .await?;
-    files::write(&settings.dir, files::INSTALL_REQUEST, &contents).await.map_err(write_failed)?;
+    let staged = files::stage(&settings.dir, files::INSTALL_REQUEST, &contents).await.map_err(write_failed)?;
     if let Err(error) = transaction.commit().await {
-        files::remove(&settings.dir, files::INSTALL_REQUEST).await.map_err(write_failed)?;
+        if let Err(leftover) = staged.discard().await {
+            tracing::error!(%leftover, "the unsent update request can't be removed");
+        }
         return Err(error.into());
+    }
+    if let Err(error) = staged.publish().await {
+        if let Err(leftover) = files::discard(&settings.dir, files::INSTALL_REQUEST).await {
+            tracing::error!(%leftover, "the unsent update request can't be removed");
+        }
+        return Err(write_failed(error));
     }
     tracing::info!(
         admin = %admin.username,

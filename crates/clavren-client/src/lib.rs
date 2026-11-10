@@ -1,15 +1,17 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.161065
-//+ Revised: 	2026/11/03 04:54:11.161065
+//+ Revised: 	2026/11/09 22:30:52.982785
 // -----------------------------------------------------------------------------
 
-//! Client library for Breren applications: activates a licence key, keeps the device key in the
-//! operating system's secure storage, validates the cached activation token offline and renews
+//! Client library for Breren applications: activates a licence key, keeps the device key in a file
+//! only this Windows account can read (DPAPI; other systems plug in their own
+//! [`store::Protector`]), validates the cached activation token offline and renews
 //! it in the background, and reports a typed outcome the application turns into its own
 //! messages. See `docs/spec.md`, section 5, and `docs/client-integration.md`.
 //!
 //! ```no_run
+//! # #[cfg(windows)] {
 //! use std::sync::Arc;
 //! use clavren_client::{Background, Client, Config, Outcome, trusted_keys};
 //!
@@ -22,6 +24,7 @@
 //!     _ => { /* show the matching message */ }
 //! }
 //! let checks = Background::spawn(client.clone(), |outcome| { /* tell the UI thread */ }).unwrap();
+//! # }
 //! ```
 
 mod background;
@@ -58,8 +61,9 @@ pub fn trusted_keys(keys: &[(&str, &str)]) -> Option<TrustedKeys> {
 
 #[cfg(windows)]
 impl Client {
-    /// The usual setup on Windows: state in `%APPDATA%\<vendor>\<product>\licence.dat`, protected
-    /// with DPAPI for the current user, and HTTPS to `server_url`.
+    /// The usual setup on Windows: state in `%APPDATA%\<vendor>\<product>\licence.dat` (the
+    /// temporary folder when `APPDATA` isn't set), protected with DPAPI for the current user, and
+    /// HTTPS to `server_url`.
     pub fn for_windows(config: Config, server_url: &str, vendor: &str) -> Self {
         let base = std::env::var_os("APPDATA").map_or_else(std::env::temp_dir, std::path::PathBuf::from);
         let path = base.join(vendor).join(&config.product).join("licence.dat");

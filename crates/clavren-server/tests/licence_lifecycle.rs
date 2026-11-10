@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:17.167017
-//+ Revised: 	2026/11/08 14:55:45.390049
+//+ Revised: 	2026/11/09 22:30:56.704159
 // -----------------------------------------------------------------------------
 
 //! A licence after issuing: editing every field but the product (customer, expiry, notes, the
@@ -178,6 +178,9 @@ async fn bulk_edits_change_all_or_nothing(pool: PgPool) {
         assert_eq!(licences.get(id).await["internal_notes"], "Batch");
     }
     assert_eq!(licences.audited("licence.updated").await, 3, "one entry per licence");
+    // Regression: the answer counted the licences asked for, not those that changed.
+    let again = licences.post("/bulk/edit", json!({ "ids": ids, "internal_notes": "Batch" })).await;
+    assert_eq!((again.status, again.body["updated"].clone()), (StatusCode::OK, json!(0)), "nothing to change");
 
     let duplicate = licences.post("/bulk/edit", json!({ "ids": [ids[0], ids[0]], "internal_notes": "x" })).await;
     assert_eq!(duplicate.status, StatusCode::BAD_REQUEST);

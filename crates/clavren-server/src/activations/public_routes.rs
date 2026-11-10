@@ -1,11 +1,12 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.829876
-//+ Revised: 	2026/11/08 14:55:43.932168
+//+ Revised: 	2026/11/09 22:30:53.779134
 // -----------------------------------------------------------------------------
 
 //! `/api/v1`: the endpoints applications call. Every answer, errors included, carries the server's
-//! time. Bodies are limited to 16 KiB; each client address and each activation is rate limited.
+//! time. Bodies are limited to 16 KiB; each client address is rate limited, and so are the checks
+//! of each activation (counted in [`checks::check`], once its challenge proved it exists).
 
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
@@ -92,7 +93,6 @@ async fn check(
     let answer = async {
         limit(&state.public_limits.checks_per_ip, &limit_key(ip), now)?;
         let activation = activation_id(path)?;
-        limit(&state.public_limits.checks_per_activation, &activation.to_string(), now)?;
         let ApiJson(request) = request?;
         let checked = checks::check(&state, activation, &request, ip, now).await?;
         Ok(Json(CheckResponse {

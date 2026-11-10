@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/09 09:57:45.846323
-//+ Revised: 	2026/11/09 11:10:33.517266
+//+ Revised: 	2026/11/09 22:30:56.888987
 // -----------------------------------------------------------------------------
 
 //! `/api/admin/updates`: what the update scripts left in the data folder, as the dashboard sees
@@ -307,6 +307,20 @@ async fn without_a_backup_drive_an_update_must_say_so(pool: PgPool) {
     let reply = updates.install(json!({ "version": newer(), "skip_backup": true })).await;
     assert_eq!(reply.status, StatusCode::ACCEPTED, "{:?}", reply.body);
     assert_eq!(updates.audited().await[0]["metadata"]["skip_backup"], true);
+}
+
+/// Regression: two install requests at once both passed the "already running" check before
+/// either was written, so both were audited and the second overwrote the first.
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn two_install_requests_at_once_make_one_update(pool: PgPool) {
+    let updates = Updates::new(pool, true, true).await;
+    updates.latest(&newer(), json!({}));
+    let body = json!({ "version": newer(), "skip_backup": false });
+    let (first, second) = tokio::join!(updates.install(body.clone()), updates.install(body));
+    let mut statuses = [first.status, second.status];
+    statuses.sort();
+    assert_eq!(statuses, [StatusCode::ACCEPTED, StatusCode::CONFLICT]);
+    assert_eq!(updates.audited().await.len(), 1);
 }
 
 #[sqlx::test(migrator = "clavren::database::MIGRATOR")]

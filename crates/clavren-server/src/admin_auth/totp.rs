@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:35.493531
-//+ Revised: 	2026/11/08 14:55:44.366091
+//+ Revised: 	2026/11/09 22:30:54.407163
 // -----------------------------------------------------------------------------
 
 //! Authenticator-app codes (TOTP, RFC 6238): SHA-1, 6 digits, 30-second steps, one step of
@@ -73,6 +73,7 @@ pub fn matching_step(secret: &[u8], username: &str, code: &str, now: DateTime<Ut
         return None;
     }
     match totp(secret, username) {
+        // totp-rs compares the codes in constant time
         Ok(totp) => totp.check(code, seconds),
         Err(error) => {
             // not a wrong code: the stored secret or the username can't make a generator
@@ -90,7 +91,7 @@ pub fn open(keys: &KeyRing, admin_id: Uuid, ciphertext: &[u8], nonce: &[u8]) -> 
     Ok(aead::open(keys.totp_encryption(), ciphertext, nonce, admin_id.as_bytes())?)
 }
 
-/// The code an authenticator app shows at `at` (tests and the CLI's own check).
+/// The code an authenticator app shows at `at` (for tests).
 pub fn code_at(secret: &[u8], username: &str, at: DateTime<Utc>) -> Result<String, TotpError> {
     let seconds = u64::try_from(at.timestamp()).map_err(|_| TotpError::Secret("time before 1970".into()))?;
     Ok(totp(secret, username)?.generate(seconds).to_string())
@@ -118,9 +119,12 @@ mod tests {
         let secret = new_secret().unwrap();
         let at = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
         let code = code_at(&secret, "ran", at).unwrap();
-        assert!(matching_step(&secret, "ran", &code, at + Duration::from_secs(30)).is_some());
-        assert!(matching_step(&secret, "ran", &code, at - Duration::from_secs(30)).is_some());
+        let step = 1_800_000_000 / 30;
+        assert_eq!(matching_step(&secret, "ran", &code, at), Some(step));
+        assert_eq!(matching_step(&secret, "ran", &code, at + Duration::from_secs(30)), Some(step), "one step late");
+        assert_eq!(matching_step(&secret, "ran", &code, at - Duration::from_secs(30)), Some(step), "one step early");
         assert_eq!(matching_step(&secret, "ran", &code, at + Duration::from_secs(90)), None);
+        assert_eq!(matching_step(&secret, "ran", &code, at - Duration::from_secs(90)), None);
     }
 
     #[test]

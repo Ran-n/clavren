@@ -5,9 +5,10 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "../shared/components/Button";
 import { ErrorNotice, Notice } from "../shared/components/Notice";
-import { usePreferences, type Theme } from "../shared/preferences";
+import { usePreferences } from "../shared/preferences";
 import { Link, useLocation } from "../shared/router";
 import { useSession, useSignedIn } from "../shared/session";
+import { ThemeButton } from "./ThemeButton";
 import { UpdateNotice } from "./UpdateNotice";
 
 const PAGES = [
@@ -18,12 +19,6 @@ const PAGES = [
   { path: "/activations", label: "Activations" },
   { path: "/audit", label: "Audit log" },
   { path: "/account", label: "Account" },
-];
-
-const THEMES: { value: Theme; label: string }[] = [
-  { value: "system", label: "System theme" },
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
 ];
 
 function isCurrent(page: string, path: string): boolean {
@@ -62,17 +57,7 @@ export function Layout({ children }: { children: ReactNode }) {
           ))}
         </nav>
         <div className="app-header__end">
-          <select
-            aria-label="Theme"
-            value={preferences.theme}
-            onChange={(event) => update((current) => ({ ...current, theme: event.target.value as Theme }))}
-          >
-            {THEMES.map((theme) => (
-              <option key={theme.value} value={theme.value}>
-                {theme.label}
-              </option>
-            ))}
-          </select>
+          <ThemeButton theme={preferences.theme} onChange={(theme) => update((current) => ({ ...current, theme }))} />
           <span className="app-header__user">{session.admin.username}</span>
           <Button size="small" variant="quiet" onClick={() => flush().then(signOut).catch(setSignOutError)}>
             Sign out

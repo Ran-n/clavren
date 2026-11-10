@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.213599 )
-[//]: # (+ Revised: 	2026/11/09 13:58:25.134436 )
+[//]: # (+ Revised: 	2026/11/09 22:41:13.629493 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Development
@@ -103,12 +103,18 @@ cargo dev
 1. Starts the local database with `scripts/local-db.ps1`, unless it is running already or
    `CLAVREN_DATABASE_URL` points at another database.
 2. Runs `npm ci` in `web/admin` when `package-lock.json` changed, and `npm run build` when any
-   dashboard source is newer than `web/admin/dist`.
+   dashboard source is newer than `web/admin/dist` or a source was added, removed or renamed
+   since the last build (the list it was built from is kept in
+   `web/admin/node_modules/.clavren-built-from`).
 3. Builds the server.
 4. When the database has no admin, asks for a username (your account name by default) and runs
    `clavren-admin create-admin` (below).
 5. Runs the server on `http://localhost:8080` until Ctrl+C, then stops the database if step 1
    started it.
+
+Ctrl+C at the username prompt, or a second Ctrl+C when the server doesn't stop, ends `cargo dev`
+at once (still stopping a database it started). On Windows every process it starts ends with it,
+even when the window is closed.
 
 `cargo run` runs only the server, for when the database, the dashboard build and an admin are
 already there. Either way, `http://localhost:8080/health/ready` answers `{"status":"ok"}`.
@@ -183,7 +189,11 @@ the ones that are right.
 ## Building a release
 
 The release is one bundle for the Raspberry Pi, `clavren-X.Y.Z-aarch64-linux.tar.gz`, cross-compiled
-from Windows with [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) (no Docker):
+from Windows with [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) (no Docker).
+Before building it, run the end-to-end tests, the coverage gate and the dependency audits:
+`cargo audit` (advisories that can't affect Clavren are listed with the reason in
+`.cargo/audit.toml`) and `npm audit` in `web/admin`. The version in `web/admin/package.json`
+follows the workspace version; `tests/dashboard.rs` fails when they differ.
 
 1. Build the dashboard: `npm run build` in `web/admin` (the binary embeds `web/admin/dist`).
 2. Once: `cargo install cargo-zigbuild --locked` and `python -m pip install --user ziglang`.

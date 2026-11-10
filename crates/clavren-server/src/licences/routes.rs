@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.689100
-//+ Revised: 	2026/11/07 19:36:59.890050
+//+ Revised: 	2026/11/09 22:30:54.996785
 // -----------------------------------------------------------------------------
 
 //! `/api/admin/licences`: issue, list and search, read, edit, reveal, copy message, revoke, reset,
@@ -237,8 +237,8 @@ async fn bulk_edit(
     ApiJson(request): ApiJson<BulkEdit>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let (ids, changes) = request.split();
-    lifecycle::edit(&state, &admin.actor, &ids, changes).await?;
-    Ok(Json(json!({ "updated": ids.len() })))
+    let updated = lifecycle::edit(&state, &admin.actor, &ids, changes).await?;
+    Ok(Json(json!({ "updated": updated })))
 }
 
 #[derive(Debug, Deserialize)]

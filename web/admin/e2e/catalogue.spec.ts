@@ -19,7 +19,7 @@ test("customers are created, edited and deleted in the table", async ({ admin, a
   await row.getByRole("button", { name: "Edit email" }).click();
   await row.getByLabel("email").fill("not an email");
   await row.getByLabel("email").press("Enter");
-  await expect(row.getByRole("alert")).toBeVisible(); // the reason, in words, and the field stays open
+  await expect(row.getByRole("alert")).toHaveText("Email is not a valid address."); // in words; the field stays open
   await row.getByLabel("email").fill(`${name.toLowerCase()}@example.com`);
   await row.getByLabel("email").press("Enter");
   await expect(row.getByRole("button", { name: "Edit email" })).toHaveText(`${name.toLowerCase()}@example.com`);

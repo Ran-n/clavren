@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/03 04:54:17.447469 )
-[//]: # (+ Revised: 	2026/11/08 14:55:48.549705 )
+[//]: # (+ Revised: 	2026/11/09 22:30:57.174700 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Client integration
@@ -16,18 +16,25 @@ is in [api.md](api.md#application-api), for a client in another language.
 
 - **Activates** a key typed in any form (case, spaces and dashes don't matter) and binds it to
   this computer with a device key pair it generates.
-- **Keeps its state** in `%APPDATA%\<vendor>\<product>\licence.dat`, protected with Windows DPAPI
-  for the current user. A copied file is useless on another computer or account.
+- **Keeps its state** in `%APPDATA%\<vendor>\<product>\licence.dat` (the temporary folder when
+  `APPDATA` isn't set), protected with Windows DPAPI for the current user. A copied file is
+  useless on another computer or account. Every write goes to a temporary file of its own and
+  replaces the old one whole, under a lock (`licence.lock`), so two copies of the application
+  never leave half a file.
 - **Works offline** for 30 days after its last successful check: the cached token is signed by
   Clavren and verified locally against the public keys the application embeds.
 - **Checks in** once a day (when the last check is more than 24 hours old), at start or while
   running, on a background thread that never blocks the UI and retries with backoff (1, 5, 15,
   60 minutes) when the server can't be reached.
 - **Reports outcomes**, never text: the application shows its own translated message for each.
-- **Notices a clock set back** by more than an hour and asks for an online check instead of
+- **Notices a clock set back** by more than an hour, at once or a little at a time (the steps
+  back since the last check add up, across restarts too), and asks for an online check instead of
   trusting it. Tokens are judged by the server's time (the system clock plus the difference
-  measured at the last answer), so a computer whose clock is simply wrong works normally, and
-  setting the clock back before a check doesn't stretch the 30 days.
+  measured from the signed token's issue time at the last check), so a computer whose clock is
+  simply wrong works normally, and setting the clock back before a check doesn't stretch the 30
+  days. A clock that was ahead and is put right by more than an hour needs one online check.
+- **Talks HTTPS only**: `HttpTransport` refuses a plain `http://` server address unless it is
+  this computer (`localhost`, `127.0.0.1`, `::1`), because the key travels in the activation.
 - **Keeps nothing it can't use**: an answer that isn't Clavren's (a proxy's page) or a token it
   can't verify changes nothing, and the check is retried with backoff.
 

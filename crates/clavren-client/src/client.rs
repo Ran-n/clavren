@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:10.584826
-//+ Revised: 	2026/11/08 14:55:43.389675
+//+ Revised: 	2026/11/09 23:01:00.636115
 // -----------------------------------------------------------------------------
 
 //! The licence of one application on this computer: its offline status, and when to check online.
@@ -22,8 +22,9 @@ use crate::state::{Refusal, State};
 use crate::store::{SecretStore, StoreError};
 use crate::transport::Transport;
 
-/// A clock more than this far behind the latest time seen counts as set back (more than a normal
-/// adjustment), so the cached token isn't trusted until an online check.
+/// A clock more than this far behind the latest time seen, or set back more than this in all (many
+/// small steps count together) since the last check, counts as set back (more than normal
+/// adjustments), so the cached token isn't trusted until an online check.
 pub const ROLLBACK_TOLERANCE: TimeDelta = TimeDelta::hours(1);
 /// [`Client::save_time_seen`] saves the time seen once it moved this far: a few minutes are
 /// nothing next to [`ROLLBACK_TOLERANCE`].
@@ -67,8 +68,8 @@ pub struct Client {
     /// Why the saved state couldn't be read at start, when it exists but couldn't be read (not
     /// when it is missing, damaged or another user's): then nothing is saved over it.
     pub(crate) unreadable: Option<String>,
-    /// The latest time seen as it was last saved.
-    saved_seen: Mutex<Option<DateTime<Utc>>>,
+    /// The latest time seen and the total set back, as they were last saved.
+    saved_seen: Mutex<Seen>,
 }
 
 impl Client {
@@ -103,7 +104,7 @@ impl Client {
                 State::default()
             }
         };
-        let saved_seen = Mutex::new(state.latest_seen);
+        let saved_seen = Mutex::new(Seen::of(&state));
         Self { config, store, transport, clock, state: Mutex::new(state), unreadable, saved_seen }
     }
 
@@ -111,26 +112,28 @@ impl Client {
     /// the UI thread can ask as often as it likes. The time it saw is kept in memory; the
     /// background checker saves it ([`Self::save_time_seen`]).
     pub fn status(&self) -> Outcome {
-        let now = self.clock.now();
+        // the time is read under the lock: two threads asking at once never record a step back
         let mut state = self.lock();
+        let now = self.clock.now();
         let outcome = self.offline_outcome(&state, now);
-        if outcome.is_licensed() {
-            state.saw(now);
-        }
+        // every time seen counts, locked or not: a clock set back while the licence is locked
+        // must not be waited out
+        state.saw(now);
         outcome
     }
 
-    /// Saves the latest time seen once it moved [`SEEN_SAVE_STEP`] past the saved one, so a clock
-    /// set back between runs is noticed too. The background checker calls it every few minutes
-    /// and when it stops; an application without one calls it off the UI thread.
+    /// Saves the latest time seen once it moved [`SEEN_SAVE_STEP`] past the saved one, and any
+    /// step back of the clock, so a clock set back between runs is noticed too. The background
+    /// checker calls it every few minutes and when it stops; an application without one calls it
+    /// off the UI thread.
     pub fn save_time_seen(&self) -> Result<(), StoreError> {
         let state = self.lock();
         let saved = *self.saved_seen.lock().unwrap_or_else(PoisonError::into_inner);
-        let moved = match (state.latest_seen, saved) {
+        let moved = match (state.latest_seen, saved.latest) {
             (Some(latest), Some(saved)) => latest - saved >= SEEN_SAVE_STEP,
             (latest, saved) => latest.is_some() && saved.is_none(),
         };
-        if moved { self.save(&state) } else { Ok(()) }
+        if moved || state.rewound_seconds != saved.rewound_seconds { self.save(&state) } else { Ok(()) }
     }
 
     fn offline_outcome(&self, state: &State, now: DateTime<Utc>) -> Outcome {
@@ -140,7 +143,10 @@ impl Client {
         let Some(token) = state.token.as_deref() else {
             return if state.activation.is_some() { Outcome::NeedsCheck } else { Outcome::NeedsActivation };
         };
-        if state.latest_seen.is_some_and(|latest| now < latest - ROLLBACK_TOLERANCE) {
+        let behind_latest = state
+            .latest_seen
+            .is_some_and(|latest| latest.checked_sub_signed(ROLLBACK_TOLERANCE).is_none_or(|earliest| now < earliest));
+        if behind_latest || state.rewound_by(now) > ROLLBACK_TOLERANCE.num_seconds() {
             log::warn!("the clock is behind the latest time seen; the licence must be checked online");
             return Outcome::NeedsCheck;
         }
@@ -218,9 +224,22 @@ impl Client {
         let saved = self.store.save(&bytes);
         bytes.zeroize();
         if saved.is_ok() {
-            *self.saved_seen.lock().unwrap_or_else(PoisonError::into_inner) = state.latest_seen;
+            *self.saved_seen.lock().unwrap_or_else(PoisonError::into_inner) = Seen::of(state);
         }
         saved
+    }
+}
+
+/// What [`Client::save_time_seen`] compares with the state to decide whether to save.
+#[derive(Clone, Copy)]
+struct Seen {
+    latest: Option<DateTime<Utc>>,
+    rewound_seconds: i64,
+}
+
+impl Seen {
+    fn of(state: &State) -> Self {
+        Self { latest: state.latest_seen, rewound_seconds: state.rewound_seconds }
     }
 }
 
@@ -239,7 +258,8 @@ pub(crate) fn signing_key(state: &State) -> Option<SigningKey> {
 
 /// The time by the server's clock, from the system clock and the difference last measured.
 pub(crate) fn server_now(state: &State, now: DateTime<Utc>) -> DateTime<Utc> {
-    now.checked_add_signed(TimeDelta::seconds(state.clock_offset_seconds)).unwrap_or(now)
+    // a damaged offset (too large for a date) counts as none
+    TimeDelta::try_seconds(state.clock_offset_seconds).and_then(|offset| now.checked_add_signed(offset)).unwrap_or(now)
 }
 
 fn device_public_key(state: &State) -> Option<[u8; 32]> {

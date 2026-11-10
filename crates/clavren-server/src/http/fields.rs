@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:13.708171
-//+ Revised: 	2026/11/03 04:54:13.708171
+//+ Revised: 	2026/11/09 22:30:54.786696
 // -----------------------------------------------------------------------------
 
 //! Checks for text fields from request bodies. Values are trimmed; an optional field left blank
@@ -44,13 +44,28 @@ fn within(field: &str, value: &str, max_chars: usize) -> Result<String, ApiError
 
 /// `value` as a pattern for `ILIKE '%…%'`, with its own `%`, `_` and `\` matched literally.
 pub fn contains_pattern(value: &str) -> String {
-    let escaped = value.trim().replace('\\', r"\\").replace('%', r"\%").replace('_', r"\_");
-    format!("%{escaped}%")
+    format!("%{}%", literal_pattern(value.trim()))
+}
+
+/// `value` as a pattern for `LIKE '…%'` (it starts with `value`), matched literally.
+pub fn prefix_pattern(value: &str) -> String {
+    format!("{}%", literal_pattern(value))
+}
+
+fn literal_pattern(value: &str) -> String {
+    value.replace('\\', r"\\").replace('%', r"\%").replace('_', r"\_")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prefix_patterns_match_their_text_literally() {
+        assert_eq!(prefix_pattern("licence."), "licence.%");
+        assert_eq!(prefix_pattern(r"a_b%c\"), r"a\_b\%c\\%");
+        assert_eq!(contains_pattern(" a_b "), r"%a\_b%");
+    }
 
     #[test]
     fn required_text_is_trimmed_and_bounded() {

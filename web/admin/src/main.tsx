@@ -1,8 +1,12 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { ErrorBoundary } from "./shared/components/ErrorBoundary";
+import { applyLastTheme } from "./shared/preferences";
 import "./shared/theme.css";
 import "./shared/components.css";
+
+applyLastTheme();
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
@@ -11,6 +15,8 @@ if (!rootElement) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );

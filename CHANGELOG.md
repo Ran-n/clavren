@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:54.981076 )
-[//]: # (+ Revised: 	2026/11/09 16:06:16.174913 )
+[//]: # (+ Revised: 	2026/11/10 08:27:50.916147 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Changelog
@@ -11,6 +11,44 @@ All notable changes to this project will be documented in this file.
 This project adheres to [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Changed
+
+- The dashboard's theme is switched with an icon button in the header (System, Light, Dark) instead of a dropdown.
+- `POST /api/admin/licences/bulk/edit` answers with the number of licences that actually changed, not the number of IDs sent.
+- `HttpTransport` refuses a plain `http://` server address unless it is this computer (`localhost`, `127.0.0.1`, `::1`), since the key travels in the activation.
+- The audit log's action filter uses a new index (`audit_logs_action`), so filtering by a rare action no longer scans the whole log.
+
+### Fixed
+
+- Client: the clock difference was measured from the answer's unsigned `server_time`, which a proxy could change to shift the clock by years; it is now taken from the signed token's `iat`.
+- Client: setting the clock back by less than an hour again and again kept it inside the one-hour allowance for ever; steps back now add up since the last check, across restarts too, and a clock set back while the licence is locked counts as well.
+- Client: the background checker woke every 10 minutes and checked again, so the 15 and 60 minute backoff steps and a server's `Retry-After` were never kept; no check goes out before the backoff ends.
+- Client: two copies of an application saving at once wrote into the same temporary file; every save now uses its own temporary file under a lock (`licence.lock`) and leaves none behind when it fails.
+- Client: a refusal that couldn't be saved still changed the licence in memory; it now changes nothing, like any other failure.
+- Client: a damaged clock offset in the state file could make every check fail; it now counts as none.
+- A retried activation from the same computer got a new token without being recorded as a check; it now updates the activation's last check and app version.
+- The per-activation check limit counted made-up activation IDs, keeping one counter in memory for each; only checks with a valid challenge for an existing activation count now.
+- The server and `clavren-admin` starting together could each create and keep a different master key; the key is now written to a temporary file of its own and hard-linked into place, so both use the one that landed.
+- A password check that couldn't run was taken for a wrong password; it now fails with an error.
+- Two update requests at once could share the temporary request file and refuse each other; they are written one at a time, and a request only reaches the updater once its audit entry is saved.
+- A customer deleted while licences were being given to it left them pointing at nothing; the customer is now locked until the edit is saved.
+- Dashboard: a page that failed to render blanked the whole dashboard; each page now has its own error boundary, so the header keeps working and another page starts afresh.
+- Dashboard: a tab left open since yesterday put back settings another tab had changed; a save now sends only what that page changed, on top of the saved settings.
+- Dashboard: the page flashed the system theme before the saved settings arrived; the browser's last theme is applied at once.
+- Dashboard: a failed update check showed only the error, with no way to retry; it now has **Try again** and keeps the last answer.
+- Dashboard: pressing **Next** twice while a page loaded skipped a page; the button waits for the page.
+- Dashboard: the Issue panel said "No active product" while products were loading or had failed to load; it now says which.
+- Dashboard: a remembered product filter showed the first product while products loaded; it shows "Loading…".
+- Dashboard: Enter in the new product and new customer rows could save twice or save an empty name.
+- Dashboard: a search with `U` in it could be taken for a licence key and not remembered; `U` isn't in the key alphabet.
+- `web/admin/package.json` still said 0.3.0; it now follows the workspace version, and a test fails when they differ.
+- `cargo dev` kept an old dashboard build after a source was deleted or renamed; it now rebuilds when the list of sources changes.
+- `cargo dev`: Ctrl+C at the username prompt, or a second Ctrl+C when the server doesn't stop, now ends it at once (still stopping a database it started), and on Windows every process it starts ends with it, even when the window is closed.
+
+### Security
+
+- `cargo audit` and `npm audit` run before every release; `.cargo/audit.toml` lists the one ignored advisory (RUSTSEC-2026-0459, SQLite, which Clavren never compiles) and why.
 
 ## [0.4.0] - 2026-11-09
 

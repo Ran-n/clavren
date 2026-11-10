@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/09 09:57:45.672709
-//+ Revised: 	2026/11/09 11:10:33.266734
+//+ Revised: 	2026/11/09 23:01:00.928569
 // -----------------------------------------------------------------------------
 
 //! The files the server shares with the update scripts in `CLAVREN_DATA_DIR/updates`:
@@ -124,12 +124,51 @@ pub async fn read<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, FileErr
 /// Writes `name` in `dir` in one step: a reader (a path unit, a script) sees the whole file or
 /// none of it.
 pub async fn write(dir: &Path, name: &str, contents: &[u8]) -> Result<(), FileError> {
+    stage(dir, name, contents).await?.publish().await
+}
+
+/// A file written whole under a temporary name, not yet under its own: nothing reading `name`
+/// sees it until [`Staged::publish`].
+pub struct Staged {
+    temporary: PathBuf,
+    path: PathBuf,
+}
+
+/// Writes `contents` next to `name`, ready to [`Staged::publish`] in one step.
+pub async fn stage(dir: &Path, name: &str, contents: &[u8]) -> Result<Staged, FileError> {
     let path = dir.join(name);
     let failed = |source| FileError::Write { path: path.clone(), source };
     tokio::fs::create_dir_all(dir).await.map_err(failed)?;
     let temporary = dir.join(format!("{name}.new"));
     tokio::fs::write(&temporary, contents).await.map_err(failed)?;
-    tokio::fs::rename(&temporary, &path).await.map_err(failed)
+    Ok(Staged { temporary, path })
+}
+
+impl Staged {
+    /// Puts the file under its own name, replacing the previous one in one step.
+    pub async fn publish(self) -> Result<(), FileError> {
+        let result = tokio::fs::rename(&self.temporary, &self.path).await;
+        result.map_err(|source| FileError::Write { path: self.path.clone(), source })
+    }
+
+    /// Removes the temporary file, leaving the one under its own name as it was.
+    pub async fn discard(self) -> Result<(), FileError> {
+        remove(&self.temporary).await
+    }
+}
+
+/// Removes what [`stage`] left for `name` and never published.
+pub async fn discard(dir: &Path, name: &str) -> Result<(), FileError> {
+    remove(&dir.join(format!("{name}.new"))).await
+}
+
+async fn remove(path: &Path) -> Result<(), FileError> {
+    match tokio::fs::remove_file(path).await {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => {
+            Err(FileError::Write { path: path.to_path_buf(), source: error })
+        }
+        _ => Ok(()),
+    }
 }
 
 /// How long ago the file at `path` was last written, by the system clock; `None` when it doesn't
@@ -142,14 +181,6 @@ pub async fn age(path: &Path) -> Result<Option<std::time::Duration>, FileError> 
         Err(source) => return Err(read_failed(source)),
     };
     Ok(Some(std::time::SystemTime::now().duration_since(modified).unwrap_or_default()))
-}
-
-pub async fn remove(dir: &Path, name: &str) -> Result<(), FileError> {
-    let path = dir.join(name);
-    match tokio::fs::remove_file(&path).await {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(FileError::Write { path, source: error }),
-        _ => Ok(()),
-    }
 }
 
 #[cfg(test)]
@@ -192,9 +223,21 @@ mod tests {
         assert!(!updates.join("check-request.new").exists(), "no temporary file left");
         let written = age(&updates.join(CHECK_REQUEST)).await.unwrap().unwrap();
         assert!(written < std::time::Duration::from_secs(60), "just written: {written:?}");
-        remove(&updates, CHECK_REQUEST).await.unwrap();
-        remove(&updates, CHECK_REQUEST).await.unwrap();
+        std::fs::remove_file(updates.join(CHECK_REQUEST)).unwrap();
         assert!(age(&updates.join(CHECK_REQUEST)).await.unwrap().is_none(), "gone");
-        assert!(!updates.join(CHECK_REQUEST).exists());
+    }
+
+    #[tokio::test]
+    async fn a_staged_file_shows_only_once_published() {
+        let dir = tempfile::tempdir().unwrap();
+        let staged = stage(dir.path(), INSTALL_REQUEST, b"{}").await.unwrap();
+        assert!(!dir.path().join(INSTALL_REQUEST).exists(), "not before it is published");
+        staged.publish().await.unwrap();
+        assert_eq!(std::fs::read(dir.path().join(INSTALL_REQUEST)).unwrap(), b"{}");
+
+        let discarded = stage(dir.path(), INSTALL_REQUEST, b"newer").await.unwrap();
+        discarded.discard().await.unwrap();
+        assert_eq!(std::fs::read(dir.path().join(INSTALL_REQUEST)).unwrap(), b"{}", "the published one stays");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "no temporary file left");
     }
 }

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:13.128612
-//+ Revised: 	2026/11/03 04:54:13.128612
+//+ Revised: 	2026/11/09 22:30:54.487327
 // -----------------------------------------------------------------------------
 
 //! `GET /api/admin/audit`: who did what, when, from where; newest first.
@@ -22,6 +22,7 @@ use crate::http::AppState;
 use crate::http::error::ApiError;
 use crate::http::expand::{Expand, Expandable, by_id, distinct};
 use crate::http::extract::ApiQuery;
+use crate::http::fields;
 use crate::http::pagination::{Cursor, Page, PageParams, fetch_count};
 
 pub fn routes() -> Router<AppState> {
@@ -85,7 +86,7 @@ async fn list(
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT id, admin_user_id, action, entity_type, entity_id, metadata, host(ip_address) AS ip_address, created_at
          FROM audit_logs
-         WHERE ($1::text IS NULL OR action = $1 OR (right($1, 1) = '.' AND starts_with(action, $1)))
+         WHERE ($1::text IS NULL OR action = $1 OR action LIKE $9)
            AND ($2::uuid IS NULL OR admin_user_id = $2)
            AND ($3::text IS NULL OR entity_type = $3)
            AND ($4::uuid IS NULL OR entity_id = $4)
@@ -102,6 +103,8 @@ async fn list(
     .bind(params.to)
     .bind(cursor.map(|cursor| cursor.id))
     .bind(fetch_count(limit))
+    // "licence." names a family of actions; the audit_logs_action index serves both forms
+    .bind(action.filter(|action| action.ends_with('.')).map(fields::prefix_pattern))
     .fetch_all(&state.pool)
     .await?;
     let page = Page::from_rows(rows, limit, |row| Cursor { key: None, id: row.id });

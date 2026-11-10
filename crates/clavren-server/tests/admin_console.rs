@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.689302
-//+ Revised: 	2026/11/09 08:54:53.894382
+//+ Revised: 	2026/11/09 22:30:55.736437
 // -----------------------------------------------------------------------------
 
 //! The admin endpoints behind the dashboard's other pages: activations, the overview, the audit
@@ -191,6 +191,14 @@ async fn the_audit_log_filters_and_names_admins(pool: PgPool) {
 
     let licence_entries = licensing.admin.get("/api/admin/audit?action=licence.").await.body;
     assert_eq!(licence_entries["data"].as_array().unwrap().len(), 2);
+    for literal in ["%.", "_icence.", "licence"] {
+        let reply = licensing.admin.get(&format!("/api/admin/audit?action={}", literal.replace('%', "%25"))).await;
+        assert_eq!(
+            reply.body["data"].as_array().unwrap().len(),
+            0,
+            "{literal}: no wildcards, and no family without a dot"
+        );
+    }
     let one = licensing
         .admin
         .get(&format!("/api/admin/audit?entity={licence}&action=licence.revoked&expand=admin_user"))

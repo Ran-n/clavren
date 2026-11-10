@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.495003
-//+ Revised: 	2026/11/08 14:55:45.037911
+//+ Revised: 	2026/11/09 22:30:54.926271
 // -----------------------------------------------------------------------------
 
 //! Changing licences after issuing: editing every field but the product (customer, expiry, notes,
@@ -86,10 +86,17 @@ fn parse(changes: LicenceChanges) -> Result<Parsed, ApiError> {
     Ok(Parsed { customer, changes, fields })
 }
 
-pub async fn edit(state: &AppState, actor: &Actor, ids: &[Uuid], changes: LicenceChanges) -> Result<(), ApiError> {
+/// Applies `changes` to every licence in `ids` or to none; returns how many actually changed.
+pub async fn edit(state: &AppState, actor: &Actor, ids: &[Uuid], changes: LicenceChanges) -> Result<usize, ApiError> {
     check_batch(ids)?;
     let Parsed { customer, mut changes, fields } = parse(changes)?;
     let mut transaction = state.pool.begin().await?;
+    // the customer before the licences, in the order a customer's deletion locks them
+    changes.customer_id = match customer {
+        None => None,
+        Some(None) => Some(None),
+        Some(Some(choice)) => Some(Some(customers::choose(&mut transaction, actor, choice).await?.id)),
+    };
     let revoked: HashSet<Uuid> = lock_existing(&mut transaction, ids).await?.into_iter().collect();
     let live: Vec<Uuid> = ids.iter().filter(|id| !revoked.contains(id)).copied().collect();
     if changes.revocation_reason.is_some() && !live.is_empty() {
@@ -97,11 +104,6 @@ pub async fn edit(state: &AppState, actor: &Actor, ids: &[Uuid], changes: Licenc
             ApiError::conflict("licence_not_revoked", "only a revoked licence has a revocation reason").with_ids(live)
         );
     }
-    changes.customer_id = match customer {
-        None => None,
-        Some(None) => Some(None),
-        Some(Some(choice)) => Some(Some(customers::choose(&mut transaction, actor, choice).await?.id)),
-    };
     let changed = repository::update(&mut *transaction, ids, &changes).await?;
     // one audit entry per licence that changed, naming the fields that did
     let mut by_fields: Vec<(Vec<&str>, Vec<Uuid>)> = Vec::new();
@@ -122,7 +124,7 @@ pub async fn edit(state: &AppState, actor: &Actor, ids: &[Uuid], changes: Licenc
     }
     transaction.commit().await?;
     tracing::info!(asked = ids.len(), changed = changed.len(), ?fields, "licences updated");
-    Ok(())
+    Ok(changed.len())
 }
 
 /// The fields [`repository::update`] reports on, in its order.

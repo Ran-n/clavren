@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.593310
-//+ Revised: 	2026/11/03 04:54:12.593310
+//+ Revised: 	2026/11/09 22:30:53.615409
 // -----------------------------------------------------------------------------
 
 //! Activating a key on a computer: in one transaction, with the licence row locked, so two
@@ -69,6 +69,8 @@ pub async fn activate(
         if device != valid.device_public_key {
             return Err(ApiError::refused(ErrorCode::AlreadyActivated, "the licence is in use on another computer"));
         }
+        // the same computer again (a retried activation): it got a fresh token, as from a check
+        repository::record_check(&mut *transaction, existing, &valid.app_version, now).await?;
         transaction.commit().await?;
         let token = tokens::issue(state, &subject(existing), now);
         return Ok(Activated {

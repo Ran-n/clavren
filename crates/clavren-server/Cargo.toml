@@ -42,7 +42,7 @@ serde_urlencoded = "0.7.1"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "chrono", "migrate", "macros"] }
 subtle = "2.6.1"
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "signal", "net", "time", "fs"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "signal", "net", "time", "fs", "sync"] }
 tokio-util = "0.7.20"
 totp-rs = { version = "6.0.0", features = ["otpauth"] }
 tower-http = { version = "0.7.1", features = ["trace", "timeout", "request-id", "util", "set-header"] }

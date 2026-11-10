@@ -11,6 +11,7 @@ import { LicencesPage } from "./licences/LicencesPage";
 import { LoginPage } from "./login/LoginPage";
 import { OverviewPage } from "./overview/OverviewPage";
 import { ProductsPage } from "./products/ProductsPage";
+import { ErrorBoundary } from "./shared/components/ErrorBoundary";
 import { Loading, Notice } from "./shared/components/Notice";
 import { PreferencesProvider, usePreferences } from "./shared/preferences";
 import { Link, navigate, useLocation } from "./shared/router";
@@ -48,6 +49,17 @@ function Page() {
   }
 }
 
+/** The page, behind its own error boundary: a page that fails leaves the header working, and
+ * going to another page starts afresh. */
+function GuardedPage() {
+  const { path } = useLocation();
+  return (
+    <ErrorBoundary key={path}>
+      <Page />
+    </ErrorBoundary>
+  );
+}
+
 /** After signing in at the root, go back to the page the admin was last on. */
 function RestoreLastPage() {
   const { preferences } = usePreferences();
@@ -68,7 +80,7 @@ function SignedIn({ switched }: { switched: boolean }) {
       {!switched && <RestoreLastPage />}
       <UpdatesProvider>
         <Layout>
-          <Page />
+          <GuardedPage />
         </Layout>
       </UpdatesProvider>
     </PreferencesProvider>

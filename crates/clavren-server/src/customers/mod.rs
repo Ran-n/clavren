@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:13.342000
-//+ Revised: 	2026/11/07 19:36:59.383912
+//+ Revised: 	2026/11/09 22:30:54.639693
 // -----------------------------------------------------------------------------
 
 //! Customers: who received a key. Only administrators see them. Deleting one erases their name,
@@ -63,14 +63,16 @@ pub enum CustomerChoice {
     New(NewCustomer),
 }
 
-/// The customer `choice` names: an existing one, or a new one created now (and audited).
+/// The customer `choice` names: an existing one (share-locked until the transaction ends, so it
+/// can't be deleted meanwhile), or a new one created now (and audited). Call it before locking
+/// licences: deleting a customer locks the customer first, then its licences.
 pub async fn choose(
     connection: &mut PgConnection,
     actor: &Actor,
     choice: CustomerChoice,
 ) -> Result<Customer, ApiError> {
     match choice {
-        CustomerChoice::Existing(id) => repository::find(&mut *connection, id)
+        CustomerChoice::Existing(id) => repository::find_for_share(&mut *connection, id)
             .await?
             .ok_or_else(|| ApiError::invalid_request("customer doesn't name an existing customer")),
         CustomerChoice::New(new) => {

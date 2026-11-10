@@ -2,8 +2,13 @@
 // theme, filters (exclusions too), order, page size, columns and the last page. A licence key is
 // never saved.
 
+import type { Page } from "@playwright/test";
 import { createProduct } from "./data";
 import { DEFAULT_PREFERENCES, expect, test } from "./fixtures";
+
+const themeButton = (page: Page) => page.getByRole("button", { name: /^Theme:/ });
+const savedPreferences = (page: Page) =>
+  page.waitForResponse((response) => response.url().endsWith("/api/admin/preferences") && response.request().method() === "PUT");
 
 test("preferences are restored after signing in again", async ({ admin, credentials }) => {
   await admin.goto("/licences");
@@ -13,7 +18,8 @@ test("preferences are restored after signing in again", async ({ admin, credenti
   await admin.getByText("Columns").click();
   await admin.getByRole("checkbox", { name: "Notes" }).uncheck();
   const saved = admin.waitForResponse((response) => response.url().endsWith("/api/admin/preferences") && response.request().method() === "PUT");
-  await admin.getByLabel("Theme").selectOption("dark");
+  await themeButton(admin).click(); // System → Light
+  await themeButton(admin).click(); // Light → Dark
   expect((await saved).ok()).toBe(true);
   await admin.waitForTimeout(600); // the last change is saved shortly after it happens
 
@@ -32,6 +38,51 @@ test("preferences are restored after signing in again", async ({ admin, credenti
   await expect(admin.getByRole("columnheader", { name: "Notes" })).toHaveCount(0);
   await expect(admin.getByRole("columnheader", { name: "Customer" })).toBeVisible();
   await expect(admin.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(themeButton(admin)).toHaveAccessibleName("Theme: Dark");
+});
+
+test("the theme button cycles system, light, dark and back", async ({ admin, api }) => {
+  await admin.goto("/");
+  await expect(themeButton(admin)).toHaveAccessibleName("Theme: System");
+  await expect(themeButton(admin)).toHaveAttribute("title", "Theme: System (click for Light)");
+  await admin.waitForTimeout(600); // the last page is saved, so the next save is the theme's
+  for (const [name, attribute] of [["Light", "light"], ["Dark", "dark"], ["System", null]] as const) {
+    const saved = savedPreferences(admin);
+    await themeButton(admin).click();
+    await expect(themeButton(admin)).toHaveAccessibleName(`Theme: ${name}`);
+    if (attribute) await expect(admin.locator("html")).toHaveAttribute("data-theme", attribute);
+    else await expect(admin.locator("html")).not.toHaveAttribute("data-theme", /./);
+    expect((await saved).ok()).toBe(true);
+    expect((await api.get<{ theme: string }>("/preferences")).theme).toBe(name.toLowerCase());
+  }
+});
+
+test("the theme button works from the keyboard", async ({ admin }) => {
+  await admin.goto("/");
+  await themeButton(admin).focus();
+  await themeButton(admin).press("Enter");
+  await expect(themeButton(admin)).toHaveAccessibleName("Theme: Light");
+  await themeButton(admin).press(" ");
+  await expect(themeButton(admin)).toHaveAccessibleName("Theme: Dark");
+  await expect(themeButton(admin)).toBeFocused();
+});
+
+test("a theme that can't be saved still applies and says so", async ({ admin }) => {
+  await admin.goto("/");
+  await expect(themeButton(admin)).toBeVisible();
+  await admin.waitForTimeout(600); // the last page is saved
+  await admin.route("**/api/admin/preferences", (route) =>
+    route.request().method() === "PUT"
+      ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "internal_error", message: "" }) })
+      : route.continue(),
+  );
+  try {
+    await themeButton(admin).click();
+    await expect(admin.locator("html")).toHaveAttribute("data-theme", "light");
+    await expect(admin.getByText("Your settings couldn't be saved")).toBeVisible();
+  } finally {
+    await admin.unroute("**/api/admin/preferences");
+  }
 });
 
 test("exclusions come back after a reload, but a key typed in the hide box doesn't", async ({ admin }) => {
@@ -167,9 +218,7 @@ test("the Issue panel is remembered open, with its product, quantity and expiry 
   await panel.getByLabel("How many").fill("4");
   await put;
 
-  put = saved();
   await admin.reload();
-  await put.catch(() => undefined); // the last page may be saved again
   await expect(panel).toBeVisible();
   await expect(panel.getByLabel("Product")).toHaveValue(product.id);
   await expect(panel.getByLabel("How many")).toHaveValue("4");
@@ -185,4 +234,41 @@ test("the Issue panel is remembered open, with its product, quantity and expiry 
   await admin.reload();
   await expect(admin.getByRole("button", { name: "Issue licences" })).toBeVisible();
   await expect(panel).toHaveCount(0);
+});
+
+// Regression: every save sent the whole record from this page's memory, so a tab opened before
+// another one changed the theme put the old theme back with its next change.
+test("a tab left open never undoes what another tab changed", async ({ admin, api }) => {
+  await admin.goto("/licences");
+  await expect(admin.getByLabel("Rows")).toBeVisible();
+  const other = await admin.context().newPage();
+  await other.goto("/");
+  const saved = savedPreferences(other);
+  await themeButton(other).click(); // System → Light
+  await themeButton(other).click(); // Light → Dark
+  expect((await saved).ok()).toBe(true);
+  await expect.poll(async () => (await api.get<{ theme: string }>("/preferences")).theme).toBe("dark");
+
+  const stale = savedPreferences(admin);
+  await admin.getByLabel("Rows").selectOption("25");
+  expect((await stale).ok()).toBe(true);
+  const after = await api.get<{ theme: string; tables: { licences?: { page_size?: number } } }>("/preferences");
+  expect(after.theme).toBe("dark");
+  expect(after.tables.licences?.page_size).toBe(25);
+  await other.close();
+});
+
+// Regression: opening Licences saved the settings again each time, though nothing had changed.
+test("opening a page that changes nothing saves nothing", async ({ admin }) => {
+  await admin.goto("/licences");
+  await expect(admin.getByLabel("Rows")).toBeVisible();
+  await admin.waitForTimeout(600); // the last page is saved
+  const puts: string[] = [];
+  admin.on("request", (request) => {
+    if (request.method() === "PUT" && request.url().endsWith("/api/admin/preferences")) puts.push(request.url());
+  });
+  await admin.reload();
+  await expect(admin.getByLabel("Rows")).toBeVisible();
+  await admin.waitForTimeout(800); // longer than the save delay
+  expect(puts).toHaveLength(0);
 });

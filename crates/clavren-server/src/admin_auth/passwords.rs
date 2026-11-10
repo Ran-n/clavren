@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:35.198269
-//+ Revised: 	2026/11/08 14:55:44.230643
+//+ Revised: 	2026/11/09 22:30:54.319792
 // -----------------------------------------------------------------------------
 
 //! Admin passwords, hashed with Argon2id (the argon2 crate's defaults: 19 MiB, 2 passes, which
@@ -39,6 +39,8 @@ pub enum PasswordError {
     TooLong,
     #[error("could not hash the password: {0}")]
     Hashing(String),
+    #[error("could not check the password: {0}")]
+    Checking(String),
 }
 
 /// Length is the rule: a long passphrase beats character-class rules (NIST SP 800-63B).
@@ -62,12 +64,10 @@ fn hash_blocking(password: &str) -> Result<String, PasswordError> {
 }
 
 /// Whether `password` matches `stored`. An unreadable stored hash counts as a mismatch, and is
-/// logged: it means the database holds something Clavren didn't write.
-pub async fn verify(password: String, stored: String) -> bool {
-    hashing(move || verify_blocking(&password, &stored)).await.unwrap_or_else(|error| {
-        tracing::error!("the password check stopped: {error}");
-        false
-    })
+/// logged: it means the database holds something Clavren didn't write. `Err` when the check itself
+/// couldn't run, which is never taken for a wrong password.
+pub async fn verify(password: String, stored: String) -> Result<bool, PasswordError> {
+    hashing(move || verify_blocking(&password, &stored)).await.map_err(PasswordError::Checking)
 }
 
 /// Spends the same effort as a real check, for a username that doesn't exist, so the response
@@ -129,8 +129,8 @@ mod tests {
     async fn a_hash_verifies_its_password_only() {
         let stored = hash("correct horse battery".into()).await.unwrap();
         assert!(stored.starts_with("$argon2id$"), "{stored}");
-        assert!(verify("correct horse battery".into(), stored.clone()).await);
-        assert!(!verify("correct horse battery!".into(), stored).await);
+        assert!(verify("correct horse battery".into(), stored.clone()).await.unwrap());
+        assert!(!verify("correct horse battery!".into(), stored).await.unwrap());
     }
 
     #[tokio::test]
@@ -143,7 +143,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_unreadable_stored_hash_never_matches() {
-        assert!(!verify("anything".into(), "not a hash".into()).await);
+        assert!(!verify("anything".into(), "not a hash".into()).await.unwrap());
         verify_against_nothing("anything".into()).await;
     }
 }

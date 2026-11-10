@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 14:53:29.616257
-//+ Revised: 	2026/11/03 04:54:19.511834
+//+ Revised: 	2026/11/09 23:01:00.780229
 // -----------------------------------------------------------------------------
 
 //! The master key: 32 random bytes in `<data dir>/master.key`, created on first start. Every other
@@ -88,25 +88,40 @@ pub fn read(data_dir: &Path) -> Result<MasterKeyFile, MasterKeyError> {
     Ok(MasterKeyFile::Found(MasterKey::from_bytes(key)))
 }
 
-/// Creates a new master key. Written to a temporary file first and then renamed, so a crash
-/// can't leave a half-written key behind; an existing key is never overwritten.
+/// Creates a new master key, or returns the one another process (the server and `clavren-admin`
+/// starting together) created first: an existing key is never overwritten. The key is written
+/// whole to a temporary file of this process's own, then linked to its final name, which fails
+/// rather than replace a file already there; so a crash can't leave half a key behind either.
 pub fn create(data_dir: &Path) -> Result<MasterKey, MasterKeyError> {
     create_private_dir(data_dir)?;
     let key = MasterKey::from_bytes(random_bytes::<MASTER_KEY_LENGTH>()?);
     let path = master_key_path(data_dir);
-    let temporary = data_dir.join(format!("{MASTER_KEY_FILE}{TEMPORARY_SUFFIX}"));
+    let unique = encode_hex(&random_bytes::<8>()?);
+    let temporary = data_dir.join(format!("{MASTER_KEY_FILE}.{unique}{TEMPORARY_SUFFIX}"));
     let io_error = |path: &Path| {
         let path = path.to_path_buf();
         move |source| MasterKeyError::Io { path, source }
     };
-    remove_if_present(&temporary).map_err(io_error(&temporary))?;
     write_private_file(&temporary, key.as_bytes()).map_err(io_error(&temporary))?;
-    if path.exists() {
-        remove_if_present(&temporary).map_err(io_error(&temporary))?;
-        return Err(MasterKeyError::Io { path, source: io::Error::from(io::ErrorKind::AlreadyExists) });
+    let mut linked = fs::hard_link(&temporary, &path);
+    remove_if_present(&temporary).map_err(io_error(&temporary))?;
+    if linked.as_ref().is_err_and(|error| error.kind() != io::ErrorKind::AlreadyExists) {
+        // a file system without hard links (FAT, some network shares): create the key in place,
+        // still never over another; a crash halfway leaves a short key, which is refused on read
+        linked = write_private_file(&path, key.as_bytes());
     }
-    fs::rename(&temporary, &path).map_err(io_error(&path))?;
-    Ok(key)
+    match linked {
+        Ok(()) => Ok(key),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => match read(data_dir)? {
+            MasterKeyFile::Found(existing) => Ok(existing),
+            MasterKeyFile::Missing => Err(MasterKeyError::Io { path, source: error }),
+        },
+        Err(source) => Err(MasterKeyError::Io { path, source }),
+    }
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn remove_if_present(path: &Path) -> io::Result<()> {
@@ -191,21 +206,38 @@ mod tests {
         assert_ne!(create(first.path()).unwrap().as_bytes(), create(second.path()).unwrap().as_bytes());
     }
 
+    fn file_names(dir: &Path) -> Vec<String> {
+        fs::read_dir(dir).unwrap().map(|entry| entry.unwrap().file_name().into_string().unwrap()).collect()
+    }
+
     #[test]
     fn an_existing_key_is_never_overwritten() {
         let dir = tempfile::tempdir().unwrap();
         let original = create(dir.path()).unwrap();
-        assert!(matches!(create(dir.path()), Err(MasterKeyError::Io { .. })));
+        assert_eq!(create(dir.path()).unwrap().as_bytes(), original.as_bytes(), "the key on disk is the key");
         assert_eq!(found(read(dir.path()).unwrap()).as_bytes(), original.as_bytes());
-        assert!(!dir.path().join("master.key.tmp").exists());
+        assert_eq!(file_names(dir.path()), ["master.key"], "no temporary file is left behind");
+    }
+
+    /// Regression: every process wrote `master.key.tmp` and renamed it over `master.key`, so the
+    /// server and `clavren-admin` starting together could each keep a different key.
+    #[test]
+    fn processes_creating_the_key_together_all_get_the_same_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let keys: Vec<_> = std::thread::scope(|scope| {
+            let creators: Vec<_> = (0..16).map(|_| scope.spawn(|| *create(dir.path()).unwrap().as_bytes())).collect();
+            creators.into_iter().map(|creator| creator.join().unwrap()).collect()
+        });
+        let on_disk = *found(read(dir.path()).unwrap()).as_bytes();
+        assert!(keys.iter().all(|key| *key == on_disk));
+        assert_eq!(file_names(dir.path()), ["master.key"]);
     }
 
     #[test]
-    fn a_leftover_temporary_file_from_a_crash_is_replaced() {
+    fn a_leftover_temporary_file_from_a_crash_is_no_obstacle() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("master.key.tmp"), b"half").unwrap();
         create(dir.path()).unwrap();
-        assert!(!dir.path().join("master.key.tmp").exists());
         assert!(matches!(read(dir.path()).unwrap(), MasterKeyFile::Found(_)));
     }
 

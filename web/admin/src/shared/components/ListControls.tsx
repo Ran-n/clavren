@@ -30,12 +30,18 @@ function renderOptions(options: Option[]) {
 }
 
 /** A select; options with a `group` go under that heading, after the ungrouped ones. */
+/**
+ * A filter's select. A remembered value with no option yet (its products still loading) shows as
+ * "Loading…", not as the first option, while the list is already filtered by it.
+ */
 export function FilterSelect({ label, value, options, onChange }: { label: string; value: string; options: Option[]; onChange: (value: string) => void }) {
   const groups = [...new Set(options.flatMap((option) => (option.group ? [option.group] : [])))];
+  const known = value === "" || options.some((option) => option.value === value);
   return (
     <label className="filter">
       <span className="filter__label">{label}</span>
       <select value={value} onChange={(event) => onChange(event.target.value)}>
+        {!known && <option value={value}>Loading…</option>}
         {renderOptions(options.filter((option) => !option.group))}
         {groups.map((group) => (
           <optgroup key={group} label={group}>
@@ -76,7 +82,11 @@ export function Pager<T>({ list, pageSize, onPageSize }: { list: PagedList<T>; p
         Previous
       </Button>
       <span className="pager__page">Page {list.page}</span>
-      <Button size="small" onClick={list.goNext} disabledReason={list.next ? null : "This is the last page"}>
+      <Button
+        size="small"
+        onClick={list.goNext}
+        disabledReason={list.loading ? "Loading this page" : list.next ? null : "This is the last page"}
+      >
         Next
       </Button>
       <label className="pager__size">

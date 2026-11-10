@@ -1,11 +1,12 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.617928
-//+ Revised: 	2026/11/08 14:55:43.591569
+//+ Revised: 	2026/11/09 22:30:53.159869
 // -----------------------------------------------------------------------------
 
 //! What the client keeps between runs: the device key, the activation, the cached token, the
-//! latest time the system clock showed (to notice a clock set back), how far the system clock was
+//! latest and the previous time the system clock showed and how far it was set back in all since
+//! the last check (to notice a clock set back, at once or a little at a time), how far it was
 //! from the server's at the last answer, when it last checked, and a definitive refusal it was
 //! given. All of it is stored protected (see [`crate::store`]).
 
@@ -22,6 +23,13 @@ pub struct State {
     pub token: Option<String>,
     /// The latest time the system clock showed (system-clock time, so a wrong clock still works).
     pub latest_seen: Option<DateTime<Utc>>,
+    /// The previous time the system clock showed, to add up how far it is set back.
+    #[serde(default)]
+    pub last_seen: Option<DateTime<Utc>>,
+    /// How far the system clock was set back in all since the last successful check, in seconds:
+    /// many small steps back count like one big one.
+    #[serde(default)]
+    pub rewound_seconds: i64,
     /// Server time minus system-clock time at the last successful answer, in seconds. Tokens are
     /// judged by the server's time (the system clock plus this), so a clock set back before a
     /// check doesn't stretch the token past its 30 days.
@@ -42,7 +50,19 @@ pub enum Refusal {
 
 impl State {
     pub fn saw(&mut self, time: DateTime<Utc>) {
+        self.rewound_seconds = self.rewound_seconds.saturating_add(self.step_back(time));
+        self.last_seen = Some(time);
         self.latest_seen = Some(self.latest_seen.map_or(time, |latest| latest.max(time)));
+    }
+
+    /// How far the clock was set back in all, counting `now`.
+    pub fn rewound_by(&self, now: DateTime<Utc>) -> i64 {
+        self.rewound_seconds.saturating_add(self.step_back(now))
+    }
+
+    /// The seconds `time` is behind the previous time seen (0 when it isn't).
+    fn step_back(&self, time: DateTime<Utc>) -> i64 {
+        self.last_seen.map_or(0, |last| last.timestamp().saturating_sub(time.timestamp()).max(0))
     }
 }
 
@@ -55,6 +75,8 @@ impl std::fmt::Debug for State {
             .field("activation", &self.activation)
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
             .field("latest_seen", &self.latest_seen)
+            .field("last_seen", &self.last_seen)
+            .field("rewound_seconds", &self.rewound_seconds)
             .field("clock_offset_seconds", &self.clock_offset_seconds)
             .field("last_check", &self.last_check)
             .field("refusal", &self.refusal)
@@ -80,6 +102,20 @@ mod tests {
         state.saw(late);
         state.saw(early);
         assert_eq!(state.latest_seen, Some(late));
+    }
+
+    #[test]
+    fn small_steps_back_add_up() {
+        let mut state = State::default();
+        let at = |seconds| DateTime::from_timestamp(seconds, 0).unwrap();
+        state.saw(at(10_000));
+        state.saw(at(9_000));
+        state.saw(at(9_500));
+        state.saw(at(8_800));
+        assert_eq!(state.rewound_seconds, 1_000 + 700);
+        assert_eq!(state.latest_seen, Some(at(10_000)));
+        assert_eq!(state.rewound_by(at(8_000)), 1_700 + 800);
+        assert_eq!(state.rewound_by(at(9_000)), 1_700, "moving forward adds nothing");
     }
 
     #[test]
