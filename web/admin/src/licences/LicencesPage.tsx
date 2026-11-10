@@ -106,6 +106,7 @@ export function LicencesPage() {
         <IssuePanel
           products={products}
           productsLoaded={productsLoaded}
+          productsError={productsError}
           draft={table.issue ?? { open: true }}
           onDraft={setIssue}
           onClose={() => {

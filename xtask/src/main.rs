@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 13:04:41.397543
-//+ Revised: 	2026/11/03 13:14:24.949314
+//+ Revised: 	2026/11/09 22:30:57.765763
 // -----------------------------------------------------------------------------
 
 //! Repository tasks, run as `cargo xtask <task>` (the aliases are in `.cargo/config.toml`).
@@ -15,6 +15,7 @@
 mod admin;
 mod dashboard;
 mod database;
+mod interrupt;
 mod process;
 
 use std::path::{Path, PathBuf};
@@ -24,10 +25,8 @@ use tracing_subscriber::EnvFilter;
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt().with_env_filter(EnvFilter::new("info")).with_target(false).init();
-    // Ctrl+C reaches the server (the same console) and the server shuts down; the launcher waits
-    // for it instead of dying first, so it can stop the database afterwards.
-    if let Err(error) = ctrlc::set_handler(|| {}) {
-        tracing::error!(target: "xtask", "could not catch Ctrl+C: {error}");
+    if let Err(message) = interrupt::install() {
+        tracing::error!(target: "xtask", "{message}");
         return ExitCode::FAILURE;
     }
     match run_task(&std::env::args().nth(1).unwrap_or_default()) {

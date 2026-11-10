@@ -13,6 +13,9 @@ ctrlc = "3.5.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_JobObjects", "Win32_System_Threading"] }
+
 [dev-dependencies]
 tempfile = "3.27.0"
 

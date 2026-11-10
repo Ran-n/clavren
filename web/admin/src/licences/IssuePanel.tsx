@@ -19,6 +19,8 @@ type Props = {
   products: Product[];
   /** Whether `products` is the complete list. */
   productsLoaded: boolean;
+  /** Why the products couldn't be loaded (the page shows it). */
+  productsError: unknown;
   /** The product, quantity and expiry chosen last time (remembered with the preferences). */
   draft: IssueDraft;
   onDraft: (change: Partial<IssueDraft>) => void;
@@ -55,7 +57,7 @@ function IssuedKeys({ issued, onMore, onClose }: { issued: Issued; onMore: () =>
   );
 }
 
-export function IssuePanel({ products, productsLoaded, draft, onDraft, onClose, onIssued, onMore }: Props) {
+export function IssuePanel({ products, productsLoaded, productsError, draft, onDraft, onClose, onIssued, onMore }: Props) {
   const active = products.filter((product) => product.is_active);
   const [product, setProduct] = useState("");
   // a remembered product that was deleted or deactivated since is no choice any more
@@ -95,7 +97,15 @@ export function IssuePanel({ products, productsLoaded, draft, onDraft, onClose, 
         <label className="field">
           <span className="field__label">Product</span>
           <select value={chosenProduct} onChange={(event) => { setProduct(event.target.value); onDraft({ product: event.target.value }); }} required>
-            {active.length === 0 && <option value="">No active product: add one on the Products page</option>}
+            {active.length === 0 && (
+              <option value="">
+                {productsError
+                  ? "The products couldn't be loaded"
+                  : productsLoaded
+                    ? "No active product: add one on the Products page"
+                    : "Loading products…"}
+              </option>
+            )}
             {active.map((option) => (
               <option key={option.id} value={option.id}>
                 {option.name}

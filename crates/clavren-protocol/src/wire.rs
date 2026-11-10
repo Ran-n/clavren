@@ -1,12 +1,12 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.470214
-//+ Revised: 	2026/11/03 04:54:12.470214
+//+ Revised: 	2026/11/09 22:30:53.540188
 // -----------------------------------------------------------------------------
 
 //! The public API's requests, responses and error codes (`/api/v1`). Binary values are base64url
-//! strings; times are RFC 3339 in UTC. Every response carries the server's time, which clients use
-//! to notice a clock set back.
+//! strings; times are RFC 3339 in UTC. Every response carries the server's time, for diagnostics:
+//! it isn't signed, so clients take the server's time from the token's `iat` instead.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

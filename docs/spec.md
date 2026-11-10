@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.098038 )
-[//]: # (+ Revised: 	2026/11/09 10:31:39.903740 )
+[//]: # (+ Revised: 	2026/11/09 22:30:57.460702 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Clavren — Specification
@@ -134,7 +134,7 @@ The application receives one typed outcome and shows its own translated message:
 
 ### Clock rollback
 
-The client keeps the latest system-clock time it has seen and, at each successful answer, the difference between the server's time and its own; it judges the cached token by its clock plus that difference. If the system clock is ever more than 1 hour earlier than the latest time seen, the cached token is treated as invalid until an online check succeeds. A wrong clock therefore works normally, and a clock set back before a check gains nothing.
+The client keeps the latest system-clock time it has seen and, at each successful answer, the difference between the server's time (the signed token's `iat`, never the unsigned `server_time`) and its own; it judges the cached token by its clock plus that difference. If the system clock is ever more than 1 hour earlier than the latest time seen, or was set back more than 1 hour in all since the last successful check (small steps back add up, across restarts too), the cached token is treated as invalid until an online check succeeds. A wrong clock therefore works normally, and a clock set back before a check gains nothing.
 
 ### Never
 
@@ -266,7 +266,7 @@ A polished, responsive web application (React, TypeScript, Vite) embedded in the
 - **Everything is remembered**: theme, filters, search, sort, page size, visible columns and last page are saved in `admin_preferences` and restored at the next login, on any browser. Defaults (theme follows the system) apply until the admin picks something.
 - **Selection and bulk actions**: row checkboxes and "select all matching the filter"; bulk actions use bulk endpoints.
 - **Never frozen, never silent**: requests run in the background with a visible loading state; errors are shown in plain English with what to do. Raw codes, HTTP statuses and stack traces never reach the screen.
-- **Light and dark themes.**
+- **Light and dark themes**, switched with an icon button in the header that cycles System, Light and Dark.
 
 ### Pages
 
@@ -366,7 +366,7 @@ clavren/
 │   │                       # admin_preferences/ audit/ backups/ crypto/ http/ maintenance/
 │   │                       # config.rs logging.rs bin/
 │   └── clavren-client/     # activation, checks, offline validation, outcomes,
-│                           # device_identity/ (trait + Windows DPAPI)
+│                           # store.rs (protected state file) + dpapi.rs (Windows)
 ├── migrations/
 ├── web/admin/              # public/ (served as-is), src/ by page: licences/ customers/
 │                           # products/ activations/ audit/ account/ preferences/ shared/

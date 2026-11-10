@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.824867
-//+ Revised: 	2026/11/07 19:37:00.396515
+//+ Revised: 	2026/11/09 22:30:55.943700
 // -----------------------------------------------------------------------------
 
 //! The daily check: challenges that work once, for two minutes and one activation, signatures
@@ -201,6 +201,25 @@ async fn unknown_or_malformed_activations_are_refused(pool: PgPool) {
     let body = json!({ "challenge": Uuid::now_v7(), "nonce": "AA", "signature": "AA", "app_version": "1" });
     let reply = device.send_check(licensing.app(), &Uuid::now_v7().to_string(), body).await;
     assert_eq!(reply.error(), "challenge_invalid");
+}
+
+/// Regression: every check counted against its activation ID before anything looked at it, so
+/// made-up IDs each added a counter the server kept in memory for an hour.
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn made_up_activations_add_no_counters(pool: PgPool) {
+    let licensing = Licensing::new(pool).await;
+    let device = Device::new(1);
+    let limits = &licensing.admin.fixture.state.public_limits.checks_per_activation;
+    for _ in 0..5 {
+        let body = json!({ "challenge": Uuid::now_v7(), "nonce": "AA", "signature": "AA", "app_version": "1" });
+        let reply = device.send_check(licensing.app(), &Uuid::now_v7().to_string(), body).await;
+        assert_eq!(reply.error(), "challenge_invalid");
+    }
+    assert_eq!(limits.tracked_keys(), 0);
+
+    let (_, activation) = activated(&licensing, json!({})).await;
+    assert_eq!(device.check(licensing.app(), &activation).await.status, StatusCode::OK);
+    assert_eq!(limits.tracked_keys(), 1, "a real check is counted");
 }
 
 #[sqlx::test(migrator = "clavren::database::MIGRATOR")]

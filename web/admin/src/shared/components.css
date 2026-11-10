@@ -46,6 +46,25 @@
 .app-header__user {
   color: var(--color-text-muted);
 }
+/* An icon-only button, such as the theme switch; at least 24 px across for a fingertip. */
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.icon-button:hover {
+  background: var(--color-surface-raised);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
 .app-main {
   max-width: 80rem;
   margin: 0 auto;

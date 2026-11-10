@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:36.214266
-//+ Revised: 	2026/11/08 14:55:44.962816
+//+ Revised: 	2026/11/09 22:30:54.857496
 // -----------------------------------------------------------------------------
 
 //! Counting failures per key (a client address, a username) over a sliding window, in memory.
@@ -25,7 +25,8 @@ impl FailureLimiter {
     }
 
     /// `Err(wait)` while `key` has used up its failures; `wait` is how long until the oldest one
-    /// leaves the window.
+    /// leaves the window. Requests count with [`Self::attempt`], which checks and counts at once.
+    #[cfg(test)]
     pub fn check(&self, key: &str, now: DateTime<Utc>) -> Result<(), Duration> {
         let mut failures = self.lock();
         failures.get_mut(key).map_or(Ok(()), |times| self.allowance(times, now))

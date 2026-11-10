@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 19:43:36.881392 )
-[//]: # (+ Revised: 	2026/11/09 13:58:24.629378 )
+[//]: # (+ Revised: 	2026/11/09 22:30:57.076581 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # HTTP API
@@ -53,8 +53,9 @@ What applications call, under `/api/v1`. The [`clavren-client`](../crates/clavre
 does all of it for Rust applications. Bodies are JSON, up to 16 KiB. Binary values are unpadded
 base64url, IDs are lowercase hyphenated UUIDs, and times are RFC 3339 in UTC. **Every answer,
 errors included, has `server_time`** (except a path that doesn't exist and a request cut off after
-30 seconds). Clients judge tokens by it rather than by the computer's clock, so a wrong clock
-still works and a clock set back gains nothing.
+30 seconds), for diagnostics. It isn't signed, so `clavren-client` takes the server's time from
+the token's signed `iat` instead and judges tokens by that rather than by the computer's clock: a
+wrong clock still works and a clock set back gains nothing.
 
 ### `POST /api/v1/activations`
 
@@ -183,8 +184,8 @@ Everything under `/api/admin` answers with `Cache-Control: no-store`.
 
 **Session.** Signing in sets the `clavren_session` cookie (`HttpOnly`, `SameSite=Strict`, `Secure`
 over HTTPS, `Path=/`). A session ends after 12 hours without use or 7 days after sign-in, whichever
-comes first. It also ends when the admin signs out, changes their password, or is disabled or
-reset with `clavren-admin`.
+comes first. It also ends when the admin signs out or is disabled or reset with `clavren-admin`;
+changing the password ends every other session of the admin, and keeps this one.
 
 **CSRF.** Every request except `GET` must send the session's CSRF token in `X-CSRF-Token`. The
 token comes back from sign-in and from `GET /api/admin/session`, so a reloaded page can fetch it
@@ -458,7 +459,7 @@ of `PATCH`, `revoke` and `reset` below.
 | `POST /api/admin/licences/{id}/revoke` | `{}` or `{"reason": "…"}` | The licence. The key is deleted and can never be accepted again; a computer using it locks at its next check |
 | `POST /api/admin/licences/{id}/reset` | | The licence, now `unused`. The same key activates on another computer; the old one locks at its next check |
 | `DELETE /api/admin/licences/{id}` | | `204`. The licence, its key and its activations are gone in any state; a computer using it locks at its next check, and the key reads as unknown (`invalid_key`) |
-| `POST /api/admin/licences/bulk/edit` | `ids` (up to 1,000) and the fields of `PATCH`; a new customer is created once for the batch | `{"updated": 3}` |
+| `POST /api/admin/licences/bulk/edit` | `ids` (up to 1,000) and the fields of `PATCH`; a new customer is created once for the batch | `{"updated": 3}`: the licences that changed (one already as asked isn't counted, nor audited) |
 | `POST /api/admin/licences/bulk/revoke` | `ids`, optional `reason` | `{"revoked": 3}` |
 | `POST /api/admin/licences/bulk/delete` | `ids`, optional `"dry_run": true` (only counts) | `{"deleted": 12, "in_use": 3}` |
 

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.065377
-//+ Revised: 	2026/11/08 15:20:39.092718
+//+ Revised: 	2026/11/09 22:30:53.464973
 // -----------------------------------------------------------------------------
 
 //! The client against an in-memory server: activation, offline starts, the daily check, clock
@@ -156,6 +156,80 @@ fn setting_the_clock_back_before_a_check_gains_nothing() {
     assert!(computer.start().status().is_licensed());
     computer.pass(TimeDelta::days(1));
     assert_eq!(computer.start().status(), Outcome::NeedsCheck, "30 days by the server's clock, not 2 years");
+}
+
+/// Regression: each step back was measured against the latest time seen only, so setting the
+/// clock back under an hour, again and again, kept a licence running offline for ever.
+#[test]
+fn many_small_steps_back_add_up() {
+    let computer = Computer::new();
+    let client = computer.activated();
+    computer.server.set_mode(Mode::Offline);
+    for step in [TimeDelta::minutes(59), TimeDelta::minutes(-40), TimeDelta::minutes(30)] {
+        computer.advance(step);
+        assert!(client.status().is_licensed(), "40 minutes back in all is a normal adjustment");
+    }
+    computer.advance(TimeDelta::minutes(-30));
+    assert_eq!(client.status(), Outcome::NeedsCheck, "70 minutes back in all is not");
+
+    computer.server.set_mode(Mode::Normal);
+    assert!(client.check().unwrap().is_licensed(), "a check starts the count again");
+    computer.advance(TimeDelta::minutes(-50));
+    assert!(client.status().is_licensed());
+}
+
+#[test]
+fn steps_back_add_up_across_restarts() {
+    let computer = Computer::new();
+    let client = computer.activated();
+    computer.advance(TimeDelta::hours(2));
+    assert!(client.status().is_licensed());
+    computer.advance(TimeDelta::minutes(-50));
+    assert!(client.status().is_licensed());
+    client.save_time_seen().unwrap();
+    drop(client);
+
+    computer.advance(TimeDelta::minutes(-20));
+    assert_eq!(computer.start().status(), Outcome::NeedsCheck, "50 minutes, saved, plus 20 more");
+}
+
+/// Regression: the offset to the server's clock came from the answer's unsigned `server_time`, so
+/// anything between the two (a proxy) could make a 30-day token last years offline.
+#[test]
+fn the_servers_time_comes_from_the_signed_token() {
+    let computer = Computer::new();
+    *computer.server.server_time_shift.lock().unwrap() = TimeDelta::days(-730);
+    let client = computer.activated();
+    computer.server.set_mode(Mode::Offline);
+    computer.advance(TimeDelta::days(29));
+    assert!(client.status().is_licensed());
+    computer.advance(TimeDelta::days(1));
+    assert_eq!(client.status(), Outcome::NeedsCheck, "30 days, whatever server_time said");
+}
+
+/// Regression: a refusal was kept in memory even when it couldn't be saved, so the application
+/// locked while the disk still held the licence.
+#[test]
+fn a_refusal_that_cannot_be_saved_changes_nothing() {
+    struct Switchable(MemoryStore, AtomicBool);
+    impl SecretStore for Switchable {
+        fn load(&self) -> Result<Option<Vec<u8>>, StoreError> {
+            self.0.load()
+        }
+        fn save(&self, plain: &[u8]) -> Result<(), StoreError> {
+            if self.1.load(Ordering::SeqCst) { Err(StoreError::Corrupt) } else { self.0.save(plain) }
+        }
+    }
+    let computer = Computer::new();
+    let store = Arc::new(Switchable(MemoryStore::default(), AtomicBool::new(false)));
+    let client = computer.client_on(Box::new(store.clone()), Config::new(PRODUCT, FakeServer::trusted_keys(), "2.0.0"));
+    assert!(client.activate(KEY).unwrap().is_licensed());
+    store.1.store(true, Ordering::SeqCst);
+    computer.server.set_mode(Mode::Refuse("licence_revoked", 403));
+    computer.advance(TimeDelta::days(1));
+    assert!(matches!(client.check(), Err(Temporary::Storage(_))));
+    assert!(client.status().is_licensed(), "nothing changed in memory either");
+    assert!(client.needs_check(), "the check is still due");
 }
 
 #[test]

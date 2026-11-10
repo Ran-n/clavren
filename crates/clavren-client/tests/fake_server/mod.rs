@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.926414
-//+ Revised: 	2026/11/08 14:55:43.724241
+//+ Revised: 	2026/11/09 22:30:53.388863
 // -----------------------------------------------------------------------------
 
 //! A licence server in memory: answers the public API as Clavren does, with tokens signed by a
@@ -41,6 +41,8 @@ pub struct FakeServer {
     pub mode: Mutex<Mode>,
     pub calls: AtomicUsize,
     pub licence_expires_at: Mutex<Option<DateTime<Utc>>>,
+    /// Added to the unsigned `server_time` of every answer (something in between changing it).
+    pub server_time_shift: Mutex<chrono::Duration>,
     signing: SigningKey,
     device: Mutex<Option<[u8; 32]>>,
     nonces: Mutex<Vec<(Uuid, [u8; 32])>>,
@@ -53,6 +55,7 @@ impl FakeServer {
             mode: Mutex::new(Mode::Normal),
             calls: AtomicUsize::new(0),
             licence_expires_at: Mutex::new(None),
+            server_time_shift: Mutex::new(chrono::Duration::zero()),
             signing: SigningKey::from_bytes(&[42; 32]),
             device: Mutex::new(None),
             nonces: Mutex::new(Vec::new()),
@@ -92,7 +95,7 @@ impl FakeServer {
             },
             "token_expires_at": end,
             "licence_expires_at": licence_end,
-            "server_time": now,
+            "server_time": now + *self.server_time_shift.lock().unwrap(),
         })
     }
 }

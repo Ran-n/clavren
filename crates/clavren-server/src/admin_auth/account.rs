@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:34.824500
-//+ Revised: 	2026/11/08 14:55:44.077661
+//+ Revised: 	2026/11/09 22:30:54.140807
 // -----------------------------------------------------------------------------
 
 //! What a signed-in admin can change about their own account: password, recovery codes and
@@ -138,7 +138,7 @@ async fn confirm_password(
     let now = state.clock.now();
     // counted first, as at sign-in, and taken back when the password is right
     state.login_failures.attempt(std::slice::from_ref(&key), now).map_err(ApiError::rate_limited)?;
-    if passwords::verify(password, admin.password_hash.clone()).await {
+    if passwords::verify(password, admin.password_hash.clone()).await.map_err(ApiError::internal)? {
         state.login_failures.forgive(&key, now);
         return Ok(admin);
     }

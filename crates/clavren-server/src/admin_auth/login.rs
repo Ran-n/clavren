@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:35.077667
-//+ Revised: 	2026/11/08 14:55:44.159696
+//+ Revised: 	2026/11/09 22:30:54.232587
 // -----------------------------------------------------------------------------
 
 //! Admin login: password and second factor in one request, rate limited per client address and
@@ -98,7 +98,7 @@ async fn authenticate(
         passwords::verify_against_nothing(request.password.clone()).await;
         return Ok(Err(Failure::UnknownUser));
     };
-    if !passwords::verify(request.password.clone(), admin.password_hash.clone()).await {
+    if !passwords::verify(request.password.clone(), admin.password_hash.clone()).await.map_err(ApiError::internal)? {
         return Ok(Err(Failure::Password(admin)));
     }
     if admin.disabled_at.is_some() {

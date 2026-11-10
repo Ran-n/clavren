@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.155237 )
-[//]: # (+ Revised: 	2026/11/09 10:00:42.941215 )
+[//]: # (+ Revised: 	2026/11/09 23:01:01.066919 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Design decisions
@@ -65,7 +65,10 @@ is simply wrong (one set ahead never runs) or, when the guard is reset after eve
 clock set back before a check stretch the 30 days by as much as it was set back. With the
 difference, a wrong clock works normally, a clock set back after a check is noticed against the
 latest time seen (system-clock time) and asks for a check, and one set back before a check gains
-nothing.
+nothing. The difference is measured from the token's signed issue time (`iat`), not from the
+answer's `server_time`: that field isn't signed, so a proxy that changed it could otherwise shift
+the clock by years. Steps back also add up since the last check, so setting the clock back 59
+minutes every hour can't hold it inside the one-hour allowance for ever.
 
 ## Customers are recorded
 
@@ -100,8 +103,11 @@ the database holds licences or admin accounts: stored keys, lookup hashes and TO
 depend on it, and a new key would silently make them unreadable. The spec first named only
 licences; admin accounts were added because their TOTP secrets are encrypted with it too.
 
-The key is written to a temporary file and renamed into place, so a crash can't leave half a key,
-and an existing key is never overwritten.
+The key is written whole to a temporary file of its own, then hard-linked to `master.key`, which
+fails rather than replace a file already there: a crash can't leave half a key, an existing key is
+never overwritten, and when the server and `clavren-admin` start together both use the one key that
+landed. A file system without hard links gets the key created in place, still exclusively; a crash
+there can leave a short key, which is refused on read.
 
 ## Licence state is derived, not stored
 
@@ -255,8 +261,9 @@ risk at that size. Revisit them if that changes.
   thousand licences delete in well under a second. The fix, if ever needed: delete in batches in
   the background, or mark the product deleted and let the hourly clean-up remove its rows.
 - **Using up an activation's checks.** The limit of 30 checks per hour per activation is counted
-  before the device's signature is checked (`crates/clavren-server/src/activations/public_routes.rs`),
-  so anyone who knows an activation's ID can spend them and keep that computer from checking for
+  once a challenge made for that activation is used, before the device's signature is checked
+  (`crates/clavren-server/src/activations/checks.rs`; made-up activation IDs never get that far,
+  so they cost no memory), so anyone who knows an activation's ID can spend them and keep that computer from checking for
   an hour. The computer keeps working on its cached token (30 days), and the ID only exists on the
   computer itself and in the dashboard, so it can't be guessed. The fix, if ever needed: count only
   failed checks (wrong challenge or signature) against the activation.

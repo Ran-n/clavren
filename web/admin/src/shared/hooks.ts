@@ -62,7 +62,9 @@ export function usePagedList<T>(path: string, pageSize: number): PagedList<T> {
   const after = cursors[cursors.length - 1] ?? null;
   const [state, setState] = useListPage<T>(source, after, version, false);
 
-  const goNext = useCallback(() => setCursors((stack) => (state.next ? [...stack, state.next] : stack)), [state.next]);
+  // while a page loads, `next` still belongs to the page before: a second press would repeat it
+  const nextCursor = state.loading ? null : state.next;
+  const goNext = useCallback(() => setCursors((stack) => (nextCursor ? [...stack, nextCursor] : stack)), [nextCursor]);
   const goPrevious = useCallback(() => setCursors((stack) => (stack.length > 1 ? stack.slice(0, -1) : stack)), []);
   const reload = useCallback(() => setVersion((value) => value + 1), []);
   const replace = useCallback((row: T, matches: (existing: T) => boolean) => {

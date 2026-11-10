@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:13.438401
-//+ Revised: 	2026/11/03 04:54:13.438401
+//+ Revised: 	2026/11/09 22:30:54.712521
 // -----------------------------------------------------------------------------
 
 //! Database access for customers.
@@ -53,6 +53,16 @@ pub async fn insert(executor: impl PgExecutor<'_>, customer: &Customer) -> Resul
 
 pub async fn find(executor: impl PgExecutor<'_>, id: Uuid) -> Result<Option<Customer>, sqlx::Error> {
     sqlx::query_as(select_customers!("AND id = $2")).bind(None::<String>).bind(id).fetch_optional(executor).await
+}
+
+/// The customer, share-locked until the transaction ends: it can be given to licences in
+/// parallel, but not deleted meanwhile (which would leave the licences pointing at nothing).
+pub async fn find_for_share(connection: &mut PgConnection, id: Uuid) -> Result<Option<Customer>, sqlx::Error> {
+    sqlx::query_as(select_customers!("AND id = $2 FOR SHARE"))
+        .bind(None::<String>)
+        .bind(id)
+        .fetch_optional(connection)
+        .await
 }
 
 pub async fn find_for_update(connection: &mut PgConnection, id: Uuid) -> Result<Option<Customer>, sqlx::Error> {

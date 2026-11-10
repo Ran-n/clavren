@@ -60,6 +60,6 @@ test("changing the password, and signing out everywhere else", async ({ admin, c
 
   const sessions = admin.getByRole("form", { name: "Other sessions" });
   await sessions.getByRole("button", { name: "Sign out everywhere else" }).click();
-  await expect(sessions.getByRole("status")).toBeVisible();
+  await expect(sessions.getByRole("status")).toHaveText(/^(You weren't signed in anywhere else|Signed out \d+ other sessions?)\.$/);
   await expect(admin.getByRole("heading", { name: "Account" })).toBeVisible(); // still signed in here
 });

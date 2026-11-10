@@ -83,10 +83,16 @@ function lastCheck(updates: Updates): string {
 }
 
 function Server() {
-  const { updates, error, check, checkNow } = useUpdates();
+  const { updates, error, retry, check, checkNow } = useUpdates();
   const [checkError, setCheckError] = useState<unknown>(null);
-  if (error) return <ErrorNotice error={error} />;
-  if (!updates) return <Loading />;
+  const failed = error ? (
+    <ErrorNotice error={error}>
+      <Button size="small" variant="quiet" onClick={retry}>
+        Try again
+      </Button>
+    </ErrorNotice>
+  ) : null;
+  if (!updates) return failed ?? <Loading />;
   return (
     <div className="server-facts">
       <p>Version {updates.running_version}</p>
@@ -111,6 +117,7 @@ function Server() {
         </Notice>
       )}
       <ErrorNotice error={checkError} />
+      {failed}
     </div>
   );
 }

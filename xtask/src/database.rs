@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 13:04:41.080840
-//+ Revised: 	2026/11/08 14:55:48.752747
+//+ Revised: 	2026/11/09 22:30:57.686437
 // -----------------------------------------------------------------------------
 
 //! The local, disposable database cluster of `scripts/local-db.ps1`.
@@ -9,6 +9,7 @@
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use crate::process;
@@ -17,11 +18,12 @@ use crate::process;
 const LOCAL_CLUSTER: &str = "127.0.0.1:55432";
 const DATABASE_URL_VAR: &str = "CLAVREN_DATABASE_URL";
 
+/// The repository whose local cluster this launcher started, to stop it on the way out.
+static STARTED: Mutex<Option<PathBuf>> = Mutex::new(None);
+
 /// The local cluster while the launcher runs. Dropping it stops the cluster if this launcher
 /// started it.
-pub struct LocalDatabase {
-    started_by: Option<PathBuf>,
-}
+pub struct LocalDatabase(());
 
 impl LocalDatabase {
     /// Starts the local cluster unless it is running already, or the configuration points at
@@ -30,15 +32,16 @@ impl LocalDatabase {
         let url = std::env::var(DATABASE_URL_VAR).unwrap_or_default();
         if !uses_local_cluster(&url) {
             tracing::info!(target: "xtask::database", "using the database in {DATABASE_URL_VAR}");
-            return Ok(Self { started_by: None });
+            return Ok(Self(()));
         }
         if is_listening() {
             tracing::info!(target: "xtask::database", "local database already running on {LOCAL_CLUSTER}");
-            return Ok(Self { started_by: None });
+            return Ok(Self(()));
         }
         tracing::info!(target: "xtask::database", "starting the local database");
         // from here on the guard owns the cluster: a start that fails half-way is stopped too
-        let database = Self { started_by: Some(root.to_path_buf()) };
+        *STARTED.lock().unwrap_or_else(PoisonError::into_inner) = Some(root.to_path_buf());
+        let database = Self(());
         process::run(local_db(root, &[]), "scripts/local-db.ps1")?;
         Ok(database)
     }
@@ -46,11 +49,16 @@ impl LocalDatabase {
 
 impl Drop for LocalDatabase {
     fn drop(&mut self) {
-        let Some(root) = &self.started_by else { return };
-        tracing::info!(target: "xtask::database", "stopping the local database");
-        if let Err(message) = process::run(local_db(root, &["-Stop"]), "scripts/local-db.ps1 -Stop") {
-            tracing::error!(target: "xtask::database", "{message}");
-        }
+        stop_if_started();
+    }
+}
+
+/// Stops the local cluster if this launcher started it, once.
+pub fn stop_if_started() {
+    let Some(root) = STARTED.lock().unwrap_or_else(PoisonError::into_inner).take() else { return };
+    tracing::info!(target: "xtask::database", "stopping the local database");
+    if let Err(message) = process::run(local_db(&root, &["-Stop"]), "scripts/local-db.ps1 -Stop") {
+        tracing::error!(target: "xtask::database", "{message}");
     }
 }
 

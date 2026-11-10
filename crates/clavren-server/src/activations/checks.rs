@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.712018
-//+ Revised: 	2026/11/03 08:25:52.451043
+//+ Revised: 	2026/11/09 22:30:53.689231
 // -----------------------------------------------------------------------------
 
 //! The daily check: the application asks for a challenge, signs it with its device key, and gets a
@@ -71,6 +71,9 @@ pub async fn check(
         || ApiError::refused(ErrorCode::ChallengeInvalid, "the challenge is unknown, used, expired or wrongly signed");
     let nonce_hash =
         repository::consume_challenge(&state.pool, request.challenge, activation_id, now).await?.ok_or_else(invalid)?;
+    // Counted only once a challenge this activation asked for is used: made-up activation IDs
+    // never reach here, so they add no counters (the limiter keeps one per ID in memory).
+    state.public_limits.checks_per_activation.hit(&activation_id.to_string(), now).map_err(ApiError::rate_limited)?;
     let nonce = encoding::decode_array::<NONCE_LENGTH>(&request.nonce).ok_or_else(invalid)?;
     if blake3::hash(&nonce).as_bytes().as_slice() != nonce_hash.as_slice() {
         return Err(invalid());

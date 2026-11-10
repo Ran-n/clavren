@@ -1,8 +1,9 @@
 // A reviewed baseline screenshot of every page, light and dark, at desktop and phone width, from
 // a fixed data set on a server whose clock stands still, plus the states that open in place (the
-// customer list, the customer editor, the delete warnings, an update). Also: nothing makes the page
-// scroll sideways, and disabled actions are dimmed. Keys stay hidden; IDs are masked. The update
-// state is a fixed answer, so the server's own version never changes a baseline.
+// customer list, the customer editor, the delete warnings, an update, the theme button hovered).
+// Also: nothing makes the page scroll sideways, and disabled actions are dimmed. Keys stay hidden;
+// IDs are masked. The update state is a fixed answer, so the server's own version never changes a
+// baseline.
 
 import type { Page } from "@playwright/test";
 import { Device, expect, test, type AdminApi } from "./fixtures";
@@ -131,6 +132,10 @@ test.describe("every page, light and dark, desktop and phone", () => {
   test("activations", async ({ admin }) => capture(admin, "activations", "/activations"));
   test("audit log", async ({ admin }) => capture(admin, "audit", "/audit", masked('td[data-label="Record"]')));
   test("account", async ({ admin }) => capture(admin, "account", "/account"));
+  test("the theme button hovered", async ({ admin }) =>
+    capture(admin, "theme-button-hover", "/", undefined, async (page) => {
+      await page.getByRole("button", { name: /^Theme:/ }).hover();
+    }));
   test("an update being confirmed without a backup drive", async ({ admin }) => {
     await answerUpdates(admin, UPDATE_AVAILABLE);
     await capture(admin, "update-confirm", "/", undefined, async (page) => {

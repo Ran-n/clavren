@@ -21,8 +21,12 @@ export type CheckProgress = "idle" | "waiting" | "slow";
 export type Installing = { version: string; phase: "running" | "restarting" | "slow" };
 
 type UpdatesContext = {
+  /** The last answer, kept when a later request fails. */
   updates: Updates | null;
+  /** Why the last request failed; cleared by the next answer. */
   error: unknown;
+  /** Asks again after a failure. */
+  retry: () => void;
   check: CheckProgress;
   checkNow: () => Promise<void>;
   installing: Installing | null;
@@ -93,6 +97,7 @@ export function UpdatesProvider({ children }: { children: ReactNode }) {
         }
         if (!alive.current) return;
         setUpdates(answer);
+        setError(null);
         if (answer.running_version === version) {
           rememberUpdatedTo(version);
           window.location.reload(); // the new release's dashboard files
@@ -146,6 +151,11 @@ export function UpdatesProvider({ children }: { children: ReactNode }) {
     if (alive.current) setCheck("slow");
   }, [updates, load]);
 
+  const retry = useCallback(() => {
+    setError(null);
+    load().catch((failure: unknown) => alive.current && setError(failure));
+  }, [load]);
+
   const install = useCallback(
     async (version: string, skipBackup: boolean) => {
       await api("POST", "/updates/install", { version, skip_backup: skipBackup });
@@ -155,8 +165,8 @@ export function UpdatesProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ updates, error, check, checkNow, installing, install, updatedTo }),
-    [updates, error, check, checkNow, installing, install, updatedTo],
+    () => ({ updates, error, retry, check, checkNow, installing, install, updatedTo }),
+    [updates, error, retry, check, checkNow, installing, install, updatedTo],
   );
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

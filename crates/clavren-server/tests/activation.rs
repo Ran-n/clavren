@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.617002
-//+ Revised: 	2026/11/03 04:54:16.617002
+//+ Revised: 	2026/11/09 22:30:55.486611
 // -----------------------------------------------------------------------------
 
 //! `POST /api/v1/activations`: binding a key to one computer, atomically and idempotently, with a
@@ -74,6 +74,27 @@ async fn the_same_computer_asking_again_gets_its_activation_back(pool: PgPool) {
     let other = Device::new(2).activate(licensing.app(), PRODUCT, &key).await;
     assert_eq!((other.status, other.error()), (StatusCode::CONFLICT, "already_activated"));
     assert!(other.body["server_time"].is_string());
+}
+
+/// Regression: activating again from the same computer kept the version of the first activation,
+/// though the activation holds the version last reported.
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn activating_again_records_the_new_app_version(pool: PgPool) {
+    let licensing = Licensing::new(pool).await;
+    let (_, key) = licensing.issue(json!({})).await;
+    let device = Device::new(1);
+    let first = device.activate(licensing.app(), PRODUCT, &key).await;
+    let mut body = device.activation_body(PRODUCT, &key);
+    body["app_version"] = json!("2.0.0");
+    let again = Call::new(Method::POST, "/api/v1/activations").json(body).send(licensing.app()).await;
+    assert_eq!(again.status, StatusCode::OK);
+    let (version, checked): (String, Option<chrono::DateTime<chrono::Utc>>) =
+        sqlx::query_as("SELECT app_version, last_checked_at FROM activations WHERE id = $1::uuid")
+            .bind(first.body["activation"].as_str().unwrap())
+            .fetch_one(licensing.admin.pool())
+            .await
+            .unwrap();
+    assert_eq!((version.as_str(), checked), ("2.0.0", Some(licensing.now())));
 }
 
 #[sqlx::test(migrator = "clavren::database::MIGRATOR")]
