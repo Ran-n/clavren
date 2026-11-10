@@ -451,7 +451,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "clavren-client"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "chrono",
  "clavren-protocol",
@@ -473,7 +473,7 @@ dependencies = [
 
 [[package]]
 name = "clavren-protocol"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base64 0.23.1",
  "blake3",
@@ -488,7 +488,7 @@ dependencies = [
 
 [[package]]
 name = "clavren-server"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "argon2",
  "axum",
@@ -2870,7 +2870,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "xtask"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "ctrlc",
  "tempfile",
