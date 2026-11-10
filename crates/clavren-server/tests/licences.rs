@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:17.102897
-//+ Revised: 	2026/11/07 19:37:00.544611
+//+ Revised: 	2026/11/10 17:59:22.708937
 // -----------------------------------------------------------------------------
 
 //! Issuing and finding licences: keys stored only as hash and ciphertext, customers chosen or typed
@@ -22,7 +22,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 async fn product(admin: &Admin, code: &str) -> String {
-    let body = json!({ "code": code, "name": format!("Product {code}"), "message_template": "Hi {customer_name}, your {product_name} key: {key}" });
+    let body = json!({ "code": code, "name": format!("Product {code}"), "message_template": "Hi {customer_name}, your {product_name} key: {key}", "test_licence": false });
     admin.create("/api/admin/products", body).await["id"].as_str().unwrap().to_string()
 }
 
@@ -324,11 +324,13 @@ async fn related_records_expand_on_request(pool: PgPool) {
         keys,
         [
             "active_activation",
+            "active_computers",
             "created_at",
             "customer",
             "expires_at",
             "id",
             "internal_notes",
+            "is_test",
             "product",
             "revocation_reason",
             "revoked_at",

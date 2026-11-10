@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.617002
-//+ Revised: 	2026/11/09 22:30:55.486611
+//+ Revised: 	2026/11/10 17:59:22.291409
 // -----------------------------------------------------------------------------
 
 //! `POST /api/v1/activations`: binding a key to one computer, atomically and idempotently, with a
@@ -160,6 +160,21 @@ async fn many_computers_racing_for_one_key_leave_exactly_one_activation(pool: Pg
     let rows: i64 =
         sqlx::query_scalar("SELECT count(*) FROM activations").fetch_one(licensing.admin.pool()).await.unwrap();
     assert_eq!(rows, 1, "no orphan activations");
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn many_computers_racing_for_one_test_key_all_get_in(pool: PgPool) {
+    let licensing = Licensing::new(pool).await;
+    let (_, key) = licensing.issue(json!({ "test": true })).await;
+    let devices: Vec<Device> = (1..=8).map(Device::new).collect();
+    let replies = futures_join_all(devices.iter().map(|device| device.activate(licensing.app(), PRODUCT, &key))).await;
+    let statuses: Vec<StatusCode> = replies.iter().map(|reply| reply.status).collect();
+    assert!(statuses.iter().all(|status| *status == StatusCode::CREATED), "{statuses:?}");
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM activations WHERE revoked_at IS NULL")
+        .fetch_one(licensing.admin.pool())
+        .await
+        .unwrap();
+    assert_eq!(rows, 8);
 }
 
 #[sqlx::test(migrator = "clavren::database::MIGRATOR")]

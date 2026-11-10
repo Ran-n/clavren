@@ -17,6 +17,21 @@ export function LicenceStateBadge({ state }: { state: LicenceState }) {
   return <Badge tone={tone}>{label}</Badge>;
 }
 
+/** Marks a test licence. */
+export function TestBadge() {
+  return <Badge tone="test">Test</Badge>;
+}
+
+/** A licence's state, and whether it is a test licence. */
+export function LicenceBadges({ state, test }: { state: LicenceState; test: boolean }) {
+  return (
+    <span className="badges">
+      <LicenceStateBadge state={state} />
+      {test && <TestBadge />}
+    </span>
+  );
+}
+
 export const LICENCE_STATE_OPTIONS = [
   { value: "", label: "Any state" },
   { value: "unused", label: "Unused" },

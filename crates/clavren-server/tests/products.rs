@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:17.229725
-//+ Revised: 	2026/11/07 19:37:00.620281
+//+ Revised: 	2026/11/10 17:59:23.010544
 // -----------------------------------------------------------------------------
 
 //! `/api/admin/products` against a real database: creating, listing, editing and deleting
@@ -18,7 +18,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 async fn create(admin: &Admin, code: &str, name: &str) -> Value {
-    admin.create("/api/admin/products", json!({ "code": code, "name": name })).await
+    admin.create("/api/admin/products", json!({ "code": code, "name": name, "test_licence": false })).await
 }
 
 async fn audit(admin: &Admin) -> Vec<(String, Option<Uuid>, Value)> {
@@ -41,7 +41,7 @@ async fn a_created_product_comes_back_with_its_defaults(pool: PgPool) {
         .call(
             Method::POST,
             "/api/admin/products",
-            Some(json!({ "code": "Avalio-Lite", "name": " Avalio Lite ", "description": "" })),
+            Some(json!({ "code": "Avalio-Lite", "name": " Avalio Lite ", "description": "", "test_licence": false })),
         )
         .await;
 
@@ -56,11 +56,24 @@ async fn a_created_product_comes_back_with_its_defaults(pool: PgPool) {
     let keys: Vec<&str> = product.as_object().unwrap().keys().map(String::as_str).collect();
     assert_eq!(
         keys,
-        ["code", "created_at", "description", "id", "is_active", "message_template", "name", "updated_at"]
+        [
+            "code",
+            "created_at",
+            "description",
+            "id",
+            "is_active",
+            "message_template",
+            "name",
+            "test_licence",
+            "updated_at"
+        ]
     );
+    assert_eq!(product["test_licence"], Value::Null, "none was asked for");
 
     let read = admin.call(Method::GET, &format!("/api/admin/products/{}", id_of(product)), None).await;
-    assert_eq!(read.body, *product);
+    let mut created = product.clone();
+    created.as_object_mut().unwrap().remove("test_licence");
+    assert_eq!(read.body, created);
     let audit = audit(&admin).await;
     assert_eq!(audit.len(), 1);
     assert_eq!((audit[0].0.as_str(), audit[0].1.unwrap().to_string()), ("product.created", id_of(product)));

@@ -143,10 +143,11 @@ export function OverviewPage() {
           <BackupWarning overview={overview} />
           <h2>Licences</h2>
           <div className="stats">
-            <Stat value={overview.unused} label="Unused" to="/licences?state=unused" />
-            <Stat value={overview.redeemed} label="In use" to="/licences?state=redeemed" />
-            <Stat value={overview.revoked} label="Revoked" to="/licences?state=revoked" />
+            <Stat value={overview.unused} label="Unused" to="/licences?state=unused&not_test=true" />
+            <Stat value={overview.redeemed} label="In use" to="/licences?state=redeemed&not_test=true" />
+            <Stat value={overview.revoked} label="Revoked" to="/licences?state=revoked&not_test=true" />
           </div>
+          <p className="muted">Test licences, their computers and their checks aren't counted here.</p>
           <h2>Computers and products</h2>
           <div className="stats">
             <Stat value={overview.active_computers} label="Computers using a licence" to="/activations" />

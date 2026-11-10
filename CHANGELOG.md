@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:54.981076 )
-[//]: # (+ Revised: 	2026/11/10 08:29:05.505446 )
+[//]: # (+ Revised: 	2026/11/10 17:59:18.862766 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Changelog
@@ -11,6 +11,19 @@ All notable changes to this project will be documented in this file.
 This project adheres to [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Added
+
+- Test licences, for trying an application against the real server: they work on any number of computers at once, their tokens carry `"test": true` (`Outcome::Licensed { test, .. }` in the client), and the Overview leaves them, their computers and their checks out. Every new product comes with one, its key shown with **Copy key** (`"test_licence": false` in the API for none); more are issued with the Issue panel's **Test licences** tick (`"test": true`).
+- `is_test` and `active_computers` on licences; `test`/`not_test` filters on the licence list and export, and `test` on the activations list; a **Kind** filter and a **Test** badge in the dashboard.
+
+### Changed
+
+- Revoking an activation on the Activations page ends only that computer's activation (audited as `licence.reset` with the `activation`); for an ordinary licence this is the same as before.
+- The licence CSV export has a `test` column at the end.
+- `Outcome::Licensed` has a new `test` field; code that names every field of it needs `test` or `..`.
+- One active computer per licence is kept by a trigger instead of the `activations_one_active_per_license` index (test licences are exempt). Undoing the migration keeps test licences as ordinary ones on their latest computer.
+- The Overview's licence numbers link to the list without test licences.
 
 ## [0.4.1] - 2026-11-10
 

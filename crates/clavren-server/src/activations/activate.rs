@@ -1,12 +1,13 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.593310
-//+ Revised: 	2026/11/09 22:30:53.615409
+//+ Revised: 	2026/11/10 17:59:19.815126
 // -----------------------------------------------------------------------------
 
 //! Activating a key on a computer: in one transaction, with the licence row locked, so two
 //! computers activating the same key at once get one success and one `already_activated`. The
-//! same computer retrying (its answer was lost) gets its activation back with a fresh token.
+//! same computer retrying (its answer was lost) gets its activation back with a fresh token. A test
+//! licence is never "in use elsewhere": every computer that activates it gets its own activation.
 
 use chrono::{DateTime, Utc};
 use clavren_protocol::encoding;
@@ -64,12 +65,12 @@ pub async fn activate(
         product_code: &licence.product_code,
         device_public_key: &valid.device_public_key,
         licence_expires_at: licence.expires_at,
+        test: licence.is_test,
     };
-    if let Some((existing, device)) = repository::active_for_licence(&mut *transaction, licence.id).await? {
-        if device != valid.device_public_key {
-            return Err(ApiError::refused(ErrorCode::AlreadyActivated, "the licence is in use on another computer"));
-        }
-        // the same computer again (a retried activation): it got a fresh token, as from a check
+    let active = repository::active_for_licence(&mut *transaction, licence.id).await?;
+    if let Some((existing, _)) = active.iter().find(|(_, device)| *device == valid.device_public_key) {
+        let existing = *existing;
+        // the same computer again (a retried activation): it gets a fresh token, as from a check
         repository::record_check(&mut *transaction, existing, &valid.app_version, now).await?;
         transaction.commit().await?;
         let token = tokens::issue(state, &subject(existing), now);
@@ -79,6 +80,9 @@ pub async fn activate(
             licence_expires_at: licence.expires_at,
             created: false,
         });
+    }
+    if !active.is_empty() && !licence.is_test {
+        return Err(ApiError::refused(ErrorCode::AlreadyActivated, "the licence is in use on another computer"));
     }
     let activation_id = Uuid::now_v7();
     let new = NewActivation {
@@ -93,7 +97,7 @@ pub async fn activate(
     };
     repository::insert(&mut *transaction, &new).await?;
     let entry = AuditEntry::by_application("activation.created", "activation", activation_id, ip, now)
-        .with_metadata(json!({ "licence": licence.id }));
+        .with_metadata(json!({ "licence": licence.id, "test": licence.is_test }));
     audit::record(&mut *transaction, entry).await?;
     transaction.commit().await?;
     let token = tokens::issue(state, &subject(activation_id), now);

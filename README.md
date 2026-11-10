@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:54.923033 )
-[//]: # (+ Revised: 	2026/11/10 08:29:05.578531 )
+[//]: # (+ Revised: 	2026/11/10 17:59:24.212049 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 <h1 align="center">Clavren</h1>
@@ -37,6 +37,7 @@ Clavren makes the keys you hand out, makes sure each one works on a single compu
 - **Customers can move.** After a reinstall or a new PC, you free their key in one click and they enter the same key again.
 - **You stay in control.** Cancel any key, used or not, and it stops on any computer that goes online within about a day. See who has each key and every computer it has been on.
 - **Permanent or until a date.** Sell for good, or for a school year and extend it later.
+- **Test licences.** Every new product comes with a test key that works on as many of your own computers as you like, kept out of the numbers.
 - **Yours, not a third party's.** It runs on your own Raspberry Pi; no licensing company in the middle.
 
 ---

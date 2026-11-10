@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.689100
-//+ Revised: 	2026/11/09 22:30:54.996785
+//+ Revised: 	2026/11/10 17:59:21.458973
 // -----------------------------------------------------------------------------
 
 //! `/api/admin/licences`: issue, list and search, read, edit, reveal, copy message, revoke, reset,
@@ -56,11 +56,13 @@ struct ListParams {
     state: Option<LicenceState>,
     expiry: Option<Expiry>,
     q: Option<String>,
+    test: Option<bool>,
     not_product: Option<Uuid>,
     not_customer: Option<Uuid>,
     not_state: Option<LicenceState>,
     not_expiry: Option<Expiry>,
     not_q: Option<String>,
+    not_test: Option<bool>,
     #[serde(default)]
     order: Order,
     limit: Option<u32>,
@@ -85,11 +87,13 @@ async fn list(
         state: params.state,
         expiry: params.expiry,
         q: params.q,
+        test: params.test,
         not_product: params.not_product,
         not_customer: params.not_customer,
         not_state: params.not_state,
         not_expiry: params.not_expiry,
         not_q: params.not_q,
+        not_test: params.not_test,
     }
     .into_filter(&state.keys, admin.actor.at);
     let rows = repository::page(&state.pool, &filter, params.order, cursor.as_ref(), fetch_count(limit)).await?;

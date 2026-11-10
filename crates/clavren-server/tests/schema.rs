@@ -1,12 +1,12 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 14:53:30.139830
-//+ Revised: 	2026/11/03 08:25:52.993061
+//+ Revised: 	2026/11/10 17:59:23.151735
 // -----------------------------------------------------------------------------
 
 //! The database enforces the rules of docs/spec.md section 7 by itself: derived licence state, one
-//! active computer per licence, an immutable product code once licences exist, customers erased
-//! without breaking licences. The column lists are pinned against docs/design-decisions.md.
+//! active computer per licence (any number for a test licence, which stays one), an immutable
+//! product code once licences exist, customers erased without breaking licences. The column lists are pinned against docs/design-decisions.md.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)] // a test that fails should panic
 
@@ -26,6 +26,15 @@ async fn licence(pool: &PgPool, product_id: Uuid, customer_id: Option<Uuid>) -> 
     sqlx::query_scalar("INSERT INTO licenses (product_id, customer_id, key_lookup) VALUES ($1, $2, $3) RETURNING id")
         .bind(product_id)
         .bind(customer_id)
+        .bind(Uuid::new_v4().as_bytes().repeat(2))
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+async fn test_licence(pool: &PgPool, product_id: Uuid) -> Uuid {
+    sqlx::query_scalar("INSERT INTO licenses (product_id, key_lookup, is_test) VALUES ($1, $2, TRUE) RETURNING id")
+        .bind(product_id)
         .bind(Uuid::new_v4().as_bytes().repeat(2))
         .fetch_one(pool)
         .await
@@ -110,6 +119,52 @@ async fn a_licence_has_at_most_one_active_computer(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(history, 2, "the revoked activation stays as history");
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn a_test_licence_is_active_on_any_number_of_computers(pool: PgPool) {
+    let licence_id = test_licence(&pool, product(&pool, "avalio-lite").await).await;
+    let mut activations = Vec::new();
+    for _ in 0..3 {
+        activations.push(activate(&pool, licence_id).await.unwrap());
+    }
+    let (state, latest, computers): (String, Option<Uuid>, i64) = sqlx::query_as(
+        "SELECT state, active_activation_id, active_computers FROM license_states WHERE license_id = $1",
+    )
+    .bind(licence_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((state.as_str(), latest, computers), ("redeemed", activations.last().copied(), 3));
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM license_states").fetch_one(&pool).await.unwrap();
+    assert_eq!(rows, 1, "one row per licence, however many computers");
+
+    let ordinary = licence(&pool, product(&pool, "avalio-pro").await, None).await;
+    let first = activate(&pool, ordinary).await.unwrap();
+    revoke_activation(&pool, first).await;
+    let second = activate(&pool, ordinary).await.unwrap();
+    let back = sqlx::query("UPDATE activations SET revoked_at = NULL, revocation_reason = NULL WHERE id = $1")
+        .bind(first)
+        .execute(&pool)
+        .await;
+    assert!(is_check_or_unique_violation(&back.unwrap_err()), "an ended computer can't come back beside {second}");
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn a_licence_never_becomes_or_stops_being_a_test_licence(pool: PgPool) {
+    let product_id = product(&pool, "avalio-lite").await;
+    for (licence_id, to) in
+        [(licence(&pool, product_id, None).await, true), (test_licence(&pool, product_id).await, false)]
+    {
+        let change = sqlx::query("UPDATE licenses SET is_test = $2 WHERE id = $1")
+            .bind(licence_id)
+            .bind(to)
+            .execute(&pool)
+            .await;
+        assert!(is_check_or_unique_violation(&change.unwrap_err()), "to {to}");
+    }
+    let same = sqlx::query("UPDATE licenses SET is_test = is_test, internal_notes = 'x'").execute(&pool).await;
+    assert_eq!(same.unwrap().rows_affected(), 2, "other changes go through");
 }
 
 #[sqlx::test(migrator = "clavren::database::MIGRATOR")]
@@ -294,6 +349,7 @@ async fn table_columns_match_the_documented_schema(pool: PgPool) {
                 "revoked_at",
                 "revocation_reason",
                 "internal_notes",
+                "is_test",
             ],
         ),
         (

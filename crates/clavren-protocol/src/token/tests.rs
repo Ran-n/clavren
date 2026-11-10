@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.127772
-//+ Revised: 	2026/11/03 04:54:12.127772
+//+ Revised: 	2026/11/10 17:59:19.667390
 // -----------------------------------------------------------------------------
 
 use super::*;
@@ -24,6 +24,7 @@ fn claims() -> Claims {
         act: Uuid::from_u128(2),
         dev: "device".into(),
         lic_exp: None,
+        test: false,
         iat: NOW,
         exp: NOW + 30 * 86_400,
         jti: Uuid::from_u128(3),
@@ -53,6 +54,24 @@ fn a_permanent_licence_has_no_licence_expiry_claim() {
         serde_json::from_slice(&encoding::decode(token.split('.').nth(1).unwrap()).unwrap()).unwrap();
     let names: Vec<&str> = body.as_object().unwrap().keys().map(String::as_str).collect();
     assert_eq!(names, ["act", "aud", "dev", "exp", "iat", "iss", "jti", "sub"]);
+}
+
+#[test]
+fn a_test_licence_says_so_in_its_token() {
+    let claims = Claims { test: true, ..claims() };
+    let token = sign(&claims, "v1", &key(1));
+    let body: serde_json::Value =
+        serde_json::from_slice(&encoding::decode(token.split('.').nth(1).unwrap()).unwrap()).unwrap();
+    assert_eq!(body["test"], serde_json::json!(true));
+    assert_eq!(verify(&token, &trusted(), "avalio-lite", NOW), Ok(claims));
+}
+
+#[test]
+fn a_token_without_the_test_claim_is_for_an_ordinary_licence() {
+    let mut body = serde_json::to_value(claims()).unwrap();
+    body.as_object_mut().unwrap().remove("test");
+    let read: Claims = serde_json::from_value(body).unwrap();
+    assert!(!read.test, "tokens from servers before test licences read as ordinary ones");
 }
 
 #[test]

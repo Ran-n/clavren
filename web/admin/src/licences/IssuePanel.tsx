@@ -1,5 +1,6 @@
 // Issuing licences, inline at the top of the Licences page: product, customer (an existing one,
-// a new one typed in place, or none), quantity, optional expiry and notes. The new keys stay on
+// a new one typed in place, or none), quantity, optional expiry and notes, and whether they are
+// test licences (never remembered, so the next ones aren't by mistake). The new keys stay on
 // screen only until the panel closes.
 
 import { useEffect, useState, type FormEvent } from "react";
@@ -34,7 +35,9 @@ function IssuedKeys({ issued, onMore, onClose }: { issued: Issued; onMore: () =>
   const ids = issued.licences.map((licence) => licence.id);
   return (
     <div className="issue-result">
-      <h2>{plural(issued.licences.length, "licence")} issued</h2>
+      <h2>
+        {plural(issued.licences.length, issued.licences[0]?.is_test ? "test licence" : "licence")} issued
+      </h2>
       <ul className="issue-result__keys" aria-label="New keys">
         {issued.licences.map((licence) => (
           <li key={licence.id}>
@@ -69,6 +72,7 @@ export function IssuePanel({ products, productsLoaded, productsError, draft, onD
   const [quantity, setQuantity] = useState(draft.quantity ?? 1);
   const [expiry, setExpiry] = useState(draft.expires_at ?? "");
   const [notes, setNotes] = useState("");
+  const [test, setTest] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [issued, setIssued] = useState<Issued | null>(null);
@@ -79,7 +83,7 @@ export function IssuePanel({ products, productsLoaded, productsError, draft, onD
     setBusy(true);
     setError(null);
     try {
-      const body = { product: chosenProduct, customer: customerBody(customer), quantity, expires_at: fromDateInput(expiry) ?? undefined, internal_notes: notes.trim() || undefined };
+      const body = { product: chosenProduct, customer: customerBody(customer), quantity, expires_at: fromDateInput(expiry) ?? undefined, internal_notes: notes.trim() || undefined, test: test || undefined };
       setIssued(await api<Issued>("POST", "/licences", body));
       onIssued(); // the keys stay on screen, but a later visit starts with the panel closed
     } catch (failure) {
@@ -130,6 +134,10 @@ export function IssuePanel({ products, productsLoaded, productsError, draft, onD
         <label className="field">
           <span className="field__label">Notes (optional)</span>
           <input value={notes} maxLength={2000} onChange={(event) => setNotes(event.target.value)} />
+        </label>
+        <label className="field field--tick">
+          <input type="checkbox" checked={test} onChange={(event) => setTest(event.target.checked)} />
+          <span>Test licences: they work on any number of computers, and the Overview leaves them out</span>
         </label>
         <ErrorNotice error={error} />
         <div className="button-row">

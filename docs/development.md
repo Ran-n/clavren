@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.213599 )
-[//]: # (+ Revised: 	2026/11/09 22:41:13.629493 )
+[//]: # (+ Revised: 	2026/11/10 17:59:23.923958 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Development
@@ -76,7 +76,8 @@ or the development database. An explicit `DATABASE_URL` in the environment wins.
 | `tests/customers.rs` | Customers: create, search, order, edit, delete without leaving personal data |
 | `tests/licences.rs` | Issuing (keys only as hash and ciphertext), customers typed in place, the message, search by key, name or ID, filters and exclusions, orders, `expand` |
 | `tests/licence_lifecycle.rs` | Edit every field but the product (customer, expiry, notes, reason), revoke, reset, delete, bulk all-or-nothing, reveal, message, CSV export and its formula guard |
-| `tests/activation.rs` | Activating a key: one computer per licence, the same computer again, refusals, rate limits, two computers racing for one key |
+| `tests/activation.rs` | Activating a key: one computer per licence, the same computer again, refusals, rate limits, two computers racing for one key (and for one test key, all getting in) |
+| `tests/test_licences.rs` | Test licences: one with every new product, issued, listed and exported as such, on several computers, the `test` token claim, ending one computer or all, revoking, left out of the Overview |
 | `tests/checks.rs` | Challenges and checks: signed tokens, the device signature, replayed and expired challenges, reset, revoked and deleted licences and products, per-activation limits |
 | `tests/admin_console.rs` | Activations list and revoke, the overview and its backup warning, the audit log, backups, preferences |
 | `tests/dashboard.rs` | The embedded dashboard: its files, every page path, cache and security headers, API paths that stay JSON errors |

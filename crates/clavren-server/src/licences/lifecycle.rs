@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.495003
-//+ Revised: 	2026/11/09 22:30:54.926271
+//+ Revised: 	2026/11/10 17:59:21.042715
 // -----------------------------------------------------------------------------
 
 //! Changing licences after issuing: editing every field but the product (customer, expiry, notes,
@@ -197,13 +197,14 @@ pub async fn delete_locked(
 }
 
 /// Frees a licence in use so the same key can be activated on another computer; the old computer
-/// locks at its next check.
+/// (every computer, for a test licence) locks at its next check.
 pub async fn reset(state: &AppState, actor: &Actor, id: Uuid) -> Result<(), ApiError> {
     reset_unless_moved(state, actor, id, None).await
 }
 
-/// [`reset`], but only while `activation` is still the licence's computer: an admin ending one
-/// computer's activation never ends another's that took its place meanwhile.
+/// Ends one computer's activation, only while it is still one of the licence's computers: an admin
+/// ending it never ends another's that took its place meanwhile, nor (on a test licence) the
+/// licence's other computers.
 pub async fn end_activation(state: &AppState, actor: &Actor, id: Uuid, activation: Uuid) -> Result<(), ApiError> {
     reset_unless_moved(state, actor, id, Some(activation)).await
 }
@@ -213,21 +214,33 @@ async fn reset_unless_moved(state: &AppState, actor: &Actor, id: Uuid, expected:
     if !lock_existing(&mut transaction, &[id]).await?.is_empty() {
         return Err(ApiError::conflict("licence_revoked", "a revoked licence can't be reset"));
     }
-    // the licence's lock keeps new activations out, so the answer holds until the commit
-    if let Some(activation) = expected
-        && !activations::repository::is_active_for(&mut *transaction, activation, id).await?
-    {
-        return Err(ApiError::conflict("activation_revoked", "this activation has already ended"));
-    }
-    let freed =
-        activations::repository::revoke_active(&mut *transaction, &[id], RevocationReason::Reset, actor.at).await?;
-    if freed.is_empty() {
-        return Err(ApiError::conflict("licence_not_in_use", "the licence isn't in use on any computer"));
-    }
-    audit::record_for_each(&mut *transaction, actor, "licence.reset", ENTITY, &[id], json!({})).await?;
+    let metadata = end_computers(&mut transaction, id, expected, actor.at).await?;
+    audit::record_for_each(&mut *transaction, actor, "licence.reset", ENTITY, &[id], metadata).await?;
     transaction.commit().await?;
     tracing::info!(licence = %id, "licence reset");
     Ok(())
+}
+
+/// Ends the `expected` activation of the licence, or all of them; returns what the audit entry
+/// says about it. The licence's lock keeps new activations out, so the answer holds until the commit.
+async fn end_computers(
+    connection: &mut PgConnection,
+    id: Uuid,
+    expected: Option<Uuid>,
+    at: DateTime<Utc>,
+) -> Result<serde_json::Value, ApiError> {
+    use activations::repository::{is_active_for, revoke_active, revoke_one};
+    let Some(activation) = expected else {
+        if revoke_active(&mut *connection, &[id], RevocationReason::Reset, at).await?.is_empty() {
+            return Err(ApiError::conflict("licence_not_in_use", "the licence isn't in use on any computer"));
+        }
+        return Ok(json!({}));
+    };
+    if !is_active_for(&mut *connection, activation, id).await? {
+        return Err(ApiError::conflict("activation_revoked", "this activation has already ended"));
+    }
+    revoke_one(connection, activation, RevocationReason::Reset, at).await?;
+    Ok(json!({ "activation": activation }))
 }
 
 /// Locks the licences; fails naming any that don't exist. Returns the ones already revoked.

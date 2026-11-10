@@ -1,12 +1,13 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.199013
-//+ Revised: 	2026/11/07 19:36:59.551546
+//+ Revised: 	2026/11/10 17:59:20.902238
 // -----------------------------------------------------------------------------
 
 //! Issuing licences: up to 1,000 keys for one product and (optionally) one customer, existing or
 //! typed in place, in one transaction. Every key gets a lookup hash and an encrypted copy; a key
-//! whose hash already exists (80 random bits: practically never) is simply generated again.
+//! whose hash already exists (80 random bits: practically never) is simply generated again. A
+//! new product gets one test licence the same way, in the transaction that creates it.
 
 use chrono::{DateTime, Utc};
 use clavren_protocol::licence_key::LicenceKey;
@@ -39,6 +40,9 @@ pub struct IssueRequest {
     pub expires_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub internal_notes: Option<String>,
+    /// Test licences: for trying the application, on any number of computers.
+    #[serde(default)]
+    pub test: bool,
 }
 
 fn one() -> usize {
@@ -75,13 +79,23 @@ pub async fn issue(state: &AppState, actor: &Actor, request: IssueRequest) -> Re
         customer: customer.as_ref(),
         expires_at: request.expires_at,
         notes: notes.as_deref(),
+        is_test: request.test,
     };
-    let keys = insert_licences(state, &mut transaction, actor, &new, request.quantity).await?;
-    let ids: Vec<Uuid> = keys.iter().map(|(id, _)| *id).collect();
-    let metadata = json!({ "product": product.id, "customer": customer.as_ref().map(|customer| customer.id) });
-    audit::record_for_each(&mut *transaction, actor, "licence.issued", "licence", &ids, metadata).await?;
+    let keys = insert_audited(state, &mut transaction, actor, &new, request.quantity).await?;
     transaction.commit().await?;
     Ok(Issued { keys, product, customer })
+}
+
+/// One test licence for `product` (just created in this transaction): no customer, permanent.
+pub async fn issue_test_licence(
+    state: &AppState,
+    connection: &mut PgConnection,
+    actor: &Actor,
+    product: &Product,
+) -> Result<(Uuid, LicenceKey), ApiError> {
+    let new = Batch { product, customer: None, expires_at: None, notes: None, is_test: true };
+    let mut keys = insert_audited(state, connection, actor, &new, 1).await?;
+    keys.pop().ok_or_else(|| ApiError::internal("the test licence wasn't issued"))
 }
 
 struct Batch<'a> {
@@ -89,6 +103,26 @@ struct Batch<'a> {
     customer: Option<&'a Customer>,
     expires_at: Option<DateTime<Utc>>,
     notes: Option<&'a str>,
+    is_test: bool,
+}
+
+/// [`insert_licences`], with one `licence.issued` audit entry per licence.
+async fn insert_audited(
+    state: &AppState,
+    connection: &mut PgConnection,
+    actor: &Actor,
+    batch: &Batch<'_>,
+    quantity: usize,
+) -> Result<Vec<(Uuid, LicenceKey)>, ApiError> {
+    let keys = insert_licences(state, connection, actor, batch, quantity).await?;
+    let ids: Vec<Uuid> = keys.iter().map(|(id, _)| *id).collect();
+    let metadata = json!({
+        "product": batch.product.id,
+        "customer": batch.customer.map(|customer| customer.id),
+        "test": batch.is_test,
+    });
+    audit::record_for_each(&mut *connection, actor, "licence.issued", "licence", &ids, metadata).await?;
+    Ok(keys)
 }
 
 async fn insert_licences(
@@ -112,6 +146,7 @@ async fn insert_licences(
             created_at: actor.at,
             expires_at: batch.expires_at,
             internal_notes: batch.notes,
+            is_test: batch.is_test,
         };
         let inserted = repository::insert(&mut *connection, &new).await?;
         let (done, retry): (Vec<_>, Vec<_>) = pending.into_iter().zip(keys).partition(|(id, _)| inserted.contains(id));

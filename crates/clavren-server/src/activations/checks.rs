@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.712018
-//+ Revised: 	2026/11/09 22:30:53.689231
+//+ Revised: 	2026/11/10 17:59:20.084014
 // -----------------------------------------------------------------------------
 
 //! The daily check: the application asks for a challenge, signs it with its device key, and gets a
@@ -96,7 +96,10 @@ pub async fn check(
         return Err(refusal);
     }
     repository::record_check(&mut *transaction, activation_id, &app_version, now).await?;
-    repository::count_check(&mut *transaction, now).await?;
+    // the Overview's numbers leave test licences out
+    if !target.licence_is_test {
+        repository::count_check(&mut *transaction, now).await?;
+    }
     transaction.commit().await?;
     let subject = Subject {
         licence_id: target.licence_id,
@@ -104,6 +107,7 @@ pub async fn check(
         product_code: &target.product_code,
         device_public_key: &device_public_key,
         licence_expires_at: target.licence_expires_at,
+        test: target.licence_is_test,
     };
     Ok(Checked { token: tokens::issue(state, &subject, now), licence_expires_at: target.licence_expires_at })
 }

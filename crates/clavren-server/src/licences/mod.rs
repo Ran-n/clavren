@@ -1,13 +1,15 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.557866
-//+ Revised: 	2026/11/08 14:55:45.107115
+//+ Revised: 	2026/11/10 17:59:21.176560
 // -----------------------------------------------------------------------------
 
 //! Licences: one key for one product, optionally for a customer, optionally until a date. The key
 //! is stored encrypted (so it can be shown again) and found by its keyed hash; revoking deletes the
 //! encrypted key and keeps the hash, so the key can never be accepted again. A licence's state is
-//! derived from its revocation and its active activation, never stored.
+//! derived from its revocation and its active activation, never stored. A test licence is for
+//! trying an application: it works on any number of computers, its tokens say it is one, and the
+//! Overview leaves it out.
 
 mod disclosure;
 mod filter;
@@ -23,6 +25,7 @@ use serde::Serialize;
 use sqlx::FromRow;
 use uuid::Uuid;
 
+pub use issue::issue_test_licence;
 pub use lifecycle::{Deleted, delete_locked, end_activation, reset};
 pub use routes::routes;
 pub use views::{LicenceView, present};
@@ -57,7 +60,11 @@ pub struct LicenceRow {
     pub product_id: Uuid,
     pub customer_id: Option<Uuid>,
     pub state: String,
+    /// The latest of its active activations.
     pub active_activation_id: Option<Uuid>,
+    /// How many computers it is active on (one at most, unless it is a test licence).
+    pub active_computers: i64,
+    pub is_test: bool,
     pub created_at: DateTime<Utc>,
     pub expires_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,

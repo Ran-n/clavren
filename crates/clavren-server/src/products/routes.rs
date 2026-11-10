@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.129982
-//+ Revised: 	2026/11/07 19:37:00.152489
+//+ Revised: 	2026/11/10 17:59:22.015665
 // -----------------------------------------------------------------------------
 
 //! `/api/admin/products`: list, create, read, edit, and delete products (with their licences), and
@@ -9,10 +9,10 @@
 
 use axum::Router;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
 use axum::routing::get;
 use axum::{Json, response::IntoResponse};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -25,6 +25,7 @@ use crate::http::AppState;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::http::pagination::{Page, PageParams, fetch_count};
+use crate::licences;
 
 const ENTITY: &str = "product";
 
@@ -55,12 +56,27 @@ async fn list(
     Ok(Json(Page::from_rows(rows, limit, repository::cursor_after)))
 }
 
+/// A test licence issued with a new product, with its key.
+#[derive(Serialize)]
+struct TestLicence {
+    id: Uuid,
+    key: String,
+}
+
+#[derive(Serialize)]
+struct Created {
+    #[serde(flatten)]
+    product: Product,
+    test_licence: Option<TestLicence>,
+}
+
 async fn create(
     State(state): State<AppState>,
     admin: Admin,
     ApiJson(request): ApiJson<NewProduct>,
 ) -> Result<impl IntoResponse, ApiError> {
     request.check_name()?;
+    let with_test_licence = request.test_licence;
     let mut transaction = state.pool.begin().await?;
     let (code, automatic_code) = match request.typed_code() {
         Some(code) => (code.to_string(), false),
@@ -75,9 +91,23 @@ async fn create(
         entry = entry.with_metadata(json!({ "automatic_code": true }));
     }
     audit::record(&mut *transaction, entry).await?;
+    let test_licence = if with_test_licence {
+        let (id, key) = licences::issue_test_licence(&state, &mut transaction, &admin.actor, &product).await?;
+        Some(TestLicence { id, key: key.formatted() })
+    } else {
+        None
+    };
     transaction.commit().await?;
-    tracing::info!(product = %product.code, automatic_code, admin = %admin.username, "product created");
-    Ok((StatusCode::CREATED, Json(product)))
+    tracing::info!(
+        product = %product.code,
+        automatic_code,
+        test_licence = with_test_licence,
+        admin = %admin.username,
+        "product created"
+    );
+    // the answer can carry a key, which is never cached
+    let headers = [(header::CACHE_CONTROL, "no-store")];
+    Ok((StatusCode::CREATED, headers, Json(Created { product, test_licence })))
 }
 
 async fn read(

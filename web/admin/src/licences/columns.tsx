@@ -1,7 +1,7 @@
 // The licence table's columns. Customer, expiry and notes are edited in place (and a revoked
 // licence's reason, on its page); the key stays hidden until Reveal.
 
-import { LicenceStateBadge } from "../shared/components/Badge";
+import { LicenceBadges } from "../shared/components/Badge";
 import { KeyField } from "../shared/components/Copy";
 import type { Column } from "../shared/components/DataTable";
 import { InlineText } from "../shared/components/InlineText";
@@ -59,7 +59,7 @@ export function licenceColumns(onChange: Replace): Column<Licence>[] {
     { key: "key", label: "Key", render: (licence) => <KeyField licenceId={licence.id} revoked={licence.state === "revoked"} /> },
     { key: "product", label: "Product", optional: true, render: (licence) => expanded(licence.product)?.name ?? "—" },
     { key: "customer", label: "Customer", optional: true, render: (licence) => <CustomerField compact licence={licence} onChange={onChange} /> },
-    { key: "state", label: "State", render: (licence) => <LicenceStateBadge state={licence.state} /> },
+    { key: "state", label: "State", render: (licence) => <LicenceBadges state={licence.state} test={licence.is_test} /> },
     { key: "issued", className: "table__nowrap", label: "Issued", optional: true, render: (licence) => formatDate(licence.created_at) },
     { key: "redeemed", label: "Activated", optional: true, render: (licence) => formatDateTime(expanded(licence.active_activation)?.activated_at) },
     { key: "last_check", label: "Last check", optional: true, render: (licence) => formatDateTime(expanded(licence.active_activation)?.last_checked_at) },

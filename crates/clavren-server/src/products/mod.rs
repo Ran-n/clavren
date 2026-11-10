@@ -1,13 +1,14 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.963172
-//+ Revised: 	2026/11/07 19:36:59.974743
+//+ Revised: 	2026/11/10 17:59:21.875623
 // -----------------------------------------------------------------------------
 
 //! Products: the applications that use Clavren. A product's `code` is the audience of every token
 //! issued for it, so it can't change once the product has licences. Deactivating a product pauses
 //! it and keeps everything; deleting it deletes its licences and their history too, and the
-//! computers using them lock at their next check. Without a code, one is made from the name.
+//! computers using them lock at their next check. Without a code, one is made from the name. A new
+//! product comes with one test licence, unless the request asks for none.
 
 mod automatic_code;
 pub mod message_template;
@@ -83,6 +84,13 @@ pub struct NewProduct {
     pub message_template: Option<String>,
     #[serde(default)]
     pub is_active: Option<bool>,
+    /// Issue one test licence with the product; on unless `false`.
+    #[serde(default = "yes")]
+    pub test_licence: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Debug, Default, Deserialize)]

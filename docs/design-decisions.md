@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.155237 )
-[//]: # (+ Revised: 	2026/11/09 23:01:01.066919 )
+[//]: # (+ Revised: 	2026/11/10 17:59:23.782152 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Design decisions
@@ -122,13 +122,37 @@ The redemption time is that activation's `activated_at`. The `license_states` vi
 state for listings and filters.
 
 Concurrent activations, resets and revocations of the same licence are serialized by locking the
-licence row (`SELECT … FOR UPDATE`). The partial unique index on active activations is the second
-line of defence.
+licence row (`SELECT … FOR UPDATE`). A trigger on `activations` is the second line of defence: it
+refuses a second active activation of a licence that isn't a test licence. It locks the licence row
+itself, so it holds even for a write that skipped the application's lock.
+
+## Test licences
+
+A test licence is an ordinary licence with `is_test` set: the same key format, storage, reveal,
+revoke and delete. What differs is small and stays in the server: it may be active on any number
+of computers, its tokens say `"test": true`, and the Overview leaves it, its computers and its
+checks out (a test check isn't added to `check_counts`). Applications decide what a test licence
+means for them (a banner, fewer features) from the token; Clavren doesn't.
+
+- **No limit on computers.** A test licence is the administrator's own, handed to developers and
+  testers; a cap would be one more setting to manage. A leaked test key is revoked like any other.
+- **A trigger instead of the unique index.** One-active-computer used to be a partial unique index
+  on `activations (license_id) WHERE revoked_at IS NULL`. An index can't look at the licence, so a
+  trigger keeps the rule for licences that aren't test licences. Copying `is_test` onto each
+  activation would let the index stay, but would store a fact of the licence twice.
+- **`is_test` never changes** (a trigger refuses it). Turning a test licence into a sold one while it
+  is on three computers would break the one-computer rule; issuing a new licence is clearer.
+- **One comes with every new product**, issued in the transaction that creates it, so a new
+  application can be tried at once. The API takes `"test_licence": false` for none.
+- **Ending one computer ends only that one.** Revoking an activation from the Activations page used
+  to reset the whole licence; for a licence with one computer that is the same, and for a test
+  licence it leaves the others working. Reset still ends every computer.
+- Undoing the migration keeps test licences as ordinary ones, each on its latest computer only.
 
 ## Revoking a device is a reset
 
 The dashboard can revoke an activation from the Activations page, and it is the same operation as
-resetting its licence. A separate "unbound but still locked" state would need its own stored flag
+resetting its licence (for a test licence, only that computer's activation ends). A separate "unbound but still locked" state would need its own stored flag
 and gives nothing a licence revocation doesn't already give.
 
 ## Licences can be deleted
@@ -276,9 +300,9 @@ Each table's non-trivial functional dependencies have its key as the determinant
 |-------|-----|-------|
 | `products` | `id`; `code` | Both candidate keys; the rest depends on either |
 | `customers` | `id`; `email` when present | Name and email live here, not on each licence |
-| `licenses` | `id`; `key_lookup` | No stored state or redemption time (derived, see above) |
+| `licenses` | `id`; `key_lookup` | No stored state or redemption time (derived, see above); `is_test` depends on the licence alone |
 | `license_key_secrets` | `license_id` | |
-| `activations` | `id` | At most one row per licence with `revoked_at IS NULL` (partial unique index) |
+| `activations` | `id` | At most one row per licence with `revoked_at IS NULL`, unless it is a test licence (trigger) |
 | `admin_users` | `id`; `username` | |
 | `admin_recovery_codes` | `id` | |
 | `admin_sessions` | `id`; `token_hash` | |

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.890784
-//+ Revised: 	2026/11/08 14:55:44.003890
+//+ Revised: 	2026/11/10 17:59:20.352653
 // -----------------------------------------------------------------------------
 
 //! Database access for activations.
@@ -26,7 +26,8 @@ pub async fn find_many(executor: impl PgExecutor<'_>, ids: &[Uuid]) -> Result<Ve
     .await
 }
 
-/// Ends the active activation of each licence in `licence_ids`; returns the licences that had one.
+/// Ends every active activation of each licence in `licence_ids`; returns the licence of each
+/// activation ended.
 pub async fn revoke_active(
     executor: impl PgExecutor<'_>,
     licence_ids: &[Uuid],
@@ -53,6 +54,7 @@ pub struct KeyedLicence {
     pub product_active: bool,
     pub expires_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
+    pub is_test: bool,
 }
 
 /// The licence whose key hashes to `key_lookup`, locked until the transaction ends, so two
@@ -62,7 +64,7 @@ pub async fn licence_by_key(
     key_lookup: &[u8],
 ) -> Result<Option<KeyedLicence>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT l.id, p.code AS product_code, p.is_active AS product_active, l.expires_at, l.revoked_at
+        "SELECT l.id, p.code AS product_code, p.is_active AS product_active, l.expires_at, l.revoked_at, l.is_test
          FROM licenses l JOIN products p ON p.id = l.product_id
          WHERE l.key_lookup = $1 FOR UPDATE OF l",
     )
@@ -71,15 +73,18 @@ pub async fn licence_by_key(
     .await
 }
 
-/// The licence's active activation: its ID and device public key.
+/// The licence's active activations (one at most, unless it is a test licence): their IDs and
+/// device public keys.
 pub async fn active_for_licence(
     executor: impl PgExecutor<'_>,
     licence_id: Uuid,
-) -> Result<Option<(Uuid, Vec<u8>)>, sqlx::Error> {
-    sqlx::query_as("SELECT id, device_public_key FROM activations WHERE license_id = $1 AND revoked_at IS NULL")
-        .bind(licence_id)
-        .fetch_optional(executor)
-        .await
+) -> Result<Vec<(Uuid, Vec<u8>)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, device_public_key FROM activations WHERE license_id = $1 AND revoked_at IS NULL ORDER BY id",
+    )
+    .bind(licence_id)
+    .fetch_all(executor)
+    .await
 }
 
 pub struct NewActivation<'a> {
@@ -122,6 +127,7 @@ pub struct CheckTarget {
     pub revocation_reason: Option<String>,
     pub licence_revoked_at: Option<DateTime<Utc>>,
     pub licence_expires_at: Option<DateTime<Utc>>,
+    pub licence_is_test: bool,
     pub product_code: String,
     pub product_active: bool,
 }
@@ -131,7 +137,8 @@ pub struct CheckTarget {
 pub async fn check_target(connection: &mut PgConnection, id: Uuid) -> Result<Option<CheckTarget>, sqlx::Error> {
     sqlx::query_as(
         "SELECT a.id, a.license_id AS licence_id, a.device_public_key, a.revoked_at, a.revocation_reason,
-                l.revoked_at AS licence_revoked_at, l.expires_at AS licence_expires_at, p.code AS product_code,
+                l.revoked_at AS licence_revoked_at, l.expires_at AS licence_expires_at,
+                l.is_test AS licence_is_test, p.code AS product_code,
                 p.is_active AS product_active
          FROM activations a JOIN licenses l ON l.id = a.license_id JOIN products p ON p.id = l.product_id
          WHERE a.id = $1 FOR UPDATE OF a",
@@ -183,7 +190,25 @@ pub async fn is_active(executor: impl PgExecutor<'_>, id: Uuid) -> Result<bool, 
         .await
 }
 
-/// Whether the activation is the licence's active one.
+/// Ends one activation; returns whether it was still active.
+pub async fn revoke_one(
+    executor: impl PgExecutor<'_>,
+    id: Uuid,
+    reason: RevocationReason,
+    at: DateTime<Utc>,
+) -> Result<bool, sqlx::Error> {
+    let ended = sqlx::query(
+        "UPDATE activations SET revoked_at = $3, revocation_reason = $2 WHERE id = $1 AND revoked_at IS NULL",
+    )
+    .bind(id)
+    .bind(reason.as_str())
+    .bind(at)
+    .execute(executor)
+    .await?;
+    Ok(ended.rows_affected() == 1)
+}
+
+/// Whether the activation is one of the licence's active ones.
 pub async fn is_active_for(executor: impl PgExecutor<'_>, id: Uuid, licence: Uuid) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM activations WHERE id = $1 AND license_id = $2 AND revoked_at IS NULL)",

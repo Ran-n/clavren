@@ -3,7 +3,7 @@
 
 import type { AdminApi } from "./fixtures";
 
-export type IssuedLicence = { id: string; key: string; state: string; product: string; customer: string | null; expires_at: string | null; internal_notes: string | null };
+export type IssuedLicence = { id: string; key: string; state: string; product: string; customer: string | null; expires_at: string | null; internal_notes: string | null; is_test: boolean; active_computers: number };
 type Issued = { licences: IssuedLicence[]; customer: { id: string; name: string } | null; message: string | null };
 export type Product = { id: string; code: string; name: string; is_active: boolean; message_template: string };
 
@@ -14,8 +14,9 @@ export function unique(name: string): string {
   return `${name}-${counter}-${Math.random().toString(36).slice(2, 5)}`;
 }
 
+/** A product without the test licence a new product gets, so the flows count only their own licences. */
 export function createProduct(api: AdminApi, name = unique("Product")): Promise<Product> {
-  return api.call<Product>("POST", "/products", { code: name.toLowerCase(), name, message_template: "Hello {customer_name}, your {product_name} key: {key}" });
+  return api.call<Product>("POST", "/products", { code: name.toLowerCase(), name, message_template: "Hello {customer_name}, your {product_name} key: {key}", test_licence: false });
 }
 
 export function issue(api: AdminApi, product: string, extra: Record<string, unknown> = {}): Promise<Issued> {

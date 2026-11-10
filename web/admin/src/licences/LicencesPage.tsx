@@ -28,11 +28,12 @@ const ORDER_OPTIONS = [
   { value: "newest", label: "Newest first" },
   { value: "expiry", label: "Expiring soonest" },
 ];
-const LINKED_FILTERS = ["product", "customer", "not_customer", "state"] as const;
+const LINKED_FILTERS = ["product", "customer", "not_customer", "state", "not_test"] as const;
 
 const exceptLowercase = (option: { label: string }) => `Except ${option.label.toLowerCase()}`;
 const STATE = onlyOrExcept("state", "Any state", LICENCE_STATE_OPTIONS.slice(1), exceptLowercase);
 const EXPIRY = onlyOrExcept("expiry", "Any expiry", EXPIRY_OPTIONS, exceptLowercase);
+const KIND = onlyOrExcept("test", "Any licence", [{ value: "true", label: "Test licences" }], exceptLowercase);
 
 export function LicencesPage() {
   useTitle("Licences");
@@ -136,6 +137,7 @@ export function LicencesPage() {
         <FilterSelect label="Product" value={productFilter.read(shown)} options={productFilter.options} onChange={(value) => setFilters(productFilter.write(value))} />
         <FilterSelect label="State" value={STATE.read(shown)} options={STATE.options} onChange={(value) => setFilters(STATE.write(value))} />
         <FilterSelect label="Expiry" value={EXPIRY.read(shown)} options={EXPIRY.options} onChange={(value) => setFilters(EXPIRY.write(value))} />
+        <FilterSelect label="Kind" value={KIND.read(shown)} options={KIND.options} onChange={(value) => setFilters(KIND.write(value))} />
         <FilterSelect label="Order" value={order} options={ORDER_OPTIONS} onChange={(value) => setTable({ order: value })} />
         <ColumnPicker columns={columns} visible={table.columns} onChange={(columns) => setTable({ columns })} />
       </Toolbar>

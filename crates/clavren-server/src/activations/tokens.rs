@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.973586
-//+ Revised: 	2026/11/03 04:54:12.973586
+//+ Revised: 	2026/11/10 17:59:20.495223
 // -----------------------------------------------------------------------------
 
 //! Signing activation tokens. Signing key `v<N>` is derived from the master key with a versioned
@@ -37,6 +37,8 @@ pub struct Subject<'a> {
     pub product_code: &'a str,
     pub device_public_key: &'a [u8; 32],
     pub licence_expires_at: Option<DateTime<Utc>>,
+    /// A test licence: the token says so, for the application to show.
+    pub test: bool,
 }
 
 pub struct Issued {
@@ -55,6 +57,7 @@ pub fn issue(state: &AppState, subject: &Subject<'_>, now: DateTime<Utc>) -> Iss
         act: subject.activation_id,
         dev: device_hash(subject.device_public_key),
         lic_exp: subject.licence_expires_at.map(|at| at.timestamp()),
+        test: subject.test,
         iat: now.timestamp(),
         exp: expires_at.timestamp(),
         jti: Uuid::now_v7(),

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.407002
-//+ Revised: 	2026/11/03 04:54:12.407002
+//+ Revised: 	2026/11/10 17:59:19.531054
 // -----------------------------------------------------------------------------
 
 //! Activation tokens: JWTs signed with Ed25519 (`alg` `EdDSA`), which applications check offline
@@ -31,10 +31,17 @@ pub struct Claims {
     /// When the licence itself expires (Unix seconds); absent for a permanent licence.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub lic_exp: Option<i64>,
+    /// A test licence (for trying the application, not a sale); absent for any other.
+    #[serde(skip_serializing_if = "is_false", default)]
+    pub test: bool,
     pub iat: i64,
     /// When the token expires: 30 days after issuing, or the licence expiry if sooner.
     pub exp: i64,
     pub jti: Uuid,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Serialize, Deserialize)]

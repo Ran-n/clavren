@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.545654
-//+ Revised: 	2026/11/03 04:54:11.545654
+//+ Revised: 	2026/11/10 17:59:19.137035
 // -----------------------------------------------------------------------------
 
 //! What the application is told about its licence. It shows its own (translated) message for each
@@ -14,8 +14,9 @@ use chrono::{DateTime, Utc};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     /// The licence is valid. `offline_until` is when the cached token runs out without a check;
-    /// an application may warn when it is under 5 days away.
-    Licensed { licence_expires_at: Option<DateTime<Utc>>, offline_until: DateTime<Utc> },
+    /// an application may warn when it is under 5 days away. `test` is a test licence (for trying
+    /// the application, not a sale): an application may say so, or limit what it does.
+    Licensed { licence_expires_at: Option<DateTime<Utc>>, offline_until: DateTime<Utc>, test: bool },
     /// No licence on this computer yet: ask for a key.
     NeedsActivation,
     /// The key is malformed, unknown, or for another product: ask again.
