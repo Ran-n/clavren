@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.624141
-//+ Revised: 	2026/11/08 14:55:45.177073
+//+ Revised: 	2026/11/10 17:59:21.313773
 // -----------------------------------------------------------------------------
 
 //! Database access for licences and their encrypted keys.
@@ -20,19 +20,22 @@ use crate::http::pagination::Cursor;
 
 /// Every [`LicenceRow`] column.
 const SELECT_LICENCES: &str =
-    "SELECT l.id, l.product_id, l.customer_id, s.state, s.active_activation_id, l.created_at, l.expires_at,
-            l.revoked_at, l.revocation_reason, l.internal_notes
+    "SELECT l.id, l.product_id, l.customer_id, s.state, s.active_activation_id, s.active_computers, l.is_test,
+            l.created_at, l.expires_at, l.revoked_at, l.revocation_reason, l.internal_notes
      FROM licenses l
      JOIN license_states s ON s.license_id = l.id
      LEFT JOIN customers c ON c.id = l.customer_id";
 
-/// The parameter holding `now` in a [`page`] query, after the two sets of criteria ($1 to $14).
-const NOW: usize = 15;
+/// How many parameters one set of [`Criteria`] takes.
+const CRITERIA: usize = 8;
+/// The parameter holding `now` in a [`page`] query, after the two sets of criteria ($1 to $16).
+const NOW: usize = 2 * CRITERIA + 1;
 
 /// What each [`Criteria`] field matches, from its first parameter `$n` on: the condition, and the
 /// parameters that leave it unset when all are `NULL`.
-fn matches(n: usize) -> [(String, Vec<usize>); 5] {
+fn matches(n: usize) -> [(String, Vec<usize>); 6] {
     let (product, customer, state, expiry, key, id, pattern) = (n, n + 1, n + 2, n + 3, n + 4, n + 5, n + 6);
+    let test = n + 7;
     [
         (format!("l.product_id = ${product}::uuid"), vec![product]),
         (format!("l.customer_id = ${customer}::uuid"), vec![customer]),
@@ -53,33 +56,34 @@ fn matches(n: usize) -> [(String, Vec<usize>); 5] {
             ),
             vec![key, id, pattern],
         ),
+        (format!("l.is_test = ${test}::boolean"), vec![test]),
     ]
 }
 
-/// The `WHERE` condition of a [`Filter`]: every `only` criterion ($1 to $7) holds, and no `except`
-/// one ($8 to $14) does. An exclusion is `NOT COALESCE(…, false)` so a licence the criterion can't
+/// The `WHERE` condition of a [`Filter`]: every `only` criterion ($1 to $8) holds, and no `except`
+/// one ($9 to $16) does. An exclusion is `NOT COALESCE(…, false)` so a licence the criterion can't
 /// say anything about (no customer, no expiry) isn't hidden by it.
 fn filter_condition() -> String {
     let only = matches(1).map(|(condition, params)| {
         let unset = params.iter().map(|n| format!("${n} IS NULL")).collect::<Vec<_>>().join(" AND ");
         format!("(({unset}) OR {condition})")
     });
-    let except = matches(8).map(|(condition, _)| format!("NOT COALESCE({condition}, false)"));
+    let except = matches(CRITERIA + 1).map(|(condition, _)| format!("NOT COALESCE({condition}, false)"));
     only.into_iter().chain(except).collect::<Vec<_>>().join("\n AND ")
 }
 
-/// A [`page`] query in each order; the cursor is $16 (key) and $17 (ID), the count $18.
+/// A [`page`] query in each order; the cursor is $18 (key) and $19 (ID), the count $20.
 static NEWEST: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "{SELECT_LICENCES} WHERE {} AND ($17::uuid IS NULL OR l.id < $17) ORDER BY l.id DESC LIMIT $18",
+        "{SELECT_LICENCES} WHERE {} AND ($19::uuid IS NULL OR l.id < $19) ORDER BY l.id DESC LIMIT $20",
         filter_condition()
     )
 });
 static SOONEST_EXPIRY: LazyLock<String> = LazyLock::new(|| {
     format!(
         "{SELECT_LICENCES} WHERE {}
-           AND ($17::uuid IS NULL OR (COALESCE(l.expires_at, 'infinity'), l.id) > ($16::timestamptz, $17))
-         ORDER BY COALESCE(l.expires_at, 'infinity'), l.id LIMIT $18",
+           AND ($19::uuid IS NULL OR (COALESCE(l.expires_at, 'infinity'), l.id) > ($18::timestamptz, $19))
+         ORDER BY COALESCE(l.expires_at, 'infinity'), l.id LIMIT $20",
         filter_condition()
     )
 });
@@ -96,6 +100,7 @@ fn bind_criteria<'q, O>(
         .bind(criteria.key_hash.as_deref())
         .bind(criteria.licence_id)
         .bind(criteria.pattern.as_deref())
+        .bind(criteria.test)
 }
 
 /// The licences matching `filter`, in `order`, after `cursor`.
@@ -189,14 +194,15 @@ pub struct NewLicences<'a> {
     pub created_at: DateTime<Utc>,
     pub expires_at: Option<DateTime<Utc>>,
     pub internal_notes: Option<&'a str>,
+    pub is_test: bool,
 }
 
 /// Inserts in one statement; returns the IDs inserted. A licence whose key hash already exists is
 /// skipped, so the caller can give it a new key.
 pub async fn insert(executor: impl PgExecutor<'_>, new: &NewLicences<'_>) -> Result<Vec<Uuid>, sqlx::Error> {
     sqlx::query_scalar(
-        "INSERT INTO licenses (id, product_id, customer_id, key_lookup, created_at, expires_at, internal_notes)
-         SELECT id, $3, $4, key_lookup, $5, $6, $7 FROM unnest($1::uuid[], $2::bytea[]) AS new (id, key_lookup)
+        "INSERT INTO licenses (id, product_id, customer_id, key_lookup, created_at, expires_at, internal_notes, is_test)
+         SELECT id, $3, $4, key_lookup, $5, $6, $7, $8 FROM unnest($1::uuid[], $2::bytea[]) AS new (id, key_lookup)
          ON CONFLICT (key_lookup) DO NOTHING
          RETURNING id",
     )
@@ -207,6 +213,7 @@ pub async fn insert(executor: impl PgExecutor<'_>, new: &NewLicences<'_>) -> Res
     .bind(new.created_at)
     .bind(new.expires_at)
     .bind(new.internal_notes)
+    .bind(new.is_test)
     .fetch_all(executor)
     .await
 }

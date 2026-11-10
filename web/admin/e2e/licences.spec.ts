@@ -42,7 +42,7 @@ test("issuing licences to a new customer, then copying the message and downloadi
   const download = admin.waitForEvent("download");
   await panel.getByRole("button", { name: "Download CSV" }).click();
   const csv = readFileSync(await (await download).path(), "utf8").trim().split("\r\n");
-  expect(csv[0]).toBe("licence_id,product_code,customer_name,customer_email,key,state,issued_at,expires_at,notes");
+  expect(csv[0]).toBe("licence_id,product_code,customer_name,customer_email,key,state,issued_at,expires_at,notes,test");
   expect(csv).toHaveLength(3);
 
   const { data } = await api.get<{ data: { id: string; expires_at: string; internal_notes: string }[] }>(`/licences?product=${product.id}`);

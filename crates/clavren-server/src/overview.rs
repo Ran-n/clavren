@@ -1,10 +1,11 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.338815
-//+ Revised: 	2026/11/03 08:25:52.673303
+//+ Revised: 	2026/11/10 17:59:21.730403
 // -----------------------------------------------------------------------------
 
-//! `GET /api/admin/overview`: the numbers on the dashboard's first page.
+//! `GET /api/admin/overview`: the numbers on the dashboard's first page. Test licences, their
+//! computers and their checks are left out: they are no customer's.
 
 use axum::extract::State;
 use axum::routing::get;
@@ -55,14 +56,17 @@ async fn overview(State(state): State<AppState>, admin: Admin) -> Result<Json<Ov
     let counts: Counts = sqlx::query_as(
         "SELECT (SELECT count(*) FROM products WHERE is_active) AS active_products,
                 (SELECT count(*) FROM products WHERE NOT is_active) AS inactive_products,
-                count(*) FILTER (WHERE state = 'unused') AS unused,
-                count(*) FILTER (WHERE state = 'redeemed') AS redeemed,
-                count(*) FILTER (WHERE state = 'revoked') AS revoked,
-                (SELECT count(*) FROM activations WHERE revoked_at IS NULL) AS active_computers,
-                (SELECT count(*) FROM activations WHERE revoked_at IS NULL AND COALESCE(last_checked_at, activated_at) > $1)
+                count(*) FILTER (WHERE s.state = 'unused') AS unused,
+                count(*) FILTER (WHERE s.state = 'redeemed') AS redeemed,
+                count(*) FILTER (WHERE s.state = 'revoked') AS revoked,
+                (SELECT count(*) FROM activations a JOIN licenses al ON al.id = a.license_id
+                 WHERE a.revoked_at IS NULL AND NOT al.is_test) AS active_computers,
+                (SELECT count(*) FROM activations a JOIN licenses al ON al.id = a.license_id
+                 WHERE a.revoked_at IS NULL AND NOT al.is_test AND COALESCE(a.last_checked_at, a.activated_at) > $1)
                     AS computers_checked_last_24h,
                 (SELECT COALESCE(sum(checks), 0)::bigint FROM check_counts WHERE hour > $1) AS checks_last_24h
-         FROM license_states",
+         FROM license_states s JOIN licenses l ON l.id = s.license_id
+         WHERE NOT l.is_test",
     )
     .bind(since)
     .fetch_one(&state.pool)

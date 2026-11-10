@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.513158
-//+ Revised: 	2026/11/03 04:54:16.513158
+//+ Revised: 	2026/11/10 17:59:22.426462
 // -----------------------------------------------------------------------------
 
 //! A server with a product and an admin to issue keys for it: the starting point of every test
@@ -25,7 +25,9 @@ pub struct Licensing {
 impl Licensing {
     pub async fn new(pool: PgPool) -> Self {
         let admin = Admin::new(pool).await;
-        let product = admin.create("/api/admin/products", json!({ "code": PRODUCT, "name": "Avalio Lite" })).await;
+        let product = admin
+            .create("/api/admin/products", json!({ "code": PRODUCT, "name": "Avalio Lite", "test_licence": false }))
+            .await;
         Self { admin, product_id: product["id"].as_str().unwrap().to_string() }
     }
 

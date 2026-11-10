@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.190589
-//+ Revised: 	2026/11/07 19:37:00.236858
+//+ Revised: 	2026/11/10 17:59:22.147794
 // -----------------------------------------------------------------------------
 
 use chrono::{DateTime, Utc};
@@ -19,6 +19,7 @@ fn new(code: &str, name: &str) -> NewProduct {
         description: None,
         message_template: None,
         is_active: None,
+        test_licence: true,
     }
 }
 
@@ -121,4 +122,11 @@ fn invalid_changes_are_refused() {
     ] {
         assert!(changes.apply(existing(), now()).is_err());
     }
+}
+
+#[test]
+fn a_new_product_comes_with_a_test_licence_unless_asked_not_to() {
+    let read = |json: &str| serde_json::from_str::<NewProduct>(json).unwrap().test_licence;
+    assert!(read(r#"{"name": "Avalio"}"#));
+    assert!(!read(r#"{"name": "Avalio", "test_licence": false}"#));
 }

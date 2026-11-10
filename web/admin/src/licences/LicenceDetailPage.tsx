@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from "react";
 import { api, get } from "../shared/api";
-import { LicenceStateBadge } from "../shared/components/Badge";
+import { LicenceBadges } from "../shared/components/Badge";
 import { Button } from "../shared/components/Button";
 import { ConfirmStrip } from "../shared/components/ConfirmStrip";
 import { CopyButton, KeyField } from "../shared/components/Copy";
@@ -20,13 +20,31 @@ import { DELETED_NOTICE, LICENCE_EXPAND } from "./licenceApi";
 
 type Action = "reset" | "revoke" | "delete" | null;
 
+/** The computers a licence is on, as the subject of a sentence: a test licence can be on several. */
+function computersUsing(licence: Licence): string {
+  return licence.is_test ? "Every computer using it" : "The computer using it";
+}
+
 /** What deleting a licence in this state ends, in plain words. */
-const DELETE_MESSAGES: Record<Licence["state"], string> = {
-  redeemed:
-    "Delete this licence? The computer using it locks at its next check, the key stops working, and the licence disappears with its history. This can't be undone.",
-  unused: "Delete this licence? Its key stops working and the licence disappears. This can't be undone.",
-  revoked: "Delete this licence? It disappears with the computers it was used on. This can't be undone.",
-};
+function deleteMessage(licence: Licence): string {
+  switch (licence.state) {
+    case "redeemed":
+      return `Delete this licence? ${computersUsing(licence)} locks at its next check, the key stops working, and the licence disappears with its history. This can't be undone.`;
+    case "unused":
+      return "Delete this licence? Its key stops working and the licence disappears. This can't be undone.";
+    case "revoked":
+      return "Delete this licence? It disappears with the computers it was used on. This can't be undone.";
+  }
+}
+
+function resetMessage(licence: Licence): string {
+  return `Reset this licence? ${computersUsing(licence)} locks at its next check, and the same key can then be activated on another computer.`;
+}
+
+function revokeMessage(licence: Licence): string {
+  const using = computersUsing(licence).toLowerCase();
+  return `Revoke this licence? Its key is deleted and can never be used again, and ${using} locks at its next check. This can't be undone.`;
+}
 
 function resetReason(licence: Licence): string | null {
   if (licence.state === "revoked") return "A revoked licence can't be reset";
@@ -66,13 +84,19 @@ export function LicenceDetailPage({ id }: { id: string }) {
         <Link to="/licences">Licences</Link>
       </p>
       <h1>
-        Licence <LicenceStateBadge state={licence.state} />
+        Licence <LicenceBadges state={licence.state} test={licence.is_test} />
       </h1>
       <dl className="details">
         <dt>Key</dt>
         <dd><KeyField licenceId={licence.id} revoked={revoked} /></dd>
         <dt>Product</dt>
         <dd>{product?.name ?? "—"}</dd>
+        {licence.is_test && (
+          <>
+            <dt>Computers</dt>
+            <dd>{licence.active_computers === 1 ? "In use on 1 computer" : `In use on ${licence.active_computers} computers`}</dd>
+          </>
+        )}
         <dt>Customer</dt>
         <dd><CustomerField licence={licence} onChange={setLicence} /></dd>
         <dt>Issued</dt>
@@ -108,7 +132,7 @@ export function LicenceDetailPage({ id }: { id: string }) {
       </div>
       {action === "reset" && (
         <ConfirmStrip
-          message="Reset this licence? The computer using it locks at its next check, and the same key can then be activated on another computer."
+          message={resetMessage(licence)}
           confirmLabel="Reset"
           onConfirm={() => act("reset", null)}
           onCancel={() => setAction(null)}
@@ -116,7 +140,7 @@ export function LicenceDetailPage({ id }: { id: string }) {
       )}
       {action === "revoke" && (
         <ConfirmStrip
-          message="Revoke this licence? Its key is deleted and can never be used again, and the computer using it locks at its next check. This can't be undone."
+          message={revokeMessage(licence)}
           confirmLabel="Revoke"
           withReason
           onConfirm={(reason) => act("revoke", reason)}
@@ -124,7 +148,7 @@ export function LicenceDetailPage({ id }: { id: string }) {
         />
       )}
       {action === "delete" && (
-        <ConfirmStrip message={DELETE_MESSAGES[licence.state]} confirmLabel="Delete" onConfirm={remove} onCancel={() => setAction(null)} />
+        <ConfirmStrip message={deleteMessage(licence)} confirmLabel="Delete" onConfirm={remove} onCancel={() => setAction(null)} />
       )}
       <h2>Computers</h2>
       <ActivationHistory licenceId={licence.id} key={history} />

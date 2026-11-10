@@ -1,22 +1,24 @@
 // Products: edit in place, create in a new first row, activate and deactivate (with a warning:
 // every computer using it locks at its next check), see their licences, delete, with their
-// licences (counted by the server first; with licences, the code must be typed to confirm).
+// licences (counted by the server first; with licences, the code must be typed to confirm). A new
+// product's test licence key is shown until the page is left or the notice dismissed.
 
 import { useRef, useState } from "react";
 import { api, get, query } from "../shared/api";
 import { Badge } from "../shared/components/Badge";
 import { Button } from "../shared/components/Button";
 import { ConfirmStrip } from "../shared/components/ConfirmStrip";
+import { CopyButton } from "../shared/components/Copy";
 import { DataTable, type Column } from "../shared/components/DataTable";
 import { InlineText } from "../shared/components/InlineText";
 import { FilterSelect, Pager, Toolbar } from "../shared/components/ListControls";
-import { ErrorNotice } from "../shared/components/Notice";
+import { ErrorNotice, Notice } from "../shared/components/Notice";
 import { inUseWarning, plural } from "../shared/errors";
 import { DEFAULT_PAGE_SIZE, usePagedList, useTitle } from "../shared/hooks";
 import { useTablePreferences } from "../shared/preferences";
 import { Link } from "../shared/router";
 import type { Product } from "../shared/types";
-import { NewProductRow } from "./NewProductRow";
+import { NewProductRow, type CreatedProduct } from "./NewProductRow";
 
 type Field = "code" | "name" | "description" | "message_template";
 type Usage = { licences: number; in_use: number };
@@ -29,6 +31,27 @@ const ACTIVE_OPTIONS = [
 ];
 
 type Ask = (product: Product, action: "deactivate" | "delete") => void;
+
+function TestLicenceNotice({ product, onDismiss }: { product: CreatedProduct; onDismiss: () => void }) {
+  const licence = product.test_licence;
+  if (!licence) return null;
+  return (
+    <Notice tone="success">
+      <span>
+        {product.name} was created with a test licence: <code className="key">{licence.key}</code>
+      </span>
+      <span className="button-row">
+        <CopyButton label="Copy key" text={() => Promise.resolve(licence.key)} />
+        <Link to={`/licences/${licence.id}`} className="button button--quiet button--small">
+          Open it
+        </Link>
+        <Button size="small" variant="quiet" onClick={onDismiss}>
+          Dismiss
+        </Button>
+      </span>
+    </Notice>
+  );
+}
 
 function columns(save: (product: Product, field: Field, value: string | null) => Promise<void>, setActive: (product: Product, active: boolean) => void, ask: Ask): Column<Product>[] {
   return [
@@ -67,6 +90,7 @@ export function ProductsPage() {
   const [table, setTable] = useTablePreferences("products");
   const [adding, setAdding] = useState(false);
   const [pending, setPending] = useState<Pending>(null);
+  const [created, setCreated] = useState<CreatedProduct | null>(null);
   // which question about a product is the latest, so a slow answer about another one is dropped
   const asked = useRef(0);
   const [error, setError] = useState<unknown>(null);
@@ -121,6 +145,7 @@ export function ProductsPage() {
       <Toolbar>
         <FilterSelect label="Show" value={active} options={ACTIVE_OPTIONS} onChange={(value) => setTable({ filters: { active: value } })} />
       </Toolbar>
+      {created && <TestLicenceNotice product={created} onDismiss={() => setCreated(null)} />}
       <ErrorNotice error={error ?? list.error} />
       <DataTable
         label="Products"
@@ -129,7 +154,7 @@ export function ProductsPage() {
         rowKey={(product) => product.id}
         loading={list.loading}
         error={list.error}
-        firstRow={adding ? <NewProductRow onCreated={() => { setAdding(false); list.reload(); }} onCancel={() => setAdding(false)} /> : null}
+        firstRow={adding ? <NewProductRow onCreated={(product) => { setAdding(false); setCreated(product); list.reload(); }} onCancel={() => setAdding(false)} /> : null}
         below={(product) =>
           pending?.id === product.id ? (
             <ConfirmStrip

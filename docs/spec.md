@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.098038 )
-[//]: # (+ Revised: 	2026/11/09 22:30:57.460702 )
+[//]: # (+ Revised: 	2026/11/10 17:59:24.066867 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Clavren — Specification
@@ -26,7 +26,8 @@ Clavren is the licensing server for Breren's own applications (avalio-lite first
 - Selling: payments, shops, carts, subscriptions billing, shop webhooks. Sales happen elsewhere; the administrator issues keys by hand.
 - Sending email: the dashboard prepares the message, the administrator sends it.
 - Customer accounts or any page customers log into. Customers only ever type a key into an app.
-- Trials and feature tiers (editions). Can be added later.
+- Trials for customers and feature tiers (editions). Can be added later. (Test licences, for the
+  administrator's own testing, are in scope: section 3.)
 - Stopping people who patch the application binary to skip the check. Clavren prevents key sharing and casual piracy, not cracking; nothing is added that only aims at that.
 
 ---
@@ -74,7 +75,8 @@ The administrator edits the expiry date in place (extend a school year, make it 
 - **Product**: an application that uses Clavren. It has a unique `code` (e.g. `avalio-lite`, used in tokens), made from the name when none is given, a name, a description, an active flag, and the message template for issued keys. Deleting a product deletes all its licences and their history; their computers lock at their next check. Deactivating keeps everything.
 - **Customer**: who received a key: name, optional email, notes. Only the administrator sees it. One customer can have several licences.
 - **Licence**: one key for one product, optionally for a customer, optionally with an expiry date. Its state is **unused**, **redeemed** (in use on a computer) or **revoked**; the state is derived, never stored (section 7).
-- **Activation**: one computer (Windows user account) a licence was bound to: its public key, name, platform, app version, when it was activated and last checked, and whether and why it was revoked. A licence has at most one active activation; earlier ones stay as history.
+- **Test licence**: a licence for trying an application against the real server, not a sale. It works on **any number of computers at once**, its tokens say it is a test licence (the application may show so), and the Overview leaves it, its computers and its checks out. Every new product comes with one (the product's creation shows its key); more are issued with **Issue licences** by ticking **Test licences**. A licence is a test licence from issuing to deletion.
+- **Activation**: one computer (Windows user account) a licence was bound to: its public key, name, platform, app version, when it was activated and last checked, and whether and why it was revoked. A licence has at most one active activation (a test licence any number); earlier ones stay as history.
 
 ---
 
@@ -120,7 +122,7 @@ The application receives one typed outcome and shows its own translated message:
 
 | Outcome | Meaning | Application does |
 |---|---|---|
-| `Licensed { licence_expires_at, offline_until }` | Valid | Runs. May show a notice when `offline_until` is under 5 days away ("connect to the internet to keep using…") |
+| `Licensed { licence_expires_at, offline_until, test }` | Valid | Runs. May show a notice when `offline_until` is under 5 days away ("connect to the internet to keep using…"), and that it runs on a test licence when `test` |
 | `NeedsActivation` | No licence on this computer | Asks for a key |
 | `InvalidKey` | Malformed, unknown, or for another product | Asks again |
 | `AlreadyActivatedElsewhere` | Key in use on another computer | Shows the support contact (to ask for a reset) |
@@ -150,7 +152,7 @@ All under `/api/v1`, JSON over HTTPS. Every response includes `server_time`. Bin
 
 Request: `product` (code), `key`, `device_public_key` (32-byte raw Ed25519), `device_fingerprint` (optional), `device_name`, `platform`, `app_version`.
 
-In one transaction: normalize the key, compute its lookup hash, find the licence and lock its row (`SELECT … FOR UPDATE`), check it belongs to that product, the product is active, the licence isn't revoked or expired and has no active activation; create the activation.
+In one transaction: normalize the key, compute its lookup hash, find the licence and lock its row (`SELECT … FOR UPDATE`), check it belongs to that product, the product is active, the licence isn't revoked or expired and has no active activation (a test licence may have any number); create the activation.
 
 - **201** `{ activation, token, token_expires_at, licence_expires_at, server_time }`.
 - **Same device retrying** (the response was lost): if the active activation has this exact device public key, return it with a fresh token (200) instead of refusing.
@@ -178,7 +180,7 @@ clavren-check-v1
 
 ### Activation token
 
-A JWT signed with Ed25519 (EdDSA), header `kid`. Claims: `iss` (public service URL), `aud` (product code), `sub` (licence ID), `act` (activation ID), `dev` (BLAKE3 of the device public key, base64url), `lic_exp` (licence expiry, if any), `iat`, `exp`, `jti`. `exp` = `min(now + 30 days, licence expiry)`; the 30 days are configurable.
+A JWT signed with Ed25519 (EdDSA), header `kid`. Claims: `iss` (public service URL), `aud` (product code), `sub` (licence ID), `act` (activation ID), `dev` (BLAKE3 of the device public key, base64url), `lic_exp` (licence expiry, if any), `test` (`true` for a test licence, absent otherwise), `iat`, `exp`, `jti`. `exp` = `min(now + 30 days, licence expiry)`; the 30 days are configurable.
 
 Applications embed a **list** of trusted public keys by `kid`. Each signing key is derived from the master key with a versioned context (`v1`, `v2`…). Rotation: ship application versions that trust both keys, then switch the server with a CLI command once old versions are retired.
 
@@ -209,9 +211,9 @@ SQL migrations embedded in the binary and run at startup. All timestamps `TIMEST
 Deleting a customer erases their personal data: their licences keep working and lose the link (`customer_id` set to NULL). Audit entries reference customers by ID only, never by name or email, so deletion really removes them.
 
 ### `licenses`
-`id` UUID PK · `product_id` FK · `customer_id` nullable FK · `key_lookup` BYTEA unique (keyed BLAKE3) · `created_at` · `expires_at` nullable (NULL = permanent) · `revoked_at` nullable · `revocation_reason` nullable · `internal_notes` nullable.
+`id` UUID PK · `product_id` FK · `customer_id` nullable FK · `key_lookup` BYTEA unique (keyed BLAKE3) · `created_at` · `expires_at` nullable (NULL = permanent) · `revoked_at` nullable · `revocation_reason` nullable · `internal_notes` nullable · `is_test` boolean (never changes once issued).
 
-There is no stored state and no redemption time; both would copy facts held elsewhere. The view `license_states` derives the state: **revoked** if `revoked_at` is set, else **redeemed** if it has an activation with `revoked_at IS NULL`, else **unused**. The redemption time is that activation's `activated_at`.
+There is no stored state and no redemption time; both would copy facts held elsewhere. The view `license_states` derives the state: **revoked** if `revoked_at` is set, else **redeemed** if it has an activation with `revoked_at IS NULL`, else **unused**. The redemption time is that activation's `activated_at` (the latest one's, for a test licence on several computers), and `active_computers` counts them.
 
 ### `license_key_secrets`
 `license_id` UUID PK/FK · `ciphertext` · `nonce` · `encryption_version`. Deleted when the licence is revoked.
@@ -219,7 +221,7 @@ There is no stored state and no redemption time; both would copy facts held else
 ### `activations`
 `id` UUID PK · `license_id` FK · `device_public_key` BYTEA · `device_fingerprint_hash` nullable BYTEA · `device_name` · `platform` · `app_version` (last reported) · `activated_at` · `last_checked_at` nullable · `revoked_at` nullable · `revocation_reason` nullable (`reset` or `licence_revoked`).
 
-A partial unique index on `license_id WHERE revoked_at IS NULL`: at most one active activation per licence; revoked ones stay as history.
+A trigger keeps at most one active activation per licence, except test licences (it locks the licence row, as activating does); revoked ones stay as history.
 
 ### `verification_challenges`
 `id` UUID PK · `activation_id` FK · `nonce_hash` BYTEA · `created_at` · `expires_at` · `consumed_at` nullable.
@@ -245,7 +247,7 @@ Recorded: licences issued, key revealed, copied as message or exported, licence 
 `id` UUID PK · `finished_at` · `archive_name` · `size_bytes` BIGINT.
 
 ### `check_counts`
-`hour` TIMESTAMPTZ PK (a whole hour) · `checks` BIGINT (> 0): successful checks in that hour, for the Overview. One row per hour, not per check.
+`hour` TIMESTAMPTZ PK (a whole hour) · `checks` BIGINT (> 0): successful checks in that hour, for the Overview (test licences' checks aren't counted). One row per hour, not per check.
 
 ### Housekeeping
 An hourly background task deletes used or expired challenges, expired or revoked sessions, and check counts older than 30 days.
@@ -270,13 +272,13 @@ A polished, responsive web application (React, TypeScript, Vite) embedded in the
 
 ### Pages
 
-- **Overview**: products, licences by state, active computers, computers that checked in and checks made in the last 24 hours, last successful backup (warning if over 48 hours old), and the server: its version, the last check for a newer release (or why it failed) and **Check now**.
+- **Overview**: products, licences by state, active computers, computers that checked in and checks made in the last 24 hours (all without test licences, which the page says), last successful backup (warning if over 48 hours old), and the server: its version, the last check for a newer release (or why it failed) and **Check now**.
 - **Every page**: when a newer release is out, a notice with the version, **What's new** (the release page) and **Update to X.Y.Z**, which turns into an inline confirmation (with "Update without a backup" to tick when the backup drive isn't mounted), then shows the update's progress and, after the dashboard reloads itself, "Updated to X.Y.Z".
-- **Licences**: table with key (hidden, **Reveal** / **Copy**), product, customer, state, issued, redeemed, last check, customer, expiry and notes (inline; revocation reason inline on revoked licences); the product, key, state and dates are read-only. Search by key (normalized and looked up by hash), customer name or email, licence ID. Filters by product, state, expiry (permanent, expiring within 30 days, expired), each of which can also exclude ("Except revoked"), plus a hide box for key, customer or licence ID. Primary action **Issue licences**: inline panel with product, customer (picked from a searchable list of every customer, or typed as a new one), quantity (up to 1,000), optional expiry and notes; the new keys appear there with **Copy message** (one customer) and **Download CSV**. Bulk: set customer, edit expiry, edit notes, edit reason, export CSV, revoke, delete (with the server's count of what goes).
-- **Licence detail**: all fields, Reveal/Copy, **Copy message**, Reset (only when in use), Revoke (unless revoked), Delete (any state), and the activation history (every computer it was on, with reasons).
+- **Licences**: table with key (hidden, **Reveal** / **Copy**), product, customer, state, issued, redeemed, last check, customer, expiry and notes (inline; revocation reason inline on revoked licences); the product, key, state and dates are read-only. Search by key (normalized and looked up by hash), customer name or email, licence ID. Filters by product, state, expiry (permanent, expiring within 30 days, expired), kind (test licences), each of which can also exclude ("Except revoked"), plus a hide box for key, customer or licence ID. Test licences carry a **Test** badge. Primary action **Issue licences**: inline panel with product, customer (picked from a searchable list of every customer, or typed as a new one), quantity (up to 1,000), optional expiry and notes, and a **Test licences** tick (never remembered); the new keys appear there with **Copy message** (one customer) and **Download CSV**. Bulk: set customer, edit expiry, edit notes, edit reason, export CSV, revoke, delete (with the server's count of what goes).
+- **Licence detail**: all fields (a test licence also how many computers it is on), Reveal/Copy, **Copy message**, Reset (only when in use; every computer of a test licence), Revoke (unless revoked), Delete (any state), and the activation history (every computer it was on, with reasons).
 - **Customers**: table (inline editing and creation), search by name or email, each with their licences; delete with inline confirmation ("their licences keep working; their name and email are erased").
-- **Products**: table (inline editing and creation, the code made from the name when left empty), activate/deactivate (inline confirmation warning that every computer of that product locks at its next check), delete with its licences (the strip shows how many and how many are in use), link to its licences.
-- **Activations**: table of computers: product, licence, customer, device name, platform, app version, activated, last check, state. Revoking an activation here is the same operation as resetting its licence.
+- **Products**: table (inline editing and creation, the code made from the name when left empty; a new product's test licence key is shown with **Copy key** until the page is left), activate/deactivate (inline confirmation warning that every computer of that product locks at its next check), delete with its licences (the strip shows how many and how many are in use), link to its licences.
+- **Activations**: table of computers: product, licence (with a **Test** badge), customer, device name, platform, app version, activated, last check, state; filters by state, product and kind. Revoking an activation here ends that computer's activation: the same as resetting its licence, except that a test licence's other computers go on.
 - **Audit log**: who did what, when, from which IP; filters by action, admin, entity, date.
 - **Account**: change password, re-enrol TOTP, regenerate recovery codes, sign out everywhere else.
 
@@ -284,7 +286,7 @@ A polished, responsive web application (React, TypeScript, Vite) embedded in the
 
 Responses containing a plaintext key carry `Cache-Control: no-store`. Keys are never written to browser storage, preferences, analytics or logs, and a revealed key is hidden again when the admin leaves the page. Reveal, copy-message and export are audited.
 
-CSV export columns: `licence_id, product_code, customer_name, customer_email, key, state, issued_at, expires_at, notes`. Cells starting with `=`, `+`, `-`, `@`, tab or carriage return are prefixed with `'` so spreadsheets don't run them as formulas.
+CSV export columns: `licence_id, product_code, customer_name, customer_email, key, state, issued_at, expires_at, notes, test`. Cells starting with `=`, `+`, `-`, `@`, tab or carriage return are prefixed with `'` so spreadsheets don't run them as formulas.
 
 ---
 

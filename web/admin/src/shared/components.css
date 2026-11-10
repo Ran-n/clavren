@@ -487,6 +487,11 @@
   flex: 1 1 14rem;
   font-size: 0.9rem;
 }
+.field--tick {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.45rem;
+}
 .confirm-strip__tick {
   display: flex;
   align-items: center;
@@ -539,6 +544,16 @@
   background: var(--color-surface-raised);
   color: var(--color-text-muted);
   border: 1px solid var(--color-border);
+}
+.badge--test {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+.badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  vertical-align: middle;
 }
 .stacked {
   display: flex;

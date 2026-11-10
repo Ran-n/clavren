@@ -1,6 +1,7 @@
 // A reviewed baseline screenshot of every page, light and dark, at desktop and phone width, from
 // a fixed data set on a server whose clock stands still, plus the states that open in place (the
-// customer list, the customer editor, the delete warnings, an update, the theme button hovered).
+// customer list, the customer editor, the delete warnings, an update, the theme button hovered,
+// a new product's test licence).
 // Also: nothing makes the page scroll sideways, and disabled actions are dimmed. Keys stay hidden;
 // IDs are masked. The update state is a fixed answer, so the server's own version never changes a
 // baseline.
@@ -14,17 +15,19 @@ test.use({ server: "rendered" });
 const SIZES = { desktop: { width: 1280, height: 860 }, phone: { width: 390, height: 844 } } as const;
 const SCHEMES = ["light", "dark"] as const;
 
-type Seeded = { activeLicence: string; revokedLicence: string };
+type Seeded = { activeLicence: string; revokedLicence: string; testLicence: string };
 
 /** The data every screenshot shows; made once per server. */
 async function seed(api: AdminApi, request: import("@playwright/test").APIRequestContext): Promise<Seeded> {
-  const existing = await api.get<{ data: { id: string; state: string }[] }>("/licences?limit=100");
+  const existing = await api.get<{ data: { id: string; state: string; is_test: boolean }[] }>("/licences?limit=100");
   if (existing.data.length > 0) {
-    const find = (state: string) => existing.data.find((licence) => licence.state === state)?.id as string;
-    return { activeLicence: find("redeemed"), revokedLicence: find("revoked") };
+    const find = (state: string) => existing.data.find((licence) => licence.state === state && !licence.is_test)?.id as string;
+    const testLicence = existing.data.find((licence) => licence.is_test)?.id as string;
+    return { activeLicence: find("redeemed"), revokedLicence: find("revoked"), testLicence };
   }
-  const lite = await api.call<{ id: string }>("POST", "/products", { code: "avalio-lite", name: "Avalio Lite", description: "Gradebook for one teacher" });
-  const pro = await api.call<{ id: string }>("POST", "/products", { code: "avalio-pro", name: "Avalio Pro", description: "For whole schools" });
+  // Avalio Lite comes with its test licence, used on two computers
+  const lite = await api.call<{ id: string; test_licence: { id: string; key: string } }>("POST", "/products", { code: "avalio-lite", name: "Avalio Lite", description: "Gradebook for one teacher" });
+  const pro = await api.call<{ id: string }>("POST", "/products", { code: "avalio-pro", name: "Avalio Pro", description: "For whole schools", test_licence: false });
   await api.call("PATCH", `/products/${pro.id}`, { is_active: false });
   const ana = await issue(api, lite.id, { customer: { name: "Ana López", email: "ana@example.com" }, quantity: 2, expires_at: "2027-12-31T23:59:59Z" });
   await issue(api, lite.id, { customer: { name: "Bruno Díaz" }, internal_notes: "Paid by transfer" });
@@ -34,8 +37,24 @@ async function seed(api: AdminApi, request: import("@playwright/test").APIReques
   await new Device("ANA-LAPTOP").activate(request, "avalio-lite", active.key, "203.0.113.50");
   const revoked = spare.licences[0]!;
   await api.call("POST", `/licences/${revoked.id}/revoke`, { reason: "Refunded" });
-  return { activeLicence: active.id, revokedLicence: revoked.id };
+  for (const computer of ["DEV-PC", "TEST-VM"]) {
+    await new Device(computer).activate(request, "avalio-lite", lite.test_licence.key, "203.0.113.60");
+  }
+  return { activeLicence: active.id, revokedLicence: revoked.id, testLicence: lite.test_licence.id };
 }
+
+/** What creating a product answers in the capture of its test licence: fixed, so no key changes a baseline. */
+const CREATED_PRODUCT = {
+  id: "00000000-0000-7000-8000-000000000001",
+  code: "avalio-lab",
+  name: "Avalio Lab",
+  description: null,
+  message_template: "",
+  is_active: true,
+  created_at: "2027-03-01T09:00:00Z",
+  updated_at: "2027-03-01T09:00:00Z",
+  test_licence: { id: "00000000-0000-7000-8000-000000000002", key: "BRN-TEST-0000-0000-0000" },
+};
 
 /** `GET /updates` as every capture sees it, unless a test answers otherwise. */
 const NO_UPDATE = {
@@ -127,6 +146,23 @@ test.describe("every page, light and dark, desktop and phone", () => {
       await page.getByRole("row").filter({ hasText: "Avalio Lite" }).getByRole("button", { name: "Delete" }).click();
       await expect(page.getByRole("group", { name: "Delete" })).toContainText("Type avalio-lite to confirm");
     }));
+  test("a test licence on two computers, being reset", async ({ admin }) =>
+    capture(admin, "licence-test-reset", `/licences/${seeded.testLicence}`, LICENCE_ID, async (page) => {
+      await page.getByRole("button", { name: "Reset" }).click();
+      await expect(page.getByRole("group", { name: "Reset" })).toContainText("Every computer using it locks");
+    }));
+  test("a new product with its test licence", async ({ admin }) => {
+    // only the creation is answered here: the list is the real one, unchanged
+    await admin.route("**/api/admin/products", (route) =>
+      route.request().method() === "POST" ? route.fulfill({ status: 201, json: CREATED_PRODUCT }) : route.fallback(),
+    );
+    await capture(admin, "product-test-licence", "/products", undefined, async (page) => {
+      await page.getByRole("button", { name: "New product" }).click();
+      await page.getByLabel("New product's name").fill(CREATED_PRODUCT.name);
+      await page.getByLabel("New product's name").press("Enter");
+      await expect(page.getByText("Avalio Lab was created with a test licence")).toBeVisible();
+    });
+  });
   test("customers", async ({ admin }) => capture(admin, "customers", "/customers"));
   test("products", async ({ admin }) => capture(admin, "products", "/products"));
   test("activations", async ({ admin }) => capture(admin, "activations", "/activations"));

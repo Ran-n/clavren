@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 19:43:36.881392 )
-[//]: # (+ Revised: 	2026/11/09 22:30:57.076581 )
+[//]: # (+ Revised: 	2026/11/10 17:59:23.497360 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # HTTP API
@@ -84,7 +84,8 @@ wrong clock still works and a clock set back gains nothing.
 ```
 
 The same computer (the same device public key) asking again, because the first answer was lost,
-gets `200` with its existing activation and a fresh token.
+gets `200` with its existing activation and a fresh token. A test licence is never
+`already_activated`: every other computer gets its own activation.
 
 ### `POST /api/v1/activations/{activation}/challenges`
 
@@ -128,6 +129,7 @@ A JWT signed with Ed25519: header `{"alg":"EdDSA","typ":"JWT","kid":"v1"}`. Clai
 | `act` | The activation ID |
 | `dev` | base64url of the BLAKE3 hash of the device public key |
 | `lic_exp` | The licence's expiry (Unix seconds); absent for a permanent licence |
+| `test` | `true` for a test licence; absent for any other (read as `false`) |
 | `iat`, `exp` | Issued and expiry (Unix seconds). `exp` is 30 days after issuing (`CLAVREN_TOKEN_DAYS`), or the licence's expiry if sooner |
 | `jti` | A unique ID |
 
@@ -335,7 +337,7 @@ field of an expanded record. Each list says which fields it expands; any other i
 | Endpoint | Answer |
 |----------|--------|
 | `GET /api/admin/products?active=true\|false` | A page of products, A to Z by name |
-| `POST /api/admin/products` | `201` with the product. Body: `name`, optional `code`, `description`, `message_template`, `is_active` |
+| `POST /api/admin/products` | `201` with the product and `test_licence` (`{"id", "key"}`, or `null`), sent with `Cache-Control: no-store`. Body: `name`, optional `code`, `description`, `message_template`, `is_active`, `test_licence` (`false` for none) |
 | `GET /api/admin/products/{id}` | The product |
 | `PATCH /api/admin/products/{id}` | The product after the change. Any of `code`, `name`, `description`, `message_template`, `is_active` |
 | `GET /api/admin/products/{id}/usage` | `{"licences": 120, "in_use": 34}`: what deleting it would take with it |
@@ -343,6 +345,11 @@ field of an expanded record. Each list says which fields it expands; any other i
 
 Conflict codes: `product_code_taken` (another product has the code), `product_code_locked` (the
 product has licences).
+
+A new product comes with one **test licence** (no customer, permanent), issued in the same
+transaction and audited as `licence.issued` with `"test": true`, even when the product starts
+inactive; `"test_licence": false` skips it. Its key is in the answer once, and can be revealed
+later like any key.
 
 ---
 
@@ -385,6 +392,8 @@ Conflict code: `customer_email_taken`.
   "customer": "0190…",
   "state": "redeemed",
   "active_activation": "0190…",
+  "active_computers": 1,
+  "is_test": false,
   "created_at": "2026-11-02T12:00:00Z",
   "expires_at": null,
   "revoked_at": null,
@@ -397,6 +406,10 @@ Conflict code: `customer_email_taken`.
   licence and its activations, never stored.
 - `customer` and `active_activation` are `null` when there is none. `expires_at` `null` means
   permanent.
+- `is_test` marks a **test licence**: for trying an application, not a sale. It is active on any
+  number of computers at once (`active_computers` counts them, and `active_activation` is the
+  latest), its tokens carry `"test": true`, and the Overview leaves it out. It is chosen when
+  issuing and never changes.
 - `?expand=product`, `?expand=customer` and `?expand=active_activation` replace the IDs with the
   records. The parameter repeats, or takes a comma-separated list. An activation shows `id`,
   `licence`, `device_name`, `platform`, `app_version`, `activated_at`, `last_checked_at`,
@@ -412,12 +425,14 @@ Conflict code: `customer_email_taken`.
   "customer": { "name": "Ana López", "email": "ana@example.com" },
   "quantity": 2,
   "expires_at": "2027-07-01T00:00:00Z",
-  "internal_notes": "School order 42"
+  "internal_notes": "School order 42",
+  "test": false
 }
 ```
 
 `customer` is an existing customer's ID, a new customer (created in the same transaction), or
-absent. `quantity` is 1 to 1,000 (default 1). `expires_at` must be in the future. `201`:
+absent. `quantity` is 1 to 1,000 (default 1). `expires_at` must be in the future. `test: true`
+issues test licences. `201`:
 
 ```json
 {
@@ -441,7 +456,8 @@ key on its own line where `{key}` is; it is `null` without a customer. Errors: `
 | `product`, `customer` | IDs |
 | `state` | `unused`, `redeemed` or `revoked` |
 | `expiry` | `permanent`, `expiring` (within 30 days) or `expired` |
-| `not_product`, `not_customer`, `not_state`, `not_expiry`, `not_q` | The same values, hiding what they match; licences without a customer are never hidden by a customer exclusion |
+| `test` | `true`: only test licences; `false`: only the others |
+| `not_product`, `not_customer`, `not_state`, `not_expiry`, `not_q`, `not_test` | The same values, hiding what they match; licences without a customer are never hidden by a customer exclusion |
 | `order` | `newest` (default) or `expiry` (soonest first, permanent last) |
 | `limit`, `after`, `expand` | As everywhere |
 
@@ -457,7 +473,7 @@ of `PATCH`, `revoke` and `reset` below.
 |----------|------|--------|
 | `PATCH /api/admin/licences/{id}` | Any of `customer` (an existing customer's ID, `{"name", "email"}` for a new one, or `null` for none), `expires_at` (`null`: permanent; a past date ends it now), `internal_notes`, `revocation_reason` (revoked licences only). Every other field (product, key, state, dates) is read-only and refused | The licence |
 | `POST /api/admin/licences/{id}/revoke` | `{}` or `{"reason": "…"}` | The licence. The key is deleted and can never be accepted again; a computer using it locks at its next check |
-| `POST /api/admin/licences/{id}/reset` | | The licence, now `unused`. The same key activates on another computer; the old one locks at its next check |
+| `POST /api/admin/licences/{id}/reset` | | The licence, now `unused`. The same key activates on another computer; the old one (every one, for a test licence) locks at its next check |
 | `DELETE /api/admin/licences/{id}` | | `204`. The licence, its key and its activations are gone in any state; a computer using it locks at its next check, and the key reads as unknown (`invalid_key`) |
 | `POST /api/admin/licences/bulk/edit` | `ids` (up to 1,000) and the fields of `PATCH`; a new customer is created once for the batch | `{"updated": 3}`: the licences that changed (one already as asked isn't counted, nor audited) |
 | `POST /api/admin/licences/bulk/revoke` | `ids`, optional `reason` | `{"revoked": 3}` |
@@ -486,7 +502,8 @@ Errors: `not_found` (with `ids` for a batch), `licence_revoked`, `licence_not_in
 | `POST /api/admin/licences/export` | CSV, for `{"ids": [...]}` (up to 1,000) or `{"filter": {"state": "unused", …}}` (the list filters, exclusions included, up to 10,000 licences) |
 
 A revoked licence has no key left: `licence_revoked`. The CSV has the columns `licence_id,
-product_code, customer_name, customer_email, key, state, issued_at, expires_at, notes`, with CRLF
+product_code, customer_name, customer_email, key, state, issued_at, expires_at, notes, test`
+(`test` is `true` or `false`), with CRLF
 line ends. A cell that a spreadsheet would run as a formula (starting with `=`, `+`, `-`, `@`, tab
 or carriage return) starts with `'`.
 
@@ -501,14 +518,16 @@ An activation is one computer using one licence. Device public keys never leave 
 | `licence`, `product` | IDs |
 | `state` | `active` or `revoked` |
 | `q` | Part of the device name, platform or app version |
+| `test` | `true`: only computers of test licences; `false`: only the others |
 | `limit`, `after` | As everywhere |
 | `expand` | `licence`, and inside it `licence.product`, `licence.customer`, `licence.active_activation` |
 
 Each row has `id`, `licence`, `device_name`, `platform`, `app_version`, `activated_at`,
 `last_checked_at`, `revoked_at` and `revocation_reason` (`reset`, `licence_revoked`, or `null` while active).
 
-`POST /api/admin/activations/{id}/revoke` ends the activation by resetting its licence, so the
-same key works on another computer. Answer: the activation. Errors: `not_found`,
+`POST /api/admin/activations/{id}/revoke` ends that activation, so the same key works on another
+computer; a test licence's other computers go on. It is audited as `licence.reset` with the
+`activation`. Answer: the activation. Errors: `not_found`,
 `activation_revoked` (409) when it has already ended.
 
 ## Overview
@@ -527,7 +546,8 @@ same key works on another computer. Answer: the activation. Errors: `not_found`,
 
 `computers_checked_last_24h` counts computers in use that checked in (or activated) in the last 24
 hours; `checks_last_24h` counts successful checks, by the hour (the current hour and the 23 before
-it). `backup_overdue` is `true` when there is no backup or the last one is more than 48 hours old.
+it). Test licences, their computers and their checks are left out of every number.
+`backup_overdue` is `true` when there is no backup or the last one is more than 48 hours old.
 
 ## Updates
 

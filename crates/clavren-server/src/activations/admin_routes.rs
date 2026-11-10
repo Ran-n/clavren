@@ -1,11 +1,12 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.653413
-//+ Revised: 	2026/11/08 14:55:43.857992
+//+ Revised: 	2026/11/10 17:59:19.951500
 // -----------------------------------------------------------------------------
 
-//! `/api/admin/activations`: every computer a licence was used on. Revoking an activation is the
-//! same as resetting its licence: the computer locks at its next check, the key is free again.
+//! `/api/admin/activations`: every computer a licence was used on. Revoking an activation ends that
+//! computer's: it locks at its next check, and the key is free again (a test licence's other
+//! computers go on).
 
 use axum::extract::State;
 use axum::routing::{get, post};
@@ -42,6 +43,8 @@ struct ListParams {
     state: Option<ActivationState>,
     /// Part of the device name, platform or app version.
     q: Option<String>,
+    /// `true`: only computers of test licences; `false`: only the others.
+    test: Option<bool>,
     limit: Option<u32>,
     after: Option<String>,
 }
@@ -66,6 +69,7 @@ async fn list(
            AND ($3::boolean IS NULL OR (a.revoked_at IS NULL) = $3)
            AND ($4::text IS NULL OR a.device_name ILIKE $4 OR a.platform ILIKE $4 OR a.app_version ILIKE $4)
            AND ($5::uuid IS NULL OR a.id < $5)
+           AND ($7::boolean IS NULL OR l.is_test = $7)
          ORDER BY a.id DESC LIMIT $6",
     )
     .bind(params.licence)
@@ -74,6 +78,7 @@ async fn list(
     .bind(pattern)
     .bind(cursor.map(|cursor| cursor.id))
     .bind(fetch_count(limit))
+    .bind(params.test)
     .fetch_all(&state.pool)
     .await?;
     let page = Page::from_rows(rows, limit, |activation| Cursor { key: None, id: activation.id });

@@ -45,7 +45,12 @@ export type Licence = {
   product: Related<Product>;
   customer: Related<Customer> | null;
   state: LicenceState;
+  /** The latest computer it is active on; a test licence can be on several. */
   active_activation: Related<Activation> | null;
+  /** How many computers it is active on. */
+  active_computers: number;
+  /** A test licence: for trying an application, on any number of computers, left out of the Overview. */
+  is_test: boolean;
   created_at: string;
   expires_at: string | null;
   revoked_at: string | null;

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.065377
-//+ Revised: 	2026/11/09 22:30:53.464973
+//+ Revised: 	2026/11/10 17:59:19.401907
 // -----------------------------------------------------------------------------
 
 //! The client against an in-memory server: activation, offline starts, the daily check, clock
@@ -93,7 +93,10 @@ fn an_activated_licence_works_offline_for_thirty_days() {
     let computer = Computer::new();
     let now = computer.clock.now();
     let outcome = computer.activated().status();
-    assert_eq!(outcome, Outcome::Licensed { licence_expires_at: None, offline_until: now + TimeDelta::days(30) });
+    assert_eq!(
+        outcome,
+        Outcome::Licensed { licence_expires_at: None, offline_until: now + TimeDelta::days(30), test: false }
+    );
 
     computer.server.set_mode(Mode::Offline);
     computer.advance(TimeDelta::days(29));
@@ -105,6 +108,20 @@ fn an_activated_licence_works_offline_for_thirty_days() {
 
     computer.advance(TimeDelta::days(1));
     assert_eq!(computer.start().status(), Outcome::NeedsCheck);
+}
+
+#[test]
+fn a_test_licence_is_reported_as_one_online_and_offline() {
+    let computer = Computer::new();
+    *computer.server.test_licence.lock().unwrap() = true;
+    let test = |outcome: Outcome| matches!(outcome, Outcome::Licensed { test: true, .. });
+    assert!(test(computer.activated().status()));
+    computer.server.set_mode(Mode::Offline);
+    assert!(test(computer.start().status()), "the cached token says so too");
+    computer.server.set_mode(Mode::Normal);
+    *computer.server.test_licence.lock().unwrap() = false;
+    computer.advance(TimeDelta::days(1));
+    assert!(matches!(computer.start().check().unwrap(), Outcome::Licensed { test: false, .. }));
 }
 
 #[test]
@@ -121,7 +138,7 @@ fn a_check_is_due_once_a_day_and_renews_the_token() {
     let checked_at = computer.clock.now();
     assert_eq!(
         client.check().unwrap(),
-        Outcome::Licensed { licence_expires_at: None, offline_until: checked_at + TimeDelta::days(30) }
+        Outcome::Licensed { licence_expires_at: None, offline_until: checked_at + TimeDelta::days(30), test: false }
     );
     assert!(!client.needs_check());
 }
@@ -383,7 +400,7 @@ fn an_expired_licence_says_when_and_is_checked_again_later() {
     let ends = computer.clock.now() + TimeDelta::days(2);
     *computer.server.licence_expires_at.lock().unwrap() = Some(ends);
     let client = computer.activated();
-    assert_eq!(client.status(), Outcome::Licensed { licence_expires_at: Some(ends), offline_until: ends });
+    assert_eq!(client.status(), Outcome::Licensed { licence_expires_at: Some(ends), offline_until: ends, test: false });
 
     computer.advance(TimeDelta::days(1));
     computer.server.set_mode(Mode::Refuse("licence_expired", 403));

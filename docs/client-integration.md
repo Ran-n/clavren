@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/03 04:54:17.447469 )
-[//]: # (+ Revised: 	2026/11/09 22:30:57.174700 )
+[//]: # (+ Revised: 	2026/11/10 17:59:23.640062 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Client integration
@@ -124,7 +124,7 @@ it and `activate` fails until the application starts again.
 
 | Outcome | Meaning | The application |
 |---------|---------|-----------------|
-| `Licensed { licence_expires_at, offline_until }` | Valid | Runs. May warn when `offline_until` is under 5 days away ("connect to the internet") or the licence expires soon |
+| `Licensed { licence_expires_at, offline_until, test }` | Valid | Runs. May warn when `offline_until` is under 5 days away ("connect to the internet") or the licence expires soon. `test` is a test licence (any number of computers, for trying the application): the application may say so, or limit what it does |
 | `NeedsActivation` | No licence on this computer | Asks for a key |
 | `InvalidKey` | Malformed, unknown, or another product's key | Asks again |
 | `AlreadyActivatedElsewhere` | The key is in use on another computer | Explains how to ask for a reset |

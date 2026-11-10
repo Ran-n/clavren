@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.076583
-//+ Revised: 	2026/11/03 04:54:15.076583
+//+ Revised: 	2026/11/10 17:59:20.622355
 // -----------------------------------------------------------------------------
 
 //! The three ways a stored key leaves the server: **Reveal**, **Copy message** and CSV export.
@@ -24,7 +24,7 @@ use crate::products::{self, Product};
 
 const ENTITY: &str = "licence";
 pub const CSV_HEADER: &str =
-    "licence_id,product_code,customer_name,customer_email,key,state,issued_at,expires_at,notes";
+    "licence_id,product_code,customer_name,customer_email,key,state,issued_at,expires_at,notes,test";
 
 pub async fn reveal(state: &AppState, actor: &Actor, id: Uuid) -> Result<LicenceKey, ApiError> {
     let key = key_of(state, id).await?;
@@ -80,6 +80,7 @@ pub async fn export(state: &AppState, actor: &Actor, rows: &[LicenceRow]) -> Res
             row.created_at.to_rfc3339(),
             row.expires_at.map(|at| at.to_rfc3339()).unwrap_or_default(),
             row.internal_notes.clone().unwrap_or_default(),
+            row.is_test.to_string(),
         ];
         csv.push_str(&cells.iter().map(|cell| csv_cell(cell)).collect::<Vec<_>>().join(","));
         csv.push_str("\r\n");
@@ -151,6 +152,6 @@ mod tests {
 
     #[test]
     fn the_header_has_the_documented_columns() {
-        assert_eq!(CSV_HEADER.split(',').count(), 9);
+        assert_eq!(CSV_HEADER.split(',').count(), 10);
     }
 }

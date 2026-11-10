@@ -1,11 +1,11 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.770875
-//+ Revised: 	2026/11/03 04:54:12.770875
+//+ Revised: 	2026/11/10 17:59:20.216129
 // -----------------------------------------------------------------------------
 
 //! Activations: the computers (Windows user accounts) a licence was bound to. A licence has at most
-//! one active activation; revoked ones stay as history, with the reason.
+//! one active activation, a test licence any number; revoked ones stay as history, with the reason.
 
 pub mod activate;
 mod admin_routes;

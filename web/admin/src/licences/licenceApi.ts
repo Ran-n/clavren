@@ -13,7 +13,7 @@ export const MAX_BATCH = 1000;
 export const DELETED_NOTICE = "deleted=1";
 export const LICENCE_EXPAND = "product,customer,active_activation";
 
-const FILTER_FIELDS = ["product", "customer", "state", "expiry", "q"] as const;
+const FILTER_FIELDS = ["product", "customer", "state", "expiry", "q", "test"] as const;
 /** Each filter field keeps what it matches; its `not_` twin hides it instead. */
 const FILTER_NAMES = [...FILTER_FIELDS, ...FILTER_FIELDS.map((name) => `not_${name}` as const)];
 

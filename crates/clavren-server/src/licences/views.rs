@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.810047
-//+ Revised: 	2026/11/03 04:54:15.810047
+//+ Revised: 	2026/11/10 17:59:21.593912
 // -----------------------------------------------------------------------------
 
 //! What the admin API shows of a licence. Related records are IDs unless expanded
@@ -29,7 +29,11 @@ pub struct LicenceView {
     pub product: Expandable<Product>,
     pub customer: Option<Expandable<Customer>>,
     pub state: State,
+    /// The latest computer it is active on; a test licence can be on several.
     pub active_activation: Option<Expandable<Activation>>,
+    /// How many computers it is active on.
+    pub active_computers: i64,
+    pub is_test: bool,
     pub created_at: DateTime<Utc>,
     pub expires_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
@@ -63,6 +67,8 @@ pub async fn present(pool: &PgPool, rows: Vec<LicenceRow>, expand: &Expand) -> R
             customer: row.customer_id.map(|id| Expandable::of(id, &customers)),
             state: row.state(),
             active_activation: row.active_activation_id.map(|id| Expandable::of(id, &activations)),
+            active_computers: row.active_computers,
+            is_test: row.is_test,
             created_at: row.created_at,
             expires_at: row.expires_at,
             revoked_at: row.revoked_at,

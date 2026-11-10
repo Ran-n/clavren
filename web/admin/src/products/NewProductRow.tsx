@@ -1,13 +1,17 @@
 // A new product, typed into the first row of the table: its name, and a code unless it should be
 // made from the name (the server makes it, so it knows which codes are taken). The rest is edited
-// in place afterwards. Enter saves, Escape cancels.
+// in place afterwards. Enter saves, Escape cancels. The server issues a test licence with it.
+
+/** A created product, with the test licence issued with it. */
+export type CreatedProduct = Product & { test_licence: { id: string; key: string } | null };
 
 import { useState, type KeyboardEvent } from "react";
 import { api } from "../shared/api";
 import { Button } from "../shared/components/Button";
 import { describe } from "../shared/errors";
+import type { Product } from "../shared/types";
 
-export function NewProductRow({ onCreated, onCancel }: { onCreated: () => void; onCancel: () => void }) {
+export function NewProductRow({ onCreated, onCancel }: { onCreated: (product: CreatedProduct) => void; onCancel: () => void }) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -19,8 +23,7 @@ export function NewProductRow({ onCreated, onCancel }: { onCreated: () => void; 
     setBusy(true);
     setError(null);
     try {
-      await api("POST", "/products", { name, code });
-      onCreated();
+      onCreated(await api<CreatedProduct>("POST", "/products", { name, code }));
     } catch (failure) {
       setError(describe(failure));
       setBusy(false);
@@ -54,7 +57,7 @@ export function NewProductRow({ onCreated, onCancel }: { onCreated: () => void; 
           </Button>
         </span>
         <span className="field__help">
-          Leave the code empty to make it from the name. The code goes into every licence token; it can't change once the product has licences.
+          Leave the code empty to make it from the name. The code goes into every licence token; it can't change once the product has licences. A test licence is issued with the product.
         </span>
         {error && (
           <span className="inline-error" role="alert">

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:10.584826
-//+ Revised: 	2026/11/09 23:01:00.636115
+//+ Revised: 	2026/11/10 17:59:19.005409
 // -----------------------------------------------------------------------------
 
 //! The licence of one application on this computer: its offline status, and when to check online.
@@ -160,6 +160,7 @@ impl Client {
         Outcome::Licensed {
             licence_expires_at: claims.lic_exp.and_then(|at| DateTime::from_timestamp(at, 0)),
             offline_until: DateTime::from_timestamp(claims.exp, 0).unwrap_or(now),
+            test: claims.test,
         }
     }
 
