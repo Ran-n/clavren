@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.213599 )
-[//]: # (+ Revised: 	2026/11/12 23:57:46.582917 )
+[//]: # (+ Revised: 	2026/11/13 19:46:09.133233 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Development
@@ -222,7 +222,8 @@ How it is installed from there is in [deployment.md](deployment.md).
 ## Backlog
 
 Planned work lives in [TODO.md](../TODO.md) at the repository root, one self-contained item per
-change, in priority order.
+change, in priority order. Ideas not planned yet are parked in [BACKLOG.md](../BACKLOG.md) next to
+it, as light items written up in full only when promoted.
 
 ## Conventions
 
