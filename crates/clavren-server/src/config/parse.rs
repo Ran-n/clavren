@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:35.848432
-//+ Revised: 	2026/11/09 11:10:33.337138
+//+ Revised: 	2026/11/12 23:57:44.349409
 // -----------------------------------------------------------------------------
 
 //! Parsing and validating single configuration values. Each error names its variable.
@@ -12,7 +12,9 @@ use std::str::FromStr;
 use axum::http::HeaderName;
 use sqlx::postgres::PgConnectOptions;
 
-use super::ConfigError;
+use crate::money::Currency;
+
+use super::{ConfigError, DEFAULT_TURNSTILE_VERIFY_URL, TurnstileSettings};
 
 fn invalid(name: &'static str, reason: impl Into<String>) -> ConfigError {
     ConfigError::Invalid { name, reason: reason.into() }
@@ -63,6 +65,35 @@ pub(super) fn update_source(name: &'static str, value: Option<&str>) -> Result<b
     }
 }
 
+/// The Turnstile keys, both or neither, and the address that verifies answers (https://, or
+/// plain http:// to this computer, for tests).
+pub(super) fn turnstile(
+    (site_key_name, site_key): (&'static str, Option<String>),
+    (secret_name, secret): (&'static str, Option<String>),
+    (url_name, url): (&'static str, Option<String>),
+) -> Result<Option<TurnstileSettings>, ConfigError> {
+    let verify_url = match url.as_deref().map(str::trim) {
+        None => DEFAULT_TURNSTILE_VERIFY_URL.to_string(),
+        Some(url) => {
+            let host = url.strip_prefix("https://").or_else(|| {
+                url.strip_prefix("http://").filter(|rest| is_local_host(rest.split('/').next().unwrap_or_default()))
+            });
+            match host {
+                Some(rest) if !rest.is_empty() && !rest.contains(char::is_whitespace) => url.to_string(),
+                _ => return Err(invalid(url_name, "expected an https:// address (http:// only for localhost)")),
+            }
+        }
+    };
+    match (site_key, secret) {
+        (Some(site_key), Some(secret)) => {
+            Ok(Some(TurnstileSettings { site_key: site_key.trim().into(), secret: secret.trim().into(), verify_url }))
+        }
+        (None, None) => Ok(None),
+        (Some(_), None) => Err(invalid(secret_name, format!("must be set when {site_key_name} is"))),
+        (None, Some(_)) => Err(invalid(site_key_name, format!("must be set when {secret_name} is"))),
+    }
+}
+
 fn is_local_host(host_and_port: &str) -> bool {
     let host = host_and_port.rsplit_once(':').map_or(host_and_port, |(host, _port)| host);
     matches!(host, "localhost" | "127.0.0.1" | "[::1]")
@@ -92,6 +123,30 @@ pub(super) fn span(name: &'static str, value: Option<String>, default: u64, max:
         return Err(invalid(name, format!("at most {max} (ten years), got {number}")));
     }
     Ok(number)
+}
+
+/// [`span`], at least `min` too.
+pub(super) fn span_from(
+    name: &'static str,
+    value: Option<String>,
+    default: u64,
+    min: u64,
+    max: u64,
+) -> Result<u64, ConfigError> {
+    let number = span(name, value, default, max)?;
+    if number < min {
+        return Err(invalid(name, format!("at least {min}, got {number}")));
+    }
+    Ok(number)
+}
+
+/// A three-letter ISO 4217 code, EUR when unset.
+pub(super) fn currency(name: &'static str, value: Option<String>) -> Result<Currency, ConfigError> {
+    match value {
+        None => Ok(Currency::euro()),
+        Some(code) => Currency::parse(code.trim())
+            .map_err(|_| invalid(name, format!("expected a three-letter ISO 4217 code such as EUR, got {code:?}"))),
+    }
 }
 
 /// A whole number above zero, or `default` when unset.

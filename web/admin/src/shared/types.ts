@@ -6,6 +6,9 @@ export type Related<T> = Id | T;
 
 export type Page<T> = { data: T[]; next_cursor: string | null };
 
+/** An amount in the currency's minor unit (cents for EUR) and its ISO 4217 code. */
+export type Price = { amount: number; currency: string };
+
 export type Product = {
   id: Id;
   code: string;
@@ -13,6 +16,14 @@ export type Product = {
   description: string | null;
   message_template: string;
   is_active: boolean;
+  /** Whether people may apply for a licence of it. */
+  accepts_applications: boolean;
+  /** How to get a key, shown on its key page at `/apply?product=<code>`. */
+  key_instructions: string | null;
+  /** How many days its applications keep working without reaching the server (2 to 3,650). */
+  offline_days: number;
+  /** Its price per key, filled in for each new licence. */
+  price: Price | null;
   created_at: string;
   updated_at: string;
 };
@@ -56,6 +67,8 @@ export type Licence = {
   revoked_at: string | null;
   revocation_reason: string | null;
   internal_notes: string | null;
+  /** What its key was charged; none on a test licence. */
+  price: Price | null;
 };
 
 export type AuditEntry = {
@@ -82,6 +95,14 @@ export type Overview = {
   checks_last_24h: number;
   last_backup: BackupRun | null;
   backup_overdue: boolean;
+  /** Licence applications waiting for a decision. */
+  pending_applications: number;
+  /** What keys were charged, per currency, in minor units. */
+  charged: { currency: string; last_30_days: number; total: number }[];
+  /** Licences (not test ones) with no recorded price. */
+  unpriced: number;
+  /** The currency the dashboard preselects for prices. */
+  default_currency: string;
 };
 
 /** The record when it was expanded, otherwise null. */

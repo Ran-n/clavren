@@ -23,6 +23,7 @@ const MESSAGES: Record<string, string> = {
   licence_not_in_use: "This licence isn't in use on any computer, so there is nothing to reset.",
   licence_not_revoked: "Only a revoked licence has a revocation reason.",
   activation_revoked: "This computer's activation has already ended.",
+  application_decided: "This application has already been approved or rejected. Reload the page to see how.",
   updates_off: "Checking for updates is off on this server (CLAVREN_UPDATE_SOURCE=off).",
   update_file_unreadable:
     "The update check left a file Clavren can't read. On the server, run sudo systemctl start clavren-update-check.",
@@ -36,6 +37,12 @@ export function plural(count: number, word: string): string {
   return `${formatNumber(count)} ${word}${count === 1 ? "" : "s"}`;
 }
 
+/** After "locks at its next check": when an offline computer locks at the latest, from its
+ * product's offline limit (empty when the product isn't known). */
+export function offlineLimit(product: { offline_days: number } | null | undefined): string {
+  return product ? ` If it is offline, at the latest in ${plural(product.offline_days, "day")}.` : "";
+}
+
 /** Before deleting licences: how many computers lock, as a sentence (empty when none). */
 export function inUseWarning(inUse: number): string {
   if (inUse === 0) return "";
@@ -46,7 +53,8 @@ export function inUseWarning(inUse: number): string {
 /** What a form says instead of the usual message for some codes (e.g. which password is wrong). */
 export type Wording = Partial<Record<string, string>>;
 
-export function describe(error: unknown, wording: Wording = {}): string {
+/** `item` names what a bulk error's IDs are, for the count it adds. */
+export function describe(error: unknown, wording: Wording = {}, item = "licence"): string {
   if (!(error instanceof ApiError)) return UNEXPECTED;
   if (error.code === "rate_limited") {
     const minutes = Math.max(1, Math.ceil((error.retryAfterSeconds ?? 60) / 60));
@@ -57,5 +65,5 @@ export function describe(error: unknown, wording: Wording = {}): string {
     return `${error.message.charAt(0).toUpperCase()}${error.message.slice(1)}.`;
   }
   const message = wording[error.code] ?? MESSAGES[error.code] ?? UNEXPECTED;
-  return error.ids.length > 1 ? `${message} (${plural(error.ids.length, "licence")} in the selection.)` : message;
+  return error.ids.length > 1 ? `${message} (${plural(error.ids.length, item)} in the selection.)` : message;
 }

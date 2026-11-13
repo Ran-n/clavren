@@ -17,6 +17,7 @@ const PAGES = [
   { path: "/customers", label: "Customers" },
   { path: "/products", label: "Products" },
   { path: "/activations", label: "Activations" },
+  { path: "/applications", label: "Applications" },
   { path: "/audit", label: "Audit log" },
   { path: "/account", label: "Account" },
 ];

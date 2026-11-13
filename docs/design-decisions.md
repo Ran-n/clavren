@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.155237 )
-[//]: # (+ Revised: 	2026/11/10 17:59:23.782152 )
+[//]: # (+ Revised: 	2026/11/12 23:57:46.511513 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Design decisions
@@ -30,7 +30,7 @@ in separate repositories. Clavren departs from it:
 At a few thousand licences SQLite would also do, but PostgreSQL was chosen and runs on the same
 Pi, installed from the OS packages and listening on localhost only. Backups use `pg_dump`.
 
-## Checking in: once a day, 30 days offline
+## Checking in: once a day, offline limit per product
 
 Applications check with Clavren once a day: when their last successful check is more than 24
 hours old, at start or while running. A revocation or expiry change therefore reaches an online
@@ -41,9 +41,21 @@ A live push connection (Server-Sent Events) was considered so running apps would
 seconds, and set aside in favour of the daily check. No design can reach a computer that is off
 or offline; those find out at their next check.
 
-Tokens last 30 days, so a computer on a blocked school network keeps working that long without a
-check. Requiring internet at every start would lock out teachers whenever the school network or
-the Pi is down.
+Tokens last as many days as their product's offline limit (30 by default), so a computer on a
+blocked school network keeps working that long without a check. Requiring internet at every start
+would lock out teachers whenever the school network or the Pi is down.
+
+- **Per product**, edited on the Products page: a workshop PC or a closed school network needs a
+  long time offline, while another product wants a revoked licence to stop within days on a
+  computer kept offline. `CLAVREN_TOKEN_DAYS` stays, as the limit new products start with.
+- **At least 2 days**: applications check once a day, so 1 would lock a computer after a single
+  missed check (a laptop shut over a weekend); 2 leaves a day's margin.
+- **At most 3,650 days (ten years)**, so the limit is always a real one.
+- **No unlimited option, on purpose.** An application that is offline can't learn its licence was
+  revoked or reset; the limit is the only thing that stops one on a computer that never goes
+  online. Don't add "forever".
+- **A change applies at each computer's next check**: a token already handed out keeps the
+  lifetime it was signed with, so the dashboard asks before lowering a limit and says so.
 
 Checks use a server challenge rather than a device timestamp, because school PCs often have the
 wrong time and a timestamp-based check would fail on them.
@@ -148,6 +160,72 @@ means for them (a banner, fewer features) from the token; Clavren doesn't.
   to reset the whole licence; for a licence with one computer that is the same, and for a test
   licence it leaves the others working. Reset still ends every computer.
 - Undoing the migration keeps test licences as ordinary ones, each on its latest computer only.
+
+## Licence applications
+
+The spec first had keys handed out by hand only, and no page for customers. Applications add a way
+in without accounts:
+
+- **A secret, not an account.** Applying returns a random 256-bit secret; it alone asks how the
+  application went, and an approved one answers with the key. Only its BLAKE3 hash is stored (like
+  session tokens). On the web it sits in the status page's URL fragment (`#…`), which browsers
+  never send, so it stays out of the server's, Cloudflare's and any proxy's logs, and
+  `Referrer-Policy: no-referrer` keeps it on the page. Asking is a `POST` for the same reason.
+- **The key reaches the applicant by itself.** Clavren still sends no email: the application asks
+  every 15 minutes and activates the key (the applicant never types it), and the status page shows
+  it. The key can be collected again for as long as the licence has one, as an emailed key could be
+  read again.
+- **Opt-in per product**, closed by default, so a product never takes applications by accident.
+- **Turnstile only on the web form.** An application's own request can't prove it comes from the
+  real application (anything could send it), so a human check there would only be decoration. Both
+  paths are held by a rate limit (five an hour per address, refused attempts included) and one
+  waiting application per address and product (a partial unique index). The web form's check is
+  Cloudflare Turnstile, verified by the server; it stops bots that drive the page, not a script
+  that posts to the API as an application would, which meets the same two limits.
+- **Approving issues the licence in the same transaction**, through the issuing code the Issue
+  panel uses (same checks, same audit entries), so an approval never exists without its licence.
+  The product is locked before the application, the order deleting a product takes, so the two
+  never deadlock.
+- **History stays, until you delete it.** Decided applications are kept, so every approval and
+  rejection can be looked back on; nothing deletes them by itself. Deleting a customer also
+  deletes the applications whose licence is theirs. The audit log refers to applications by ID
+  only.
+- **Withdrawn** is what the applicant sees when the approved licence was revoked or deleted since:
+  there is no key to give, and "approved" would be misleading. The dashboard keeps the decision as
+  it was (approved), with the licence gone.
+
+## One "how to get a key" page per product, on the server
+
+Each application used to write its own "how do I get a key?" text into its key prompt, baked into
+every build: opening or closing applications, a new contact address or a shop link meant a new
+release of every application. Instead each product has one page on Clavren,
+`/apply?product=<code>`, with the administrator's text (edited on the Products page) and the form
+when applications are open; applications only link to it (`Client::get_key_url()`). The text then
+changes for every installed copy at once.
+
+- **`/apply?product=<code>`, not a new address.** It is already the link the Products page copied
+  and the docs gave, and an installed application may carry it; one page avoids two to keep in
+  sync.
+- **Plain text, not Markdown.** Line breaks are kept and `https://` addresses become links, built
+  as React elements (never `innerHTML`), so the text can't add markup to a public page.
+- **Unknown and inactive read the same** (`product_unavailable`, 404), as `invalid_key` never tells
+  products apart.
+
+## Prices are recorded per key
+
+Selling stays outside Clavren for now, but what keys cost is recorded so the dashboard shows which
+were sold, given away or tested, and the later payment work builds on it.
+
+- **Minor units and a code, never floats.** `1999` + `EUR` is €19.99; cents never drift, and every
+  currency's digits (0 for JPY, 3 for KWD) fit the same integer.
+- **A licence keeps its own price.** It is what that key was charged, a fact of the sale, not a
+  copy of the product's price, which may change later; so it is not a dependency on the product
+  and the tables stay BCNF.
+- **Free is not unrecorded.** `0` is a key given for free and counts as a sale for 0; `null` means
+  nobody wrote a price down, and the Overview counts those separately.
+- **No currency conversion.** Sums are per currency; `CLAVREN_CURRENCY` only preselects the
+  dashboard's currency, so changing it never relabels stored amounts.
+- **Test licences have no price**, held by a check constraint: they are never a sale.
 
 ## Revoking a device is a reset
 
@@ -288,7 +366,7 @@ risk at that size. Revisit them if that changes.
   once a challenge made for that activation is used, before the device's signature is checked
   (`crates/clavren-server/src/activations/checks.rs`; made-up activation IDs never get that far,
   so they cost no memory), so anyone who knows an activation's ID can spend them and keep that computer from checking for
-  an hour. The computer keeps working on its cached token (30 days), and the ID only exists on the
+  an hour. The computer keeps working on its cached token (its product's offline days), and the ID only exists on the
   computer itself and in the dashboard, so it can't be guessed. The fix, if ever needed: count only
   failed checks (wrong challenge or signature) against the activation.
 
@@ -298,10 +376,11 @@ Each table's non-trivial functional dependencies have its key as the determinant
 
 | Table | Key | Notes |
 |-------|-----|-------|
-| `products` | `id`; `code` | Both candidate keys; the rest depends on either |
+| `products` | `id`; `code` | Both candidate keys; the rest (`key_instructions`, `offline_days` and the price included) depends on either |
 | `customers` | `id`; `email` when present | Name and email live here, not on each licence |
-| `licenses` | `id`; `key_lookup` | No stored state or redemption time (derived, see above); `is_test` depends on the licence alone |
+| `licenses` | `id`; `key_lookup` | No stored state or redemption time (derived, see above); `is_test` depends on the licence alone; the price is what this key was charged, not a copy of the product's |
 | `license_key_secrets` | `license_id` | |
+| `license_applications` | `id`; `secret_hash`; `license_id` when present | The name and email are what the applicant typed, a fact of the application, not a copy of a customer (who may not exist, or may have another name); the decision's details (`license_id`, `rejection_reason`, `key_collected_at`) depend on the application and are checked against `decision` |
 | `activations` | `id` | At most one row per licence with `revoked_at IS NULL`, unless it is a test licence (trigger) |
 | `admin_users` | `id`; `username` | |
 | `admin_recovery_codes` | `id` | |

@@ -1,14 +1,14 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.973586
-//+ Revised: 	2026/11/10 17:59:20.495223
+//+ Revised: 	2026/11/12 23:57:44.031365
 // -----------------------------------------------------------------------------
 
 //! Signing activation tokens. Signing key `v<N>` is derived from the master key with a versioned
 //! context, so rotating means shipping applications that trust the next key, then raising
 //! `CLAVREN_SIGNING_KEY_VERSION`; nothing is stored.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use clavren_protocol::check::device_hash;
 use clavren_protocol::token::{self, Claims};
 use ed25519_dalek::{SigningKey, VerifyingKey};
@@ -37,6 +37,8 @@ pub struct Subject<'a> {
     pub product_code: &'a str,
     pub device_public_key: &'a [u8; 32],
     pub licence_expires_at: Option<DateTime<Utc>>,
+    /// The product's offline limit: how long the token works without a check.
+    pub offline_days: i32,
     /// A test licence: the token says so, for the application to show.
     pub test: bool,
 }
@@ -46,10 +48,16 @@ pub struct Issued {
     pub expires_at: DateTime<Utc>,
 }
 
-/// A fresh token: valid for the configured lifetime, or until the licence expires if sooner.
+/// A fresh token: valid for the product's offline days, or until the licence expires if sooner.
 pub fn issue(state: &AppState, subject: &Subject<'_>, now: DateTime<Utc>) -> Issued {
-    let lifetime_end = now + state.settings.licensing.token_lifetime;
+    let lifetime_end = now + TimeDelta::days(subject.offline_days.into());
     let expires_at = subject.licence_expires_at.map_or(lifetime_end, |licence_end| licence_end.min(lifetime_end));
+    tracing::debug!(
+        product = subject.product_code,
+        offline_days = subject.offline_days,
+        capped_by_licence = expires_at < lifetime_end,
+        "token lifetime chosen"
+    );
     let claims = Claims {
         iss: state.settings.public_url.clone(),
         aud: subject.product_code.to_string(),

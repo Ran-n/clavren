@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:36.097530
-//+ Revised: 	2026/11/09 10:00:41.925039
+//+ Revised: 	2026/11/12 23:57:44.503049
 // -----------------------------------------------------------------------------
 
 //! Every error the API returns: `{ "error": "<code>", "message": "<English, for logs>" }` with the
@@ -40,6 +40,11 @@ impl ApiError {
         self.code
     }
 
+    /// The English message, for logs and for errors folded into others (a field's check).
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
     pub fn invalid_request(message: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "invalid_request", message)
     }
@@ -62,7 +67,9 @@ impl ApiError {
     pub fn refused(code: ErrorCode, message: impl Into<String>) -> Self {
         let status = match code {
             ErrorCode::InvalidKey => StatusCode::NOT_FOUND,
-            ErrorCode::AlreadyActivated => StatusCode::CONFLICT,
+            ErrorCode::AlreadyActivated | ErrorCode::ApplicationPending => StatusCode::CONFLICT,
+            ErrorCode::ApplicationUnknown => StatusCode::NOT_FOUND,
+            ErrorCode::HumanCheckFailed => StatusCode::FORBIDDEN,
             ErrorCode::ChallengeInvalid => StatusCode::UNAUTHORIZED,
             ErrorCode::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             ErrorCode::InvalidRequest => StatusCode::BAD_REQUEST,
@@ -73,6 +80,12 @@ impl ApiError {
             | ErrorCode::ActivationRevoked => StatusCode::FORBIDDEN,
         };
         Self::new(status, code.as_str(), message)
+    }
+
+    /// No active product has this code, on the public key page: 404 with `product_unavailable`,
+    /// the same for an unknown code as for an inactive product.
+    pub fn product_not_found() -> Self {
+        Self::new(StatusCode::NOT_FOUND, ErrorCode::ProductUnavailable.as_str(), "this product isn't available")
     }
 
     /// Adds the server's time, as every public API answer has.
@@ -182,6 +195,9 @@ mod tests {
         for (code, status) in [
             (ErrorCode::InvalidKey, StatusCode::NOT_FOUND),
             (ErrorCode::AlreadyActivated, StatusCode::CONFLICT),
+            (ErrorCode::ApplicationPending, StatusCode::CONFLICT),
+            (ErrorCode::ApplicationUnknown, StatusCode::NOT_FOUND),
+            (ErrorCode::HumanCheckFailed, StatusCode::FORBIDDEN),
             (ErrorCode::ChallengeInvalid, StatusCode::UNAUTHORIZED),
             (ErrorCode::LicenceExpired, StatusCode::FORBIDDEN),
             (ErrorCode::RateLimited, StatusCode::TOO_MANY_REQUESTS),

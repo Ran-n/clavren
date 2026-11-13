@@ -1,14 +1,14 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.161065
-//+ Revised: 	2026/11/09 22:30:52.982785
+//+ Revised: 	2026/11/11 16:32:49.686509
 // -----------------------------------------------------------------------------
 
 //! Client library for Breren applications: activates a licence key, keeps the device key in a file
 //! only this Windows account can read (DPAPI; other systems plug in their own
 //! [`store::Protector`]), validates the cached activation token offline and renews
-//! it in the background, and reports a typed outcome the application turns into its own
-//! messages. See `docs/spec.md`, section 5, and `docs/client-integration.md`.
+//! it in the background, sends licence applications and activates their key once approved, and
+//! reports a typed outcome the application turns into its own messages. See `docs/spec.md`, section 5, and `docs/client-integration.md`.
 //!
 //! ```no_run
 //! # #[cfg(windows)] {
@@ -20,13 +20,15 @@
 //! let client = Arc::new(Client::for_windows(config, "https://licences.example.com", "Breren"));
 //! match client.status() {
 //!     Outcome::Licensed { .. } => { /* run */ }
-//!     Outcome::NeedsActivation => { /* ask for a key, then client.activate(&key) */ }
+//!     Outcome::NeedsActivation => { /* ask for a key (client.activate), or client.apply(&applicant) */ }
+//!     Outcome::ApplicationPending => { /* say it waits; the checker activates it once approved */ }
 //!     _ => { /* show the matching message */ }
 //! }
 //! let checks = Background::spawn(client.clone(), |outcome| { /* tell the UI thread */ }).unwrap();
 //! # }
 //! ```
 
+mod applying;
 mod background;
 mod client;
 pub mod clock;
@@ -42,11 +44,12 @@ use clavren_protocol::encoding;
 use clavren_protocol::token::TrustedKeys;
 use ed25519_dalek::VerifyingKey;
 
+pub use applying::Applicant;
 pub use background::{BACKOFF, Background};
 pub use client::{Client, Config, ROLLBACK_TOLERANCE};
 #[cfg(windows)]
 pub use dpapi::Dpapi;
-pub use outcome::{Outcome, Temporary};
+pub use outcome::{Applied, Outcome, Temporary};
 
 /// The trusted token keys from `(kid, base64url public key)` pairs, as `clavren-admin
 /// show-public-key` prints them. `None` if a key is malformed.

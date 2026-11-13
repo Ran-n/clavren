@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:54.981076 )
-[//]: # (+ Revised: 	2026/11/10 18:26:26.673217 )
+[//]: # (+ Revised: 	2026/11/12 23:57:42.999726 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Changelog
@@ -11,6 +11,28 @@ All notable changes to this project will be documented in this file.
 This project adheres to [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Added
+
+- Licence applications: people apply for a licence with their name, email and a message, from inside the application (`Client::apply` in `clavren-client`) or on the public web form at `/apply`, for the products whose applications are opened on the Products page.
+- An Applications page in the dashboard: approve an application inline (issuing its licence, with the customer filled in from it), reject it with a reason the applicant is shown, delete it, or reject and delete in bulk. The Overview says when applications are waiting.
+- An approved application's key reaches the applicant by itself: the client asks every 15 minutes and activates it, and the web form's private status page (`/apply/status#<secret>`) shows it with Copy.
+- `clavren-client`: `Applicant`, `Applied`, `Client::check_application`, `Client::dismiss_application`, `Config::application_check_interval`, and the outcomes `ApplicationPending` and `ApplicationRejected { reason }`.
+- Public API: `GET /api/v1/applications/form`, `POST /api/v1/applications` and `POST /api/v1/applications/status`, with the error codes `application_pending`, `application_unknown` and `human_check_failed`. Admin API: `/api/admin/applications` (list, read, approve, reject, delete, bulk reject and delete), the products' `accepts_applications`, and the Overview's `pending_applications`.
+- Cloudflare Turnstile on the web form, with `CLAVREN_TURNSTILE_SITE_KEY` and `CLAVREN_TURNSTILE_SECRET` (without them, the form has no human check).
+- Rate limits: five applications an hour per client address, and one waiting application per address and product. Decided applications are kept as history; deleting a customer deletes the applications their licence came from.
+
+- `client-integration.md` explains how an application in another language uses Clavren without the crate: encoding rules, what to keep and how to load it, activating, checking in, taking a token, verifying it offline, and testing the port. Bounty Board's Python port is the worked example.
+- Write how to get a key per product (the Products page's **How to get a key** column), shown on its page at `/apply?product=<code>` with the form when it takes applications; **Copy key page link** copies that page's address whether applications are open or closed. Public API: `GET /api/v1/applications/products/{code}`; admin API: the products' `key_instructions`.
+- Set how many days each product's licences work offline, from 2 to 3,650, in the Products page's Offline column (fewer days asks first); the revoke, reset, delete and deactivate confirmations say when an offline computer locks at the latest. Admin API: the products' `offline_days`.
+- Prices: give each product a price per key, record what each issued key was charged (filled in from the product, editable), see it in the Licences table and CSV, and the amounts charged on the Overview. `CLAVREN_CURRENCY` sets the currency the dashboard preselects. Admin API: `price` on products and licences (issue, change, bulk, approve), the Overview's `charged`, `unpriced` and `default_currency`, and the bulk edit's `kept_test`; the CSV gains `price` and `currency` at the end.
+- Copy new licence keys to the clipboard as soon as they're issued, with Copy key(s) and per-key Copy buttons in the issue panel.
+- `clavren-client`: `Client::get_key_url()`, the product's key page for the key prompt's **How to get a key** link. `Transport` gains `page_url`, so a `Transport` written outside the crate must add it.
+- `client-integration.md` covers testing against the real server with a test licence, and what the application does around the licence: locking background work too, showing the licence in its settings, stopping the checker at shutdown, and telling users what is sent.
+
+### Changed
+
+- `CLAVREN_TOKEN_DAYS` is now the offline limit new products start with, from 2 to 3,650 (1 is refused at startup); products made before this release get 30.
 
 ## [0.5.0] - 2026-11-10
 

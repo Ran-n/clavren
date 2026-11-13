@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/10 17:59:23.290454
-//+ Revised: 	2026/11/10 17:59:23.368727
+//+ Revised: 	2026/11/13 08:53:10.713204
 // -----------------------------------------------------------------------------
 
 //! Test licences: one comes with every new product, more are issued like any licence; they work on
@@ -102,7 +102,7 @@ async fn test_licences_are_issued_listed_and_exported_as_such(pool: PgPool) {
     let csv = licensing.admin_post("/api/admin/licences/export", json!({ "filter": { "test": true } })).await;
     let lines: Vec<&str> = csv.text.split("\r\n").filter(|line| !line.is_empty()).collect();
     assert_eq!(lines.len(), 2, "{}", csv.text);
-    assert!(lines[1].starts_with(&test) && lines[1].ends_with(",true"), "{}", lines[1]);
+    assert!(lines[1].starts_with(&test) && lines[1].ends_with(",true,,"), "{}", lines[1]);
 }
 
 #[sqlx::test(migrator = "clavren::database::MIGRATOR")]

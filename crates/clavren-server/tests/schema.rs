@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 14:53:30.139830
-//+ Revised: 	2026/11/10 17:59:23.151735
+//+ Revised: 	2026/11/12 23:57:46.215208
 // -----------------------------------------------------------------------------
 
 //! The database enforces the rules of docs/spec.md section 7 by itself: derived licence state, one
@@ -218,6 +218,58 @@ async fn invalid_product_codes_are_rejected(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn key_instructions_are_optional_and_at_most_2000_characters(pool: PgPool) {
+    let insert = "INSERT INTO products (code, name, key_instructions) VALUES ($1, 'x', $2)";
+    for (code, text) in [("none", None), ("full", Some("é".repeat(2000)))] {
+        sqlx::query(insert).bind(code).bind(text).execute(&pool).await.unwrap();
+    }
+    let result = sqlx::query(insert).bind("long").bind("x".repeat(2001)).execute(&pool).await;
+    assert!(is_check_or_unique_violation(&result.unwrap_err()));
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn offline_days_default_to_30_and_stay_within_2_to_3650(pool: PgPool) {
+    let id = product(&pool, "avalio-lite").await;
+    let read = "SELECT offline_days FROM products WHERE id = $1";
+    let days: i32 = sqlx::query_scalar(read).bind(id).fetch_one(&pool).await.unwrap();
+    assert_eq!(days, 30);
+    let set = "UPDATE products SET offline_days = $2 WHERE id = $1";
+    for bad in [Some(1), Some(3651), None] {
+        let error = sqlx::query(set).bind(id).bind(bad).execute(&pool).await.unwrap_err();
+        let code = error.as_database_error().and_then(|error| error.code()).map(|code| code.to_string());
+        assert!(matches!(code.as_deref(), Some("23514" | "23502")), "{bad:?}: {code:?}");
+    }
+    for good in [2, 3650] {
+        sqlx::query(set).bind(id).bind(good).execute(&pool).await.unwrap();
+    }
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn prices_are_whole_minor_units_with_a_currency_and_never_on_a_test_licence(pool: PgPool) {
+    let id = product(&pool, "avalio-lite").await;
+    let set = "UPDATE products SET price_amount = $2, price_currency = $3 WHERE id = $1";
+    for (amount, currency) in [
+        (Some(1999_i64), None),
+        (None, Some("EUR")),
+        (Some(-1), Some("EUR")),
+        (Some(100_000_000), Some("EUR")),
+        (Some(1), Some("eur")),
+    ] {
+        let error = sqlx::query(set).bind(id).bind(amount).bind(currency).execute(&pool).await.unwrap_err();
+        assert!(is_check_or_unique_violation(&error), "{amount:?} {currency:?}");
+    }
+    sqlx::query(set).bind(id).bind(1999_i64).bind("EUR").execute(&pool).await.unwrap();
+    let test = test_licence(&pool, id).await;
+    let priced = "UPDATE licenses SET price_amount = 1999, price_currency = 'EUR' WHERE id = $1";
+    let error = sqlx::query(priced).bind(test).execute(&pool).await.unwrap_err();
+    assert!(is_check_or_unique_violation(&error), "a priced test licence");
+    let sold = licence(&pool, id, None).await;
+    sqlx::query(priced).bind(sold).execute(&pool).await.unwrap();
+    let half = "UPDATE licenses SET price_currency = NULL WHERE id = $1";
+    assert!(is_check_or_unique_violation(&sqlx::query(half).bind(sold).execute(&pool).await.unwrap_err()));
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
 async fn customer_emails_are_unique_ignoring_case_but_optional(pool: PgPool) {
     let insert = "INSERT INTO customers (name, email) VALUES ('Ana', $1)";
     sqlx::query(insert).bind("ana@example.com").execute(&pool).await.unwrap();
@@ -336,6 +388,24 @@ async fn table_columns_match_the_documented_schema(pool: PgPool) {
         ("backup_runs", &["id", "finished_at", "archive_name", "size_bytes"]),
         ("check_counts", &["hour", "checks"]),
         ("customers", &["id", "name", "email", "notes", "created_at", "updated_at"]),
+        (
+            "license_applications",
+            &[
+                "id",
+                "product_id",
+                "name",
+                "email",
+                "message",
+                "source",
+                "secret_hash",
+                "created_at",
+                "decided_at",
+                "decision",
+                "license_id",
+                "rejection_reason",
+                "key_collected_at",
+            ],
+        ),
         ("license_key_secrets", &["license_id", "ciphertext", "nonce", "encryption_version"]),
         (
             "licenses",
@@ -350,11 +420,27 @@ async fn table_columns_match_the_documented_schema(pool: PgPool) {
                 "revocation_reason",
                 "internal_notes",
                 "is_test",
+                "price_amount",
+                "price_currency",
             ],
         ),
         (
             "products",
-            &["id", "code", "name", "description", "message_template", "is_active", "created_at", "updated_at"],
+            &[
+                "id",
+                "code",
+                "name",
+                "description",
+                "message_template",
+                "is_active",
+                "created_at",
+                "updated_at",
+                "accepts_applications",
+                "key_instructions",
+                "offline_days",
+                "price_amount",
+                "price_currency",
+            ],
         ),
         ("verification_challenges", &["id", "activation_id", "nonce_hash", "created_at", "expires_at", "consumed_at"]),
     ];
@@ -369,4 +455,92 @@ async fn table_columns_match_the_documented_schema(pool: PgPool) {
         .unwrap();
         assert_eq!(actual, *columns, "columns of {table}");
     }
+}
+
+/// An application for `product_id` from `email`, decided as `decision` says (`None`: waiting).
+async fn application(
+    pool: &PgPool,
+    product_id: Uuid,
+    email: &str,
+    decision: Option<&str>,
+) -> Result<Uuid, sqlx::Error> {
+    sqlx::query_scalar(
+        "INSERT INTO license_applications (product_id, name, email, source, secret_hash, decided_at, decision)
+         VALUES ($1, 'Ana', $2, 'app', $3, CASE WHEN $4::text IS NULL THEN NULL ELSE now() END, $4)
+         RETURNING id",
+    )
+    .bind(product_id)
+    .bind(email)
+    .bind(Uuid::now_v7().as_bytes().repeat(2))
+    .bind(decision)
+    .fetch_one(pool)
+    .await
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn one_application_waits_per_product_and_address(pool: PgPool) {
+    let (avalio, other) = (product(&pool, "avalio-lite").await, product(&pool, "other").await);
+    application(&pool, avalio, "ana@example.com", None).await.unwrap();
+    let again = application(&pool, avalio, "ANA@example.com", None).await.unwrap_err();
+    assert!(is_check_or_unique_violation(&again));
+    application(&pool, other, "ana@example.com", None).await.unwrap();
+    application(&pool, avalio, "ana@example.com", Some("rejected")).await.unwrap();
+    application(&pool, avalio, "ana@example.com", Some("approved")).await.unwrap();
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn an_applications_decision_and_its_details_go_together(pool: PgPool) {
+    let product_id = product(&pool, "avalio-lite").await;
+    let waiting = application(&pool, product_id, "ana@example.com", None).await.unwrap();
+    let rejected = application(&pool, product_id, "bo@example.com", Some("rejected")).await.unwrap();
+    let licence_id = licence(&pool, product_id, None).await;
+    for (id, change) in [
+        (waiting, "decision = 'approved'"),
+        (waiting, "decided_at = now()"),
+        (waiting, "rejection_reason = 'no'"),
+        (waiting, "key_collected_at = now()"),
+        (rejected, "license_id = $2"),
+        (rejected, "key_collected_at = now()"),
+        (rejected, "decision = 'maybe'"),
+        (waiting, "source = 'fax'"),
+    ] {
+        let error = sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE license_applications SET {change} WHERE id = $1")))
+            .bind(id)
+            .bind(licence_id)
+            .execute(&pool)
+            .await
+            .unwrap_err();
+        assert!(is_check_or_unique_violation(&error), "{change}");
+    }
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn an_approval_outlives_its_licence_and_goes_with_its_product(pool: PgPool) {
+    let product_id = product(&pool, "avalio-lite").await;
+    let licence_id = licence(&pool, product_id, None).await;
+    let approved = application(&pool, product_id, "ana@example.com", Some("approved")).await.unwrap();
+    sqlx::query("UPDATE license_applications SET license_id = $2 WHERE id = $1")
+        .bind(approved)
+        .bind(licence_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let second = application(&pool, product_id, "bo@example.com", Some("approved")).await.unwrap();
+    let taken = sqlx::query("UPDATE license_applications SET license_id = $2 WHERE id = $1")
+        .bind(second)
+        .bind(licence_id)
+        .execute(&pool)
+        .await
+        .unwrap_err();
+    assert!(is_check_or_unique_violation(&taken), "one application per licence");
+    sqlx::query("DELETE FROM licenses WHERE id = $1").bind(licence_id).execute(&pool).await.unwrap();
+    let licence: Option<Uuid> = sqlx::query_scalar("SELECT license_id FROM license_applications WHERE id = $1")
+        .bind(approved)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(licence, None, "the approval stays without its licence");
+    sqlx::query("DELETE FROM products WHERE id = $1").bind(product_id).execute(&pool).await.unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM license_applications").fetch_one(&pool).await.unwrap();
+    assert_eq!(left, 0);
 }

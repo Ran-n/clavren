@@ -12,6 +12,8 @@ export type Column<T> = {
   render: (row: T) => ReactNode;
   /** Can be hidden from the column picker. */
   optional?: boolean;
+  /** Optional, and hidden until the column picker shows it. */
+  hiddenByDefault?: boolean;
   className?: string;
 };
 
@@ -33,7 +35,7 @@ type Props<T> = {
 };
 
 export function shownColumns<T>(columns: Column<T>[], visible?: string[]): Column<T>[] {
-  return columns.filter((column) => !column.optional || !visible || visible.includes(column.key));
+  return columns.filter((column) => !column.optional || (visible ? visible.includes(column.key) : !column.hiddenByDefault));
 }
 
 export function DataTable<T>({ rows, columns, visible, rowKey, label, selection, hasMore, firstRow, below, empty, loading, error }: Props<T>) {

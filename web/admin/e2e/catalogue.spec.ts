@@ -63,7 +63,7 @@ test("products are created, their message edited, and deactivated after a warnin
   await expect(row.getByRole("button", { name: "Edit message template" })).toContainText("your key: {key}");
 
   await row.getByRole("button", { name: "Deactivate" }).click();
-  await expect(admin.getByRole("group", { name: "Deactivate" })).toContainText("locks at its next check");
+  await expect(admin.getByRole("group", { name: "Deactivate" })).toContainText("locks at its next check. If it is offline, at the latest in 30 days.");
   await admin.getByRole("group", { name: "Deactivate" }).getByRole("button", { name: "Deactivate" }).click();
   await expect(row.getByText("Inactive")).toBeVisible();
 
@@ -117,4 +117,78 @@ test("a product with licences is deleted with them once its code is typed", asyn
   await admin.goto(`/licences?product=${product.id}`);
   await expect(admin.getByText("No licence matches.")).toHaveCount(0); // the filter for a product that is gone is dropped
   await expect(admin.getByRole("row").filter({ hasText: product.name })).toHaveCount(0);
+});
+
+test("a product's offline days are edited in place, asking first only for fewer days", async ({ admin, api }) => {
+  const product = await createProduct(api);
+  const saved = async () => (await api.get<{ offline_days: number }>(`/products/${product.id}`)).offline_days;
+  await admin.goto("/products");
+  const row = admin.getByRole("row").filter({ hasText: product.name });
+  const badge = row.getByRole("button", { name: "Edit days offline" });
+  await expect(badge).toHaveText("30 days");
+
+  // fewer days: the strip first; cancelling it changes nothing
+  await badge.click();
+  await row.getByLabel("days offline").fill("7");
+  await row.getByLabel("days offline").press("Enter");
+  const strip = admin.getByRole("group", { name: "Limit" });
+  await expect(strip).toContainText(`Limit ${product.name} to 7 days offline? Each computer gets the new limit at its next check online; until then it keeps the one it has.`);
+  await strip.getByRole("button", { name: "Cancel" }).click();
+  await expect(badge).toHaveText("30 days");
+  expect(await saved()).toBe(30);
+
+  await badge.click();
+  await row.getByLabel("days offline").fill("7");
+  await row.getByLabel("days offline").press("Enter");
+  await admin.getByRole("group", { name: "Limit" }).getByRole("button", { name: "Limit" }).click();
+  await expect(badge).toHaveText("7 days");
+  expect(await saved()).toBe(7);
+
+  // more days: saved at once, on leaving the field
+  await badge.click();
+  await row.getByLabel("days offline").fill("10");
+  await row.getByLabel("days offline").blur();
+  await expect(badge).toHaveText("10 days");
+  await expect(admin.getByRole("group", { name: "Limit" })).toHaveCount(0);
+  expect(await saved()).toBe(10);
+
+  // Escape, and a number out of range, save nothing
+  await badge.click();
+  await row.getByLabel("days offline").fill("100");
+  await row.getByLabel("days offline").press("Escape");
+  await expect(badge).toHaveText("10 days");
+  await badge.click();
+  for (const bad of ["1", "3651", "2.5", "x"]) {
+    await row.getByLabel("days offline").fill(bad);
+    await row.getByLabel("days offline").press("Enter");
+    await expect(row.getByRole("alert")).toHaveText("Enter 2 to 3,650 days.");
+  }
+  await row.getByLabel("days offline").press("Escape");
+  expect(await saved()).toBe(10);
+});
+
+test("a product's price is set in place, shown in the currency, and cleared", async ({ admin, api }) => {
+  const product = await createProduct(api);
+  await admin.goto("/products");
+  const row = admin.getByRole("row").filter({ hasText: product.name });
+  const price = row.getByRole("button", { name: "Edit price per key" });
+  await expect(price).toHaveText("No price");
+  await price.click();
+  await row.getByLabel("price per key", { exact: true }).fill("19,99");
+  await row.getByLabel("price per key currency").selectOption("EUR");
+  await row.getByLabel("price per key", { exact: true }).press("Enter");
+  await expect(price).toHaveText("€19.99");
+  expect((await api.get<{ price: unknown }>(`/products/${product.id}`)).price).toEqual({ amount: 1999, currency: "EUR" });
+  await admin.reload();
+  await expect(price).toHaveText("€19.99");
+
+  // too many decimals is refused in place
+  await price.click();
+  await row.getByLabel("price per key", { exact: true }).fill("1.999");
+  await row.getByLabel("price per key", { exact: true }).press("Enter");
+  await expect(row.getByRole("alert")).toHaveText("Use at most 2 decimals.");
+  await row.getByLabel("price per key", { exact: true }).fill("");
+  await row.getByLabel("price per key", { exact: true }).press("Enter");
+  await expect(price).toHaveText("No price");
+  expect((await api.get<{ price: unknown }>(`/products/${product.id}`)).price).toBeNull();
 });

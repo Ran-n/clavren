@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.593310
-//+ Revised: 	2026/11/10 17:59:19.815126
+//+ Revised: 	2026/11/12 23:57:43.796432
 // -----------------------------------------------------------------------------
 
 //! Activating a key on a computer: in one transaction, with the licence row locked, so two
@@ -65,6 +65,7 @@ pub async fn activate(
         product_code: &licence.product_code,
         device_public_key: &valid.device_public_key,
         licence_expires_at: licence.expires_at,
+        offline_days: licence.product_offline_days,
         test: licence.is_test,
     };
     let active = repository::active_for_licence(&mut *transaction, licence.id).await?;

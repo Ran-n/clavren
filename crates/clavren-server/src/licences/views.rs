@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.810047
-//+ Revised: 	2026/11/10 17:59:21.593912
+//+ Revised: 	2026/11/12 23:57:45.120859
 // -----------------------------------------------------------------------------
 
 //! What the admin API shows of a licence. Related records are IDs unless expanded
@@ -19,6 +19,7 @@ use super::{LicenceRow, State};
 use crate::activations::{self, Activation};
 use crate::customers::{self, Customer};
 use crate::http::expand::{Expand, Expandable, by_id, distinct};
+use crate::money::Price;
 use crate::products::{self, Product};
 
 pub const EXPANDABLE: [&str; 3] = ["product", "customer", "active_activation"];
@@ -39,6 +40,8 @@ pub struct LicenceView {
     pub revoked_at: Option<DateTime<Utc>>,
     pub revocation_reason: Option<String>,
     pub internal_notes: Option<String>,
+    /// What its key was charged; `null`: not recorded (always on a test licence).
+    pub price: Option<Price>,
 }
 
 /// The views of `rows`, with the fields `expand` asks for loaded.
@@ -73,6 +76,7 @@ pub async fn present(pool: &PgPool, rows: Vec<LicenceRow>, expand: &Expand) -> R
             expires_at: row.expires_at,
             revoked_at: row.revoked_at,
             revocation_reason: row.revocation_reason,
+            price: row.price.price(),
             internal_notes: row.internal_notes,
         })
         .collect())

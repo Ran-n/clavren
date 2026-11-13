@@ -103,11 +103,11 @@ export function Pager<T>({ list, pageSize, onPageSize }: { list: PagedList<T>; p
   );
 }
 
-type PickerColumn = { key: string; label: string; optional?: boolean };
+type PickerColumn = { key: string; label: string; optional?: boolean; hiddenByDefault?: boolean };
 
 export function ColumnPicker({ columns, visible, onChange }: { columns: PickerColumn[]; visible?: string[]; onChange: (visible: string[]) => void }) {
   const optional = columns.filter((column) => column.optional);
-  const shown = visible ?? optional.map((column) => column.key);
+  const shown = visible ?? optional.filter((column) => !column.hiddenByDefault).map((column) => column.key);
   function toggle(key: string, on: boolean) {
     onChange(on ? [...shown, key] : shown.filter((existing) => existing !== key));
   }

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:10.584826
-//+ Revised: 	2026/11/10 17:59:19.005409
+//+ Revised: 	2026/11/12 23:57:43.253979
 // -----------------------------------------------------------------------------
 
 //! The licence of one application on this computer: its offline status, and when to check online.
@@ -18,7 +18,7 @@ use zeroize::Zeroize;
 
 use crate::clock::Clock;
 use crate::outcome::Outcome;
-use crate::state::{Refusal, State};
+use crate::state::{Application, Refusal, State};
 use crate::store::{SecretStore, StoreError};
 use crate::transport::Transport;
 
@@ -41,10 +41,13 @@ pub struct Config {
     pub platform: String,
     /// Check online once this long has passed since the last successful check.
     pub check_interval: Duration,
+    /// While a licence application waits, ask how it went this often.
+    pub application_check_interval: Duration,
 }
 
 impl Config {
-    /// Checks daily; names the device after the computer.
+    /// Checks daily (every 15 minutes while an application waits); names the device after the
+    /// computer.
     pub fn new(product: &str, trusted_keys: TrustedKeys, app_version: &str) -> Self {
         Self {
             product: product.to_string(),
@@ -55,6 +58,7 @@ impl Config {
                 .unwrap_or_else(|_| "computer".into()),
             platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
             check_interval: Duration::from_secs(24 * 3600),
+            application_check_interval: Duration::from_secs(15 * 60),
         }
     }
 }
@@ -70,6 +74,17 @@ pub struct Client {
     pub(crate) unreadable: Option<String>,
     /// The latest time seen and the total set back, as they were last saved.
     saved_seen: Mutex<Seen>,
+}
+
+/// `value` percent-encoded for a query string: everything but letters, digits and `-._~`.
+fn query_value(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => char::from(byte).to_string(),
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
 }
 
 impl Client {
@@ -108,6 +123,15 @@ impl Client {
         Self { config, store, transport, clock, state: Mutex::new(state), unreadable, saved_seen }
     }
 
+    /// The address of this product's "how to get a key" page on the licence server,
+    /// `<server>/apply?product=<code>`, where the administrator says how to get a key and, when
+    /// applications are open, people apply. Link it from the key prompt as **How to get a key**
+    /// and open it in the default browser, instead of writing instructions into the application:
+    /// they change on the server for every installed copy at once. Never goes online.
+    pub fn get_key_url(&self) -> String {
+        self.transport.page_url(&format!("/apply?product={}", query_value(&self.config.product)))
+    }
+
     /// The licence as far as this computer knows, without going online or touching the disk, so
     /// the UI thread can ask as often as it likes. The time it saw is kept in memory; the
     /// background checker saves it ([`Self::save_time_seen`]).
@@ -141,7 +165,14 @@ impl Client {
             return refusal_outcome(refusal);
         }
         let Some(token) = state.token.as_deref() else {
-            return if state.activation.is_some() { Outcome::NeedsCheck } else { Outcome::NeedsActivation };
+            return match (&state.activation, &state.application) {
+                (Some(_), _) => Outcome::NeedsCheck,
+                (None, Some(Application::Pending { .. })) => Outcome::ApplicationPending,
+                (None, Some(Application::Rejected { reason })) => {
+                    Outcome::ApplicationRejected { reason: reason.clone() }
+                }
+                (None, None) => Outcome::NeedsActivation,
+            };
         };
         let behind_latest = state
             .latest_seen
@@ -184,7 +215,8 @@ impl Client {
     }
 
     /// Whether an online check is due: the last successful one is older than the interval, or
-    /// there is nothing valid to run on. A revoked licence is never checked again.
+    /// there is nothing valid to run on, or a waiting licence application is due to be asked
+    /// about. A revoked licence is never checked again.
     pub fn needs_check(&self) -> bool {
         self.time_until_due().is_zero()
     }
@@ -194,21 +226,18 @@ impl Client {
         let now = self.clock.now();
         let state = self.lock();
         if state.activation.is_none() {
-            return Duration::MAX;
+            return match &state.application {
+                Some(Application::Pending { last_check: Some(last), .. }) => {
+                    until(*last, self.config.application_check_interval, now)
+                }
+                Some(Application::Pending { last_check: None, .. }) => Duration::ZERO,
+                _ => Duration::MAX,
+            };
         }
         let licensed = self.offline_outcome(&state, now).is_licensed();
         match state.last_check {
             // a refusal is an answer too: ask again at the usual pace (an expiry may be extended)
-            Some(last) if licensed || state.refusal.is_some() => {
-                // an interval too long for the calendar means "not again"
-                let Some(due) = TimeDelta::from_std(self.config.check_interval)
-                    .ok()
-                    .and_then(|interval| last.checked_add_signed(interval))
-                else {
-                    return Duration::MAX;
-                };
-                (due - now).to_std().unwrap_or(Duration::ZERO)
-            }
+            Some(last) if licensed || state.refusal.is_some() => until(last, self.config.check_interval, now),
             _ => Duration::ZERO,
         }
     }
@@ -229,6 +258,15 @@ impl Client {
         }
         saved
     }
+}
+
+/// How long from `now` until `interval` has passed since `last` (zero when it has).
+fn until(last: DateTime<Utc>, interval: Duration, now: DateTime<Utc>) -> Duration {
+    // an interval too long for the calendar means "not again"
+    let Some(due) = TimeDelta::from_std(interval).ok().and_then(|interval| last.checked_add_signed(interval)) else {
+        return Duration::MAX;
+    };
+    (due - now).to_std().unwrap_or(Duration::ZERO)
 }
 
 /// What [`Client::save_time_seen`] compares with the state to decide whether to save.

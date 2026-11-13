@@ -32,7 +32,7 @@ test("reset frees a licence in use, revoke ends it for good", async ({ admin, ap
 
   await admin.getByRole("button", { name: "Reset" }).click();
   const strip = admin.getByRole("group", { name: "Reset" });
-  await expect(strip).toContainText("locks at its next check");
+  await expect(strip).toContainText("locks at its next check. If it is offline, at the latest in 30 days.");
   await strip.press("Escape");
   await expect(strip).toBeHidden();
   await admin.getByRole("button", { name: "Reset" }).click();
@@ -162,4 +162,13 @@ test("a licence is deleted in any state, each with its own warning", async ({ ad
   }
   await productFilter(admin).selectOption({ label: product.name });
   await expect(admin.getByText("No licence matches.")).toBeVisible();
+});
+
+test("the Revoke strip says when an offline computer locks at the latest, from its product's limit", async ({ admin, api }) => {
+  const product = await createProduct(api);
+  await api.call("PATCH", `/products/${product.id}`, { offline_days: 7 });
+  const issued = (await issue(api, product.id)).licences[0]!;
+  await admin.goto(`/licences/${issued.id}`);
+  await admin.getByRole("button", { name: "Revoke" }).click();
+  await expect(admin.getByRole("group", { name: "Revoke" })).toContainText("locks at its next check. If it is offline, at the latest in 7 days.");
 });

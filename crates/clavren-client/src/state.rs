@@ -1,14 +1,15 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.617928
-//+ Revised: 	2026/11/09 22:30:53.159869
+//+ Revised: 	2026/11/11 16:32:49.948771
 // -----------------------------------------------------------------------------
 
 //! What the client keeps between runs: the device key, the activation, the cached token, the
 //! latest and the previous time the system clock showed and how far it was set back in all since
 //! the last check (to notice a clock set back, at once or a little at a time), how far it was
-//! from the server's at the last answer, when it last checked, and a definitive refusal it was
-//! given. All of it is stored protected (see [`crate::store`]).
+//! from the server's at the last answer, when it last checked, a definitive refusal it was
+//! given, and a licence application it sent (its secret while it waits, the reason once
+//! rejected). All of it is stored protected (see [`crate::store`]).
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -38,6 +39,35 @@ pub struct State {
     pub last_check: Option<DateTime<Utc>>,
     /// A definitive answer from the server, kept until a new activation succeeds.
     pub refusal: Option<Refusal>,
+    /// A licence application sent from this computer, until its key is activated or the
+    /// application set aside.
+    #[serde(default)]
+    pub application: Option<Application>,
+}
+
+/// A licence application this computer sent.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "status")]
+pub enum Application {
+    /// Waiting for the administrator: the secret asks how it went.
+    Pending { id: Uuid, secret: String, last_check: Option<DateTime<Utc>> },
+    /// Turned down (or withdrawn), with the administrator's reason when there is one.
+    Rejected { reason: Option<String> },
+}
+
+/// Never prints the secret.
+impl std::fmt::Debug for Application {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pending { id, last_check, .. } => formatter
+                .debug_struct("Pending")
+                .field("id", id)
+                .field("secret", &"<redacted>")
+                .field("last_check", last_check)
+                .finish(),
+            Self::Rejected { reason } => formatter.debug_struct("Rejected").field("reason", reason).finish(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,6 +110,7 @@ impl std::fmt::Debug for State {
             .field("clock_offset_seconds", &self.clock_offset_seconds)
             .field("last_check", &self.last_check)
             .field("refusal", &self.refusal)
+            .field("application", &self.application)
             .finish()
     }
 }
@@ -88,6 +119,9 @@ impl Drop for State {
     fn drop(&mut self) {
         self.device_key.zeroize();
         self.token.zeroize();
+        if let Some(Application::Pending { secret, .. }) = &mut self.application {
+            secret.zeroize();
+        }
     }
 }
 
@@ -119,10 +153,26 @@ mod tests {
     }
 
     #[test]
+    fn state_saved_before_applications_existed_still_loads() {
+        let state: State = serde_json::from_str(
+            r#"{"device_key":null,"activation":null,"token":null,"latest_seen":null,"last_check":null,"refusal":null}"#,
+        )
+        .unwrap();
+        assert_eq!(state.application, None);
+    }
+
+    #[test]
     fn debug_output_hides_secrets() {
-        let state =
-            State { device_key: Some("secret-key".into()), token: Some("secret-token".into()), ..State::default() };
+        let application = Application::Pending { id: Uuid::nil(), secret: "secret-ask".into(), last_check: None };
+        let state = State {
+            device_key: Some("secret-key".into()),
+            token: Some("secret-token".into()),
+            application: Some(application),
+            ..State::default()
+        };
         let printed = format!("{state:?}");
-        assert!(!printed.contains("secret-key") && !printed.contains("secret-token"), "{printed}");
+        for secret in ["secret-key", "secret-token", "secret-ask"] {
+            assert!(!printed.contains(secret), "{printed}");
+        }
     }
 }

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.244813
-//+ Revised: 	2026/11/09 22:30:53.069171
+//+ Revised: 	2026/11/11 16:32:49.778338
 // -----------------------------------------------------------------------------
 
 //! Going online: activating a key, and the check that renews the token. The state lock is never
@@ -24,7 +24,7 @@ use zeroize::Zeroize;
 
 use crate::client::{Client, refusal_outcome, server_now, signing_key};
 use crate::outcome::{Outcome, Temporary};
-use crate::state::{Refusal, State};
+use crate::state::{Application, Refusal, State};
 use crate::store::StoreError;
 use crate::transport::Answer;
 
@@ -63,6 +63,8 @@ impl Client {
             activated.activation = Some(activation);
             activated.refusal = None;
             activated.token = None;
+            // a key in use ends any licence application sent from here
+            activated.application = None;
             if let Err(problem) = self.accept_token(&mut activated, token, now) {
                 // kept as activated: the next check asks again, with backoff
                 log::error!("the activation's token can't be used: {problem}");
@@ -90,12 +92,17 @@ impl Client {
 
     /// Asks the server whether the licence still holds and renews the token. A definitive answer
     /// (revoked, reset, expired, withdrawn) is kept and returned; anything else is `Err` and
-    /// changes nothing.
+    /// changes nothing. Without an activation but with a licence application waiting, asks how
+    /// the application went instead ([`Self::check_application`]).
     pub fn check(&self) -> Result<Outcome, Temporary> {
         let (activation, key) = {
             let state = self.lock();
             match (state.activation, signing_key(&state)) {
                 (Some(activation), Some(key)) => (activation, key),
+                _ if matches!(state.application, Some(Application::Pending { .. })) => {
+                    drop(state);
+                    return self.check_application();
+                }
                 _ => return Ok(Outcome::NeedsActivation),
             }
         };
@@ -227,14 +234,14 @@ fn accept_clock(state: &mut State, now: DateTime<Utc>, issued_at: i64) {
 }
 
 /// The answer's body as `T`, the shape both sides share; `None` when it isn't one.
-fn parsed<T: DeserializeOwned>(answer: &Answer) -> Option<T> {
+pub(crate) fn parsed<T: DeserializeOwned>(answer: &Answer) -> Option<T> {
     T::deserialize(&answer.body).ok()
 }
 
-fn error_code(answer: &Answer) -> Option<ErrorCode> {
+pub(crate) fn error_code(answer: &Answer) -> Option<ErrorCode> {
     parsed::<ErrorResponse>(answer).and_then(|error| ErrorCode::parse(&error.error))
 }
 
-fn retry_after(answer: &Answer) -> Duration {
+pub(crate) fn retry_after(answer: &Answer) -> Duration {
     Duration::from_secs(answer.retry_after.unwrap_or(60))
 }

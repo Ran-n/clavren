@@ -3,11 +3,13 @@
 import type { ReactNode } from "react";
 import { describe, type Wording } from "../errors";
 
-export function ErrorNotice({ error, children, wording }: { error: unknown; children?: ReactNode; wording?: Wording }) {
+type ErrorProps = { error: unknown; children?: ReactNode; wording?: Wording; item?: string };
+
+export function ErrorNotice({ error, children, wording, item }: ErrorProps) {
   if (!error) return null;
   return (
     <div className="notice notice--error" role="alert">
-      <span>{describe(error, wording)}</span>
+      <span>{describe(error, wording, item)}</span>
       {children}
     </div>
   );

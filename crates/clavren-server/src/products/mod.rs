@@ -1,13 +1,15 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.963172
-//+ Revised: 	2026/11/10 17:59:21.875623
+//+ Revised: 	2026/11/12 23:57:45.347268
 // -----------------------------------------------------------------------------
 
 //! Products: the applications that use Clavren. A product's `code` is the audience of every token
 //! issued for it, so it can't change once the product has licences. Deactivating a product pauses
 //! it and keeps everything; deleting it deletes its licences and their history too, and the
-//! computers using them lock at their next check. Without a code, one is made from the name. A new
+//! computers using them lock at their next check, and its licence applications go too. A product
+//! takes licence applications only when the administrator opens them. Its page at
+//! `/apply?product=<code>` says how to get a key, in the administrator's words. Without a code, one is made from the name. A new
 //! product comes with one test licence, unless the request asks for none.
 
 mod automatic_code;
@@ -26,12 +28,20 @@ use crate::http::error::ApiError;
 use crate::http::fields;
 use crate::http::patch::Patch;
 use crate::licences::{self, Deleted};
+use crate::money::{Price, PriceColumns};
 pub use routes::routes;
 
 const MAX_NAME: usize = 200;
 const MAX_DESCRIPTION: usize = 2000;
+const MAX_KEY_INSTRUCTIONS: usize = 2000;
 const MAX_TEMPLATE: usize = 10_000;
 const MAX_CODE: usize = 63;
+/// The fewest offline days a product may have: applications check once a day, so 1 would lock a
+/// computer after a single missed check (a laptop shut over a weekend).
+pub const MIN_OFFLINE_DAYS: i32 = 2;
+/// The most: ten years, so the limit is always a real one. There is deliberately no "forever": an
+/// application that is never online would never learn its licence was revoked or reset.
+pub const MAX_OFFLINE_DAYS: i32 = 3650;
 
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct Product {
@@ -41,6 +51,16 @@ pub struct Product {
     pub description: Option<String>,
     pub message_template: String,
     pub is_active: bool,
+    /// Whether people may apply for a licence of it (in the application or on the web form).
+    pub accepts_applications: bool,
+    /// How to get a key, shown on the product's page at `/apply?product=<code>`.
+    pub key_instructions: Option<String>,
+    /// How many days its applications keep working without reaching the server: every token of
+    /// its licences lasts this long (capped at the licence's expiry).
+    pub offline_days: i32,
+    /// Its price per key, which issuing fills in for each new licence; `null`: none.
+    #[sqlx(flatten)]
+    pub price: PriceColumns,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -84,6 +104,15 @@ pub struct NewProduct {
     pub message_template: Option<String>,
     #[serde(default)]
     pub is_active: Option<bool>,
+    #[serde(default)]
+    pub accepts_applications: Option<bool>,
+    #[serde(default)]
+    pub key_instructions: Option<String>,
+    /// Missing: the server's `CLAVREN_TOKEN_DAYS`.
+    #[serde(default, deserialize_with = "whole_days")]
+    pub offline_days: Option<i32>,
+    #[serde(default)]
+    pub price: Option<Price>,
     /// Issue one test licence with the product; on unless `false`.
     #[serde(default = "yes")]
     pub test_licence: bool,
@@ -101,6 +130,27 @@ pub struct ProductChanges {
     pub description: Patch<String>,
     pub message_template: Option<String>,
     pub is_active: Option<bool>,
+    pub accepts_applications: Option<bool>,
+    pub key_instructions: Patch<String>,
+    #[serde(deserialize_with = "whole_days")]
+    pub offline_days: Option<i32>,
+    pub price: Patch<Price>,
+}
+
+/// A whole number when the field is there: `null` is refused, not taken as "unchanged".
+fn whole_days<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<i32>, D::Error> {
+    i32::deserialize(deserializer).map(Some)
+}
+
+/// Within [`MIN_OFFLINE_DAYS`] and [`MAX_OFFLINE_DAYS`].
+fn offline_days(days: i32) -> Result<i32, ApiError> {
+    if (MIN_OFFLINE_DAYS..=MAX_OFFLINE_DAYS).contains(&days) {
+        Ok(days)
+    } else {
+        Err(ApiError::invalid_request(format!(
+            "offline_days must be from {MIN_OFFLINE_DAYS} to {MAX_OFFLINE_DAYS} days, got {days}"
+        )))
+    }
 }
 
 impl NewProduct {
@@ -115,8 +165,14 @@ impl NewProduct {
     }
 
     /// The product to store with `code` (typed or made: both meet the same check), checked and
-    /// tidied.
-    pub fn into_product(self, id: Uuid, now: DateTime<Utc>, code: &str) -> Result<Product, ApiError> {
+    /// tidied; `default_offline_days` when the request gives none.
+    pub fn into_product(
+        self,
+        id: Uuid,
+        now: DateTime<Utc>,
+        code: &str,
+        default_offline_days: i32,
+    ) -> Result<Product, ApiError> {
         let template = self.message_template.unwrap_or_else(|| message_template::DEFAULT.to_string());
         Ok(Product {
             id,
@@ -125,6 +181,10 @@ impl NewProduct {
             description: fields::optional("description", self.description.as_deref(), MAX_DESCRIPTION)?,
             message_template: template_text(&template)?,
             is_active: self.is_active.unwrap_or(true),
+            accepts_applications: self.accepts_applications.unwrap_or(false),
+            key_instructions: key_instructions(self.key_instructions.as_deref())?,
+            offline_days: offline_days(self.offline_days.unwrap_or(default_offline_days))?,
+            price: PriceColumns::from(self.price),
             created_at: now,
             updated_at: now,
         })
@@ -153,6 +213,13 @@ impl ProductChanges {
                 .transpose()?
                 .unwrap_or_else(|| product.message_template.clone()),
             is_active: self.is_active.unwrap_or(product.is_active),
+            accepts_applications: self.accepts_applications.unwrap_or(product.accepts_applications),
+            key_instructions: match self.key_instructions {
+                Patch::Set(text) => key_instructions(Some(&text))?,
+                other => other.apply(product.key_instructions.clone()),
+            },
+            offline_days: self.offline_days.map(offline_days).transpose()?.unwrap_or(product.offline_days),
+            price: PriceColumns::from(self.price.apply(product.price.price())),
             updated_at: now,
             ..product.clone()
         };
@@ -168,10 +235,19 @@ fn changed_fields(before: &Product, after: &Product) -> Vec<&'static str> {
         ("description", before.description != after.description),
         ("message_template", before.message_template != after.message_template),
         ("is_active", before.is_active != after.is_active),
+        ("accepts_applications", before.accepts_applications != after.accepts_applications),
+        ("key_instructions", before.key_instructions != after.key_instructions),
+        ("offline_days", before.offline_days != after.offline_days),
+        ("price", before.price != after.price),
     ]
     .into_iter()
     .filter_map(|(field, changed)| changed.then_some(field))
     .collect()
+}
+
+/// The instructions trimmed, blank as none, at most 2,000 characters.
+fn key_instructions(value: Option<&str>) -> Result<Option<String>, ApiError> {
+    fields::optional("key_instructions", value, MAX_KEY_INSTRUCTIONS)
 }
 
 /// Lowercase letters, digits and `-`, starting with a letter or digit; typed in any case.

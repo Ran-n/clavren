@@ -1,11 +1,12 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.926414
-//+ Revised: 	2026/11/10 17:59:19.270062
+//+ Revised: 	2026/11/12 23:57:43.609154
 // -----------------------------------------------------------------------------
 
 //! A licence server in memory: answers the public API as Clavren does, with tokens signed by a
-//! test key, and can be told to refuse, fail or go offline.
+//! test key, and can be told to refuse, fail or go offline. It takes licence applications too,
+//! and answers how one went as the test decides.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -21,6 +22,25 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 pub const PRODUCT: &str = "avalio-lite";
+/// The ID and secret of every application the server takes.
+pub const APPLICATION: Uuid = Uuid::from_u128(5);
+pub const APPROVED_KEY: &str = "BRN-7KPX-4M9D-QW2R-8NFC";
+
+/// How the application went, as the server will say.
+#[allow(dead_code)] // only the applying tests decide applications
+#[derive(Debug, Clone, PartialEq)]
+pub enum Decision {
+    Pending,
+    Approved,
+    Rejected(Option<&'static str>),
+    Withdrawn,
+    /// Deleted: the secret names no application.
+    Unknown,
+}
+
+pub fn application_secret() -> String {
+    encoding::encode(&[9; 32])
+}
 
 /// What the server does with the next requests.
 #[derive(Debug, Clone, PartialEq)]
@@ -45,6 +65,11 @@ pub struct FakeServer {
     pub test_licence: Mutex<bool>,
     /// Added to the unsigned `server_time` of every answer (something in between changing it).
     pub server_time_shift: Mutex<chrono::Duration>,
+    pub decision: Mutex<Decision>,
+    /// The applications sent: their bodies.
+    pub applications: Mutex<Vec<Value>>,
+    /// The keys activated, in order.
+    pub activated_keys: Mutex<Vec<String>>,
     signing: SigningKey,
     device: Mutex<Option<[u8; 32]>>,
     nonces: Mutex<Vec<(Uuid, [u8; 32])>>,
@@ -59,6 +84,9 @@ impl FakeServer {
             licence_expires_at: Mutex::new(None),
             test_licence: Mutex::new(false),
             server_time_shift: Mutex::new(chrono::Duration::zero()),
+            decision: Mutex::new(Decision::Pending),
+            applications: Mutex::new(Vec::new()),
+            activated_keys: Mutex::new(Vec::new()),
             signing: SigningKey::from_bytes(&[42; 32]),
             device: Mutex::new(None),
             nonces: Mutex::new(Vec::new()),
@@ -104,11 +132,44 @@ impl FakeServer {
     }
 }
 
+impl FakeServer {
+    fn application_status(&self, now: DateTime<Utc>) -> Answer {
+        let decision = self.decision.lock().unwrap().clone();
+        let (status, key, reason) = match decision {
+            Decision::Unknown => {
+                return answer(404, json!({ "error": "application_unknown", "message": "no", "server_time": now }));
+            }
+            Decision::Pending => ("pending", None, None),
+            Decision::Approved => ("approved", Some(APPROVED_KEY), None),
+            Decision::Rejected(reason) => ("rejected", None, reason),
+            Decision::Withdrawn => ("withdrawn", None, None),
+        };
+        answer(
+            200,
+            json!({
+                "application": APPLICATION,
+                "product": PRODUCT,
+                "status": status,
+                "created_at": now,
+                "decided_at": if status == "pending" { Value::Null } else { json!(now) },
+                "reason": reason,
+                "key": key,
+                "licence_expires_at": null,
+                "server_time": now,
+            }),
+        )
+    }
+}
+
 fn answer(status: u16, body: Value) -> Answer {
     Answer { status, body, retry_after: if status == 429 { Some(120) } else { None } }
 }
 
 impl Transport for FakeServer {
+    fn page_url(&self, path: &str) -> String {
+        format!("http://fake{path}")
+    }
+
     fn post(&self, path: &str, body: &Value) -> Result<Answer, String> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let now = self.clock.now();
@@ -120,8 +181,21 @@ impl Transport for FakeServer {
             Mode::Garbage => return Ok(answer(200, Value::Null)),
             Mode::Normal | Mode::UntrustedToken => {}
         }
+        if path == "/api/v1/applications" {
+            assert_eq!((&body["product"], &body["source"]), (&json!(PRODUCT), &json!("app")));
+            self.applications.lock().unwrap().push(body.clone());
+            return Ok(answer(
+                201,
+                json!({ "application": APPLICATION, "secret": application_secret(), "server_time": now }),
+            ));
+        }
+        if path == "/api/v1/applications/status" {
+            assert_eq!(body["secret"], application_secret());
+            return Ok(self.application_status(now));
+        }
         if path == "/api/v1/activations" {
             assert_eq!(body["product"], PRODUCT);
+            self.activated_keys.lock().unwrap().push(body["key"].as_str().unwrap().to_string());
             let device = encoding::decode_array::<32>(body["device_public_key"].as_str().unwrap()).unwrap();
             *self.device.lock().unwrap() = Some(device);
             return Ok(answer(201, self.token(&device)));

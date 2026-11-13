@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:17.167017
-//+ Revised: 	2026/11/10 17:59:22.565588
+//+ Revised: 	2026/11/12 23:57:45.902623
 // -----------------------------------------------------------------------------
 
 //! A licence after issuing: editing every field but the product (customer, expiry, notes, the
@@ -453,11 +453,11 @@ async fn an_export_is_safe_csv_with_the_keys_still_held(pool: PgPool) {
     let lines: Vec<&str> = reply.text.split("\r\n").collect();
     assert_eq!(
         lines[0],
-        "licence_id,product_code,customer_name,customer_email,key,state,issued_at,expires_at,notes,test"
+        "licence_id,product_code,customer_name,customer_email,key,state,issued_at,expires_at,notes,test,price,currency"
     );
     let ana_line = lines.iter().find(|line| line.starts_with(&ana)).unwrap();
     assert!(ana_line.contains(&format!(",avalio-lite,\"López, Ana\",ana@example.com,{ana_key},unused,")), "{ana_line}");
-    assert!(ana_line.ends_with(",\"'=HYPERLINK(\"\"x\"\")\",false"), "{ana_line}");
+    assert!(ana_line.ends_with(",\"'=HYPERLINK(\"\"x\"\")\",false,,"), "{ana_line}");
     let revoked_line = lines.iter().find(|line| line.starts_with(&revoked)).unwrap();
     assert!(revoked_line.contains(",,,,revoked,"), "no key left: {revoked_line}");
     assert_eq!(licences.audited("licence.exported").await, 2);

@@ -1,11 +1,12 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:36.392152
-//+ Revised: 	2026/11/03 08:25:52.609710
+//+ Revised: 	2026/11/11 17:53:38.139273
 // -----------------------------------------------------------------------------
 
 //! The hourly housekeeping task: deletes sessions and challenges that can never be used again and
-//! forgets old rate-limit counts. It runs once at startup, then every hour, and stops on shutdown.
+//! old check counts, and forgets old rate-limit counts. It runs once at startup, then every hour,
+//! and stops on shutdown. Licence applications are history and are never cleaned up.
 
 use std::time::Duration;
 

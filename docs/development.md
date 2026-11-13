@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.213599 )
-[//]: # (+ Revised: 	2026/11/10 17:59:23.923958 )
+[//]: # (+ Revised: 	2026/11/12 23:57:46.582917 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Development
@@ -26,7 +26,7 @@ built this way is in [design-decisions.md](design-decisions.md).
 | `crates/clavren-server/` | The service: public API, admin API, dashboard serving, background tasks, and the `clavren-admin` CLI |
 | `crates/clavren-client/` | The library Breren applications use to activate, check and renew a licence |
 | `xtask/` | Repository tasks, run as `cargo xtask <task>`: `dev` (`cargo dev`) sets up and runs everything locally |
-| `web/admin/` | The admin dashboard (React, TypeScript, Vite), embedded in the server binary |
+| `web/admin/` | The admin dashboard (React, TypeScript, Vite) and the public licence application form (`apply.html`, `src/apply/`), both embedded in the server binary. `npm run dev` serves the form at `/apply` too |
 | `docs/` | Specification, design decisions and the guides |
 
 Inside each crate, folders are named after the domain (`licences/`, `products/`,
@@ -142,8 +142,11 @@ The server reads its configuration from environment variables:
 | `CLAVREN_SESSION_MAX_DAYS` | no | `7` | An admin session ends this long after sign-in, used or not |
 | `CLAVREN_LOGIN_MAX_FAILURES` | no | `5` | Failed sign-ins allowed per address and per username within the window |
 | `CLAVREN_LOGIN_WINDOW_MINUTES` | no | `15` | The window for counting failed sign-ins |
-| `CLAVREN_TOKEN_DAYS` | no | `30` | How long an application works offline after its last successful check (capped at the licence's expiry) |
+| `CLAVREN_TOKEN_DAYS` | no | `30` | The offline limit new products start with (2 to 3,650 days); each product's own limit is how long an application works offline after its last successful check (capped at the licence's expiry) |
+| `CLAVREN_CURRENCY` | no | `EUR` | The currency the dashboard preselects for prices (three letters, ISO 4217); stored prices keep their own |
 | `CLAVREN_SIGNING_KEY_VERSION` | no | `1` | Which token-signing key is in use; see `clavren-admin show-public-key` before changing it |
+| `CLAVREN_TURNSTILE_SITE_KEY`, `CLAVREN_TURNSTILE_SECRET` | no | none | The application form's Cloudflare Turnstile keys, both or neither. Cloudflare's test keys (`1x00000000000000000000AA` with `1x0000000000000000000000000000000AA`) always pass |
+| `CLAVREN_TURNSTILE_VERIFY_URL` | no | Cloudflare's `siteverify` | Where Turnstile answers are verified; for tests (`https://`, or `http://` to localhost) |
 
 With an `http://` public URL (localhost only), the session cookie is sent without `Secure`, so the
 dashboard works on `http://localhost`.
