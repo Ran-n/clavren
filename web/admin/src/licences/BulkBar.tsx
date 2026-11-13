@@ -1,5 +1,5 @@
-// What can be done to the selected licences at once: set the customer, edit expiry, notes or the
-// revocation reason, export, revoke, delete. Every action is one bulk request: all of them change,
+// What can be done to the selected licences at once: set the customer, edit expiry, notes, price
+// (test licences keep none) or the revocation reason, export, revoke, delete. Every action is one bulk request: all of them change,
 // or none. Before a delete the server counts what would go, so the warning is never a guess.
 
 import { useEffect, useState } from "react";
@@ -10,10 +10,10 @@ import { ErrorNotice } from "../shared/components/Notice";
 import { inUseWarning, plural } from "../shared/errors";
 import { fromDateInput } from "../shared/format";
 import type { Selection } from "../shared/hooks";
-import { CustomerEditor, ValueEditor, type ValueField } from "./BulkEditors";
+import { CustomerEditor, PriceEditor, ValueEditor, type ValueField } from "./BulkEditors";
 import { csvName, filterBody, matchingIds, type LicenceChanges, type LicenceFilters } from "./licenceApi";
 
-type Mode = "idle" | "customer" | ValueField | "revoke" | "delete";
+type Mode = "idle" | "customer" | "price" | ValueField | "revoke" | "delete";
 type Deleted = { deleted: number; in_use: number };
 
 /** The warning before deleting, from the server's count. */
@@ -51,8 +51,9 @@ export function BulkBar({ selection, filters, onDone }: Props) {
     onDone();
   }
   async function edit(changes: LicenceChanges) {
-    const { updated } = await api<{ updated: number }>("POST", "/licences/bulk/edit", { ids: await ids(), ...changes });
-    await finish(`${plural(updated, "licence")} updated.`);
+    const { updated, kept_test } = await api<{ updated: number; kept_test: number }>("POST", "/licences/bulk/edit", { ids: await ids(), ...changes });
+    const kept = kept_test > 0 ? ` ${plural(kept_test, "test licence")} kept no price.` : "";
+    await finish(`${plural(updated, "licence")} updated.${kept}`);
   }
   async function revoke(reason: string | null) {
     const { revoked } = await api<{ revoked: number }>("POST", "/licences/bulk/revoke", { ids: await ids(), reason: reason ?? undefined });
@@ -100,6 +101,7 @@ export function BulkBar({ selection, filters, onDone }: Props) {
           <Button size="small" onClick={() => setMode("customer")}>Set customer</Button>
           <Button size="small" onClick={() => setMode("expiry")}>Edit expiry</Button>
           <Button size="small" onClick={() => setMode("notes")}>Edit notes</Button>
+          <Button size="small" onClick={() => setMode("price")}>Edit price</Button>
           <Button size="small" onClick={() => setMode("reason")}>Edit reason</Button>
           <Button size="small" onClick={exportCsv}>Export CSV</Button>
           <Button size="small" variant="danger" onClick={() => setMode("revoke")}>Revoke</Button>
@@ -110,6 +112,7 @@ export function BulkBar({ selection, filters, onDone }: Props) {
       {(mode === "expiry" || mode === "notes" || mode === "reason") && (
         <ValueEditor field={mode} onCancel={() => setMode("idle")} onApply={(value) => edit(valueChange(mode, value))} />
       )}
+      {mode === "price" && <PriceEditor onCancel={() => setMode("idle")} onApply={(price) => edit({ price })} />}
       {mode === "customer" && <CustomerEditor onCancel={() => setMode("idle")} onApply={(customer) => edit({ customer })} />}
       {mode === "revoke" && (
         <ConfirmStrip

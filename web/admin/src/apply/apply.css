@@ -1,0 +1,109 @@
+/* The public application page: one narrow column, the dashboard's tokens and components. */
+body {
+  margin: 0;
+  background: var(--color-background);
+  color: var(--color-text);
+  font-family: var(--font-family);
+}
+
+.apply {
+  box-sizing: border-box;
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 2.5rem 16px 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.apply h1 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.apply-form,
+.apply-status,
+.apply-key {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.apply-form input,
+.apply-form select,
+.apply-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+}
+
+.apply-form__product {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.apply-form__product p {
+  margin: 0;
+}
+
+.apply-form__name {
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.apply-key__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.apply-key .key {
+  font-size: 1.15rem;
+  overflow-wrap: anywhere;
+}
+
+.apply-reason {
+  margin: 0.5rem 0 0;
+  font-style: italic;
+}
+
+.apply .notice p {
+  margin: 0;
+}
+
+.apply .notice p + p {
+  margin-top: 0.5rem;
+}
+
+.turnstile {
+  min-height: 65px;
+}
+
+/* The key page: the product's description and the administrator's instructions above the form. */
+.apply-key-page__description,
+.apply-key-page__instructions {
+  margin: 0;
+}
+
+.apply-key-page__description {
+  color: var(--color-text-muted);
+}
+
+.apply-key-page__instructions {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.apply-key-page__form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.apply-key-page__form h2 {
+  margin: 0.5rem 0 0;
+  font-size: 1.2rem;
+}

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.689100
-//+ Revised: 	2026/11/10 17:59:21.458973
+//+ Revised: 	2026/11/12 23:57:45.043382
 // -----------------------------------------------------------------------------
 
 //! `/api/admin/licences`: issue, list and search, read, edit, reveal, copy message, revoke, reset,
@@ -19,7 +19,7 @@ use uuid::Uuid;
 use super::disclosure::{self, fill_message};
 use super::filter::{Expiry, FilterParams, Order};
 use super::issue::{self, IssueRequest};
-use super::lifecycle::{self, LicenceChanges};
+use super::lifecycle::{self, LicenceChanges, OnTestLicence};
 use super::views::{EXPANDABLE, LicenceView, present};
 use super::{MAX_BATCH, State as LicenceState, repository};
 use crate::admin_auth::guard::Admin;
@@ -157,7 +157,7 @@ async fn edit(
     ApiJson(changes): ApiJson<LicenceChanges>,
 ) -> Result<Json<LicenceView>, ApiError> {
     expand.check(&EXPANDABLE)?;
-    lifecycle::edit(&state, &admin.actor, &[id], changes).await.map_err(single)?;
+    lifecycle::edit(&state, &admin.actor, &[id], changes, OnTestLicence::Refuse).await.map_err(single)?;
     view(&state, id, &expand).await.map(Json)
 }
 
@@ -221,6 +221,8 @@ struct BulkEdit {
     internal_notes: Patch<String>,
     #[serde(default)]
     revocation_reason: Patch<String>,
+    #[serde(default)]
+    price: Patch<crate::money::Price>,
 }
 
 impl BulkEdit {
@@ -230,6 +232,7 @@ impl BulkEdit {
             expires_at: self.expires_at,
             internal_notes: self.internal_notes,
             revocation_reason: self.revocation_reason,
+            price: self.price,
         };
         (self.ids, changes)
     }
@@ -239,10 +242,9 @@ async fn bulk_edit(
     State(state): State<AppState>,
     admin: Admin,
     ApiJson(request): ApiJson<BulkEdit>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<lifecycle::Edited>, ApiError> {
     let (ids, changes) = request.split();
-    let updated = lifecycle::edit(&state, &admin.actor, &ids, changes).await?;
-    Ok(Json(json!({ "updated": updated })))
+    lifecycle::edit(&state, &admin.actor, &ids, changes, OnTestLicence::Skip).await.map(Json)
 }
 
 #[derive(Debug, Deserialize)]

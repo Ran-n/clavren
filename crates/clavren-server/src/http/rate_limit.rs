@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:36.214266
-//+ Revised: 	2026/11/09 22:30:54.857496
+//+ Revised: 	2026/11/11 16:32:51.058356
 // -----------------------------------------------------------------------------
 
 //! Counting failures per key (a client address, a username) over a sliding window, in memory.
@@ -110,11 +110,14 @@ impl FailureLimiter {
 }
 
 /// The public API's limits, per hour: activations per client address, challenges and checks per
-/// client address, and checks per activation.
+/// client address, checks per activation, licence applications sent per client address, and
+/// questions about how an application went per client address.
 pub struct PublicLimits {
     pub activations: FailureLimiter,
     pub checks_per_ip: FailureLimiter,
     pub checks_per_activation: FailureLimiter,
+    pub applications: FailureLimiter,
+    pub application_status: FailureLimiter,
 }
 
 impl Default for PublicLimits {
@@ -124,6 +127,8 @@ impl Default for PublicLimits {
             activations: FailureLimiter::new(10, hour),
             checks_per_ip: FailureLimiter::new(120, hour),
             checks_per_activation: FailureLimiter::new(30, hour),
+            applications: FailureLimiter::new(5, hour),
+            application_status: FailureLimiter::new(120, hour),
         }
     }
 }
@@ -133,6 +138,8 @@ impl PublicLimits {
         self.activations.prune(now);
         self.checks_per_ip.prune(now);
         self.checks_per_activation.prune(now);
+        self.applications.prune(now);
+        self.application_status.prune(now);
     }
 }
 

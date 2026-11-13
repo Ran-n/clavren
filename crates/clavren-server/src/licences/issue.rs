@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.199013
-//+ Revised: 	2026/11/10 17:59:20.902238
+//+ Revised: 	2026/11/12 23:57:44.721394
 // -----------------------------------------------------------------------------
 
 //! Issuing licences: up to 1,000 keys for one product and (optionally) one customer, existing or
@@ -23,6 +23,8 @@ use crate::customers::{self, Customer, CustomerChoice};
 use crate::http::AppState;
 use crate::http::error::ApiError;
 use crate::http::fields;
+use crate::http::patch::Patch;
+use crate::money::Price;
 use crate::products::{self, Product};
 
 /// How many times a batch is retried for keys whose hash already existed.
@@ -43,6 +45,10 @@ pub struct IssueRequest {
     /// Test licences: for trying the application, on any number of computers.
     #[serde(default)]
     pub test: bool,
+    /// What each key is charged. Missing: the product's price (none for test licences); `null`:
+    /// none recorded.
+    #[serde(default)]
+    pub price: Patch<Price>,
 }
 
 fn one() -> usize {
@@ -56,6 +62,20 @@ pub struct Issued {
 }
 
 pub async fn issue(state: &AppState, actor: &Actor, request: IssueRequest) -> Result<Issued, ApiError> {
+    let mut transaction = state.pool.begin().await?;
+    let issued = issue_in(state, &mut transaction, actor, request).await?;
+    transaction.commit().await?;
+    Ok(issued)
+}
+
+/// [`issue`], in the caller's transaction (approving a licence application issues its licence and
+/// records the approval together).
+pub async fn issue_in(
+    state: &AppState,
+    connection: &mut PgConnection,
+    actor: &Actor,
+    request: IssueRequest,
+) -> Result<Issued, ApiError> {
     if !(1..=MAX_BATCH).contains(&request.quantity) {
         return Err(ApiError::invalid_request(format!("quantity must be between 1 and {MAX_BATCH}")));
     }
@@ -63,16 +83,24 @@ pub async fn issue(state: &AppState, actor: &Actor, request: IssueRequest) -> Re
         return Err(ApiError::invalid_request("expires_at must be in the future"));
     }
     let notes = fields::optional("internal_notes", request.internal_notes.as_deref(), MAX_NOTES)?;
-    let mut transaction = state.pool.begin().await?;
-    let product = products::repository::find_for_share(&mut transaction, request.product)
+    if request.test && matches!(request.price, Patch::Set(_)) {
+        return Err(ApiError::invalid_request("test licences can't have a price"));
+    }
+    let product = products::repository::find_for_share(&mut *connection, request.product)
         .await?
         .ok_or_else(|| ApiError::invalid_request("product doesn't name an existing product"))?;
     if !product.is_active {
         return Err(ApiError::conflict("product_inactive", "licences can't be issued for an inactive product"));
     }
     let customer = match request.customer {
-        Some(choice) => Some(customers::choose(&mut transaction, actor, choice).await?),
+        Some(choice) => Some(customers::choose(&mut *connection, actor, choice).await?),
         None => None,
+    };
+    let price = match request.price {
+        // a test licence is never a sale, whatever the product costs
+        Patch::Keep if request.test => None,
+        Patch::Keep => product.price.price(),
+        other => other.apply(None),
     };
     let new = Batch {
         product: &product,
@@ -80,9 +108,9 @@ pub async fn issue(state: &AppState, actor: &Actor, request: IssueRequest) -> Re
         expires_at: request.expires_at,
         notes: notes.as_deref(),
         is_test: request.test,
+        price: price.as_ref(),
     };
-    let keys = insert_audited(state, &mut transaction, actor, &new, request.quantity).await?;
-    transaction.commit().await?;
+    let keys = insert_audited(state, connection, actor, &new, request.quantity).await?;
     Ok(Issued { keys, product, customer })
 }
 
@@ -93,7 +121,7 @@ pub async fn issue_test_licence(
     actor: &Actor,
     product: &Product,
 ) -> Result<(Uuid, LicenceKey), ApiError> {
-    let new = Batch { product, customer: None, expires_at: None, notes: None, is_test: true };
+    let new = Batch { product, customer: None, expires_at: None, notes: None, is_test: true, price: None };
     let mut keys = insert_audited(state, connection, actor, &new, 1).await?;
     keys.pop().ok_or_else(|| ApiError::internal("the test licence wasn't issued"))
 }
@@ -104,6 +132,7 @@ struct Batch<'a> {
     expires_at: Option<DateTime<Utc>>,
     notes: Option<&'a str>,
     is_test: bool,
+    price: Option<&'a Price>,
 }
 
 /// [`insert_licences`], with one `licence.issued` audit entry per licence.
@@ -147,6 +176,7 @@ async fn insert_licences(
             expires_at: batch.expires_at,
             internal_notes: batch.notes,
             is_test: batch.is_test,
+            price: batch.price,
         };
         let inserted = repository::insert(&mut *connection, &new).await?;
         let (done, retry): (Vec<_>, Vec<_>) = pending.into_iter().zip(keys).partition(|(id, _)| inserted.contains(id));

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 14:53:29.794899
-//+ Revised: 	2026/11/09 10:00:41.870192
+//+ Revised: 	2026/11/11 16:32:50.971210
 // -----------------------------------------------------------------------------
 
 //! The HTTP side: the router, its shared state and the layers every request goes through.
@@ -29,12 +29,13 @@ use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing::Span;
 
+use crate::applications::human_check::{HumanCheck, Turnstile};
 use crate::clock::Clock;
-use crate::config::{AdminAuthSettings, Config, LicensingSettings, ProxySettings, UpdateSettings};
+use crate::config::{AdminAuthSettings, ApplicationSettings, Config, LicensingSettings, ProxySettings, UpdateSettings};
 use crate::crypto::key_ring::KeyRing;
 use crate::{
-    activations, admin_auth, admin_preferences, audit, backups, customers, dashboard, licences, overview, products,
-    updates,
+    activations, admin_auth, admin_preferences, applications, audit, backups, customers, dashboard, licences, overview,
+    products, updates,
 };
 use rate_limit::{FailureLimiter, PublicLimits};
 
@@ -51,6 +52,8 @@ pub struct AppState {
     /// Failed admin logins, per client address and per username.
     pub login_failures: Arc<FailureLimiter>,
     pub public_limits: Arc<PublicLimits>,
+    /// The web application form's human check, when the server has Turnstile keys.
+    pub human_check: Option<Arc<dyn HumanCheck>>,
 }
 
 /// The parts of the configuration request handlers need.
@@ -61,12 +64,18 @@ pub struct Settings {
     pub admin: AdminAuthSettings,
     pub licensing: LicensingSettings,
     pub updates: UpdateSettings,
+    pub applications: ApplicationSettings,
 }
 
 impl AppState {
     pub fn new(pool: PgPool, keys: KeyRing, clock: Arc<dyn Clock>, settings: Settings) -> Self {
         let login_failures =
             FailureLimiter::new(settings.admin.login_max_failures, settings.admin.login_failure_window);
+        let human_check = settings
+            .applications
+            .turnstile
+            .clone()
+            .map(|turnstile| Arc::new(Turnstile::new(turnstile)) as Arc<dyn HumanCheck>);
         Self {
             pool,
             keys: Arc::new(keys),
@@ -74,6 +83,7 @@ impl AppState {
             settings: Arc::new(settings),
             login_failures: Arc::new(login_failures),
             public_limits: Arc::new(PublicLimits::default()),
+            human_check,
         }
     }
 }
@@ -86,6 +96,7 @@ impl From<&Config> for Settings {
             admin: config.admin.clone(),
             licensing: config.licensing.clone(),
             updates: config.updates.clone(),
+            applications: config.applications.clone(),
         }
     }
 }
@@ -95,7 +106,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(health::routes())
         .nest("/api/admin", admin_routes())
-        .nest("/api/v1", activations::public_routes::routes().layer(no_store()))
+        .nest("/api/v1", activations::public_routes::routes().merge(applications::public_routes()).layer(no_store()))
         .fallback(dashboard::serve)
         .with_state(state)
         .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, REQUEST_TIMEOUT))
@@ -112,6 +123,7 @@ fn admin_routes() -> Router<AppState> {
         .merge(customers::routes())
         .merge(licences::routes())
         .merge(activations::routes())
+        .merge(applications::routes())
         .merge(audit::routes())
         .merge(backups::routes())
         .merge(overview::routes())

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.557866
-//+ Revised: 	2026/11/10 17:59:21.176560
+//+ Revised: 	2026/11/12 23:57:44.894976
 // -----------------------------------------------------------------------------
 
 //! Licences: one key for one product, optionally for a customer, optionally until a date. The key
@@ -25,8 +25,10 @@ use serde::Serialize;
 use sqlx::FromRow;
 use uuid::Uuid;
 
-pub use issue::issue_test_licence;
-pub use lifecycle::{Deleted, delete_locked, end_activation, reset};
+use crate::money::PriceColumns;
+
+pub use issue::{IssueRequest, Issued, issue_in, issue_test_licence};
+pub use lifecycle::{Deleted, Edited, OnTestLicence, delete_locked, end_activation, reset};
 pub use routes::routes;
 pub use views::{LicenceView, present};
 
@@ -70,6 +72,9 @@ pub struct LicenceRow {
     pub revoked_at: Option<DateTime<Utc>>,
     pub revocation_reason: Option<String>,
     pub internal_notes: Option<String>,
+    /// What its key was charged; none on a test licence.
+    #[sqlx(flatten)]
+    pub price: PriceColumns,
 }
 
 impl LicenceRow {

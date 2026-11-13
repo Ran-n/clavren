@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.129982
-//+ Revised: 	2026/11/10 17:59:22.015665
+//+ Revised: 	2026/11/12 23:57:45.498952
 // -----------------------------------------------------------------------------
 
 //! `/api/admin/products`: list, create, read, edit, and delete products (with their licences), and
@@ -82,7 +82,8 @@ async fn create(
         Some(code) => (code.to_string(), false),
         None => (automatic_code::choose(&mut transaction, &request.name).await?, true),
     };
-    let product = request.into_product(Uuid::now_v7(), admin.actor.at, &code)?;
+    let default_offline_days = state.settings.licensing.new_product_offline_days();
+    let product = request.into_product(Uuid::now_v7(), admin.actor.at, &code, default_offline_days)?;
     // Two products made with the same code at once: the second gets the conflict; saving again
     // picks the next suffix.
     repository::insert(&mut *transaction, &product).await.map_err(code_taken)?;
@@ -141,6 +142,9 @@ async fn edit(
     audit::record(&mut *transaction, entry).await?;
     transaction.commit().await?;
     tracing::info!(product = %product.code, admin = %admin.username, ?fields, "product updated");
+    if fields.contains(&"price") {
+        tracing::info!(target: "clavren::products", product = %product.id, "product price changed");
+    }
     Ok(Json(product))
 }
 

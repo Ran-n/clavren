@@ -443,6 +443,21 @@
   width: 100%;
   min-width: 10rem;
 }
+.price-input {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+.price-input__amount {
+  width: 7rem;
+}
+.price-input__currency {
+  width: auto;
+}
+.inline-input--days {
+  width: 6rem;
+  min-width: 5rem;
+}
 .inline-editor__status,
 .inline-editor__hint {
   font-size: 0.8rem;
@@ -591,6 +606,12 @@
 .issue-form .combobox {
   max-width: 28rem;
 }
+.issue-result__keys li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .issue-result__keys {
   list-style: none;
   padding: 0;
@@ -870,4 +891,19 @@ tr:hover .customer-field__edit,
   .button--large {
     width: 100%;
   }
+}
+
+/* Approving an application, below its row: the issue fields in a wrapping row. */
+.approve-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem 1rem;
+  padding: 0.75rem 0;
+}
+
+.approve-form > .field__help,
+.approve-form > .notice,
+.approve-form > .button-row {
+  flex-basis: 100%;
 }

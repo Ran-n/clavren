@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:13.529185
-//+ Revised: 	2026/11/03 04:54:13.529185
+//+ Revised: 	2026/11/11 16:32:50.710337
 // -----------------------------------------------------------------------------
 
 //! `/api/admin/customers`: search, create, read, edit and delete customers. Logs and audit entries
@@ -19,6 +19,7 @@ use uuid::Uuid;
 use super::repository::{self, EMAIL_CONSTRAINT, Order};
 use super::{Customer, CustomerChanges, NewCustomer};
 use crate::admin_auth::guard::Admin;
+use crate::applications;
 use crate::audit::{self, AuditEntry};
 use crate::database::violates_unique;
 use crate::http::AppState;
@@ -111,6 +112,8 @@ async fn remove(
 ) -> Result<StatusCode, ApiError> {
     let mut transaction = state.pool.begin().await?;
     repository::find_for_update(&mut transaction, id).await?.ok_or_else(ApiError::not_found)?;
+    // the name and email they applied with go too
+    applications::repository::delete_of_customer(&mut *transaction, id).await?;
     repository::delete(&mut *transaction, id).await?;
     audit::record(&mut *transaction, AuditEntry::by(&admin.actor, "customer.deleted", ENTITY, id)).await?;
     transaction.commit().await?;

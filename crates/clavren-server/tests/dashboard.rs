@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:17.000102
-//+ Revised: 	2026/11/09 22:30:56.099548
+//+ Revised: 	2026/11/11 16:32:51.991400
 // -----------------------------------------------------------------------------
 
 //! The embedded dashboard: its files, `index.html` for every page path, security and cache
@@ -95,4 +95,27 @@ fn the_dashboard_carries_the_server_version() {
     assert_eq!(package["version"], env!("CARGO_PKG_VERSION"), "package.json");
     assert_eq!(lock["version"], env!("CARGO_PKG_VERSION"), "package-lock.json");
     assert_eq!(lock["packages"][""]["version"], env!("CARGO_PKG_VERSION"), "package-lock.json root package");
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn the_application_form_is_its_own_page_and_may_run_turnstile(pool: PgPool) {
+    let app = app(pool);
+    let built = ASSETS.iter().any(|(path, _)| *path == "apply.html");
+    let form = send(&app, Method::GET, "/apply").await;
+    assert_eq!(form.status, if built { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE });
+    if built {
+        let page = ASSETS.iter().find(|(path, _)| *path == "apply.html").map(|(_, bytes)| *bytes).unwrap();
+        assert_eq!(form.body, page, "not the dashboard");
+        let policy = header(&form, header::CONTENT_SECURITY_POLICY);
+        assert!(policy.contains("script-src 'self' https://challenges.cloudflare.com"), "{policy}");
+        assert!(policy.contains("frame-src https://challenges.cloudflare.com"), "{policy}");
+        assert!(policy.contains("frame-ancestors 'none'"), "{policy}");
+        assert_eq!(header(&form, header::REFERRER_POLICY), "no-referrer", "the status link's secret stays put");
+        let dashboard = send(&app, Method::GET, "/").await;
+        assert!(!header(&dashboard, header::CONTENT_SECURITY_POLICY).contains("cloudflare"), "only the form runs it");
+    }
+    for path in ["/apply/status", "/apply.html"] {
+        let answer = send(&app, Method::GET, path).await;
+        assert_eq!((answer.status, &answer.body), (form.status, &form.body), "{path}");
+    }
 }

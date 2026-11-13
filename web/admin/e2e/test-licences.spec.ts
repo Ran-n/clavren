@@ -22,6 +22,7 @@ test("a new product shows its test licence's key, which copies and is stored as 
   const key = (await notice.locator("code.key").textContent()) ?? "";
   expect(key).toMatch(/^BRN(-[0-9A-Z]{4}){4}$/);
   await notice.getByRole("button", { name: "Copy key" }).click();
+  await expect(notice.getByRole("button", { name: "Copied" })).toBeVisible();
   expect(await admin.evaluate(() => navigator.clipboard.readText())).toBe(key);
 
   const product = (await api.get<{ data: { id: string; name: string }[] }>("/products?limit=100")).data.find((p) => p.name === name)!;
@@ -46,6 +47,10 @@ test("test licences are issued with the panel's tick and kept or hidden by the K
   await panel.getByLabel(/^Test licences/).check();
   await panel.getByRole("button", { name: "Issue", exact: true }).click();
   await expect(panel.getByRole("heading", { name: "2 test licences issued" })).toBeVisible();
+  const keys = await panel.getByRole("list", { name: "New keys" }).locator("code").allTextContents();
+  await expect(panel.getByText("The 2 keys are on the clipboard.")).toBeVisible();
+  // Chrome on Windows stores copied line breaks as CRLF, as the Windows clipboard does
+  expect((await admin.evaluate(() => navigator.clipboard.readText())).replaceAll("\r\n", "\n")).toBe(keys.join("\n"));
   await panel.getByRole("button", { name: "Close" }).click();
 
   const { data } = await api.get<Listed>(`/licences?product=${product.id}`);
@@ -92,7 +97,7 @@ test("revoking one computer of a test licence leaves its other computers", async
   await expect(row.getByText("Test", { exact: true })).toBeVisible();
   await row.getByRole("button", { name: "Revoke" }).click();
   const strip = admin.getByRole("group", { name: "Revoke" });
-  await expect(strip).toContainText("the test licence's other computers keep working");
+  await expect(strip).toContainText("The test licence's other computers keep working");
   await strip.getByRole("button", { name: "Revoke" }).click();
   await expect(row).toHaveCount(0); // the list shows computers in use
   await expect(admin.getByRole("row").filter({ hasText: second.name })).toHaveCount(1);

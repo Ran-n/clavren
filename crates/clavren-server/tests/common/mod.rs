@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 14:53:30.025571
-//+ Revised: 	2026/11/09 10:00:42.341591
+//+ Revised: 	2026/11/11 16:32:51.911318
 // -----------------------------------------------------------------------------
 
 //! Helpers shared by the integration tests: a config for a test database, log capture, and a
@@ -18,7 +18,9 @@ use axum::Router;
 use axum::extract::connect_info::MockConnectInfo;
 use chrono::{DateTime, Utc};
 use clavren::clock::{Clock, ManualClock};
-use clavren::config::{AdminAuthSettings, Config, LicensingSettings, ProxySettings, UpdateSettings};
+use clavren::config::{
+    AdminAuthSettings, ApplicationSettings, Config, LicensingSettings, ProxySettings, UpdateSettings,
+};
 use clavren::crypto::key_ring::KeyRing;
 use clavren::crypto::master_key::MasterKey;
 use clavren::http::{AppState, Settings, router};
@@ -40,6 +42,7 @@ pub fn test_config(database: PgConnectOptions, data_dir: &Path) -> Config {
         admin: AdminAuthSettings { secure_cookies: false, ..AdminAuthSettings::default() },
         licensing: LicensingSettings::default(),
         updates: UpdateSettings { dir: data_dir.join("updates"), ..UpdateSettings::default() },
+        applications: ApplicationSettings::default(),
     }
 }
 
@@ -55,6 +58,7 @@ pub fn test_settings() -> Settings {
         admin: AdminAuthSettings::default(),
         licensing: LicensingSettings::default(),
         updates: UpdateSettings::default(),
+        applications: ApplicationSettings::default(),
     }
 }
 
@@ -160,5 +164,6 @@ pub async fn http_get(address: SocketAddr, path: &str) -> (u16, String) {
 
 pub mod admin;
 pub mod api;
+pub mod applying;
 pub mod device;
 pub mod licensing;

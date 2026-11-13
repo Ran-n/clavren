@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/03 04:54:17.627908 )
-[//]: # (+ Revised: 	2026/11/09 11:10:33.847296 )
+[//]: # (+ Revised: 	2026/11/12 23:57:46.441619 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Deployment
@@ -486,6 +486,10 @@ offline.
   go back to the previous version with the commands in [Going back](#going-back).
 - **Details**: `journalctl -u clavren-update`.
 
+**Offline days per product (this release).** Each product now has its own offline limit, and
+products made before it get 30. If the server had another `CLAVREN_TOKEN_DAYS`, set each
+product's **Offline** days on the Products page after upgrading.
+
 The button appears only on installations made from a release bundle (with `install.sh`, or by
 hand as in B5); a server built from source upgrades with `git pull` and the script.
 
@@ -551,16 +555,41 @@ All settings live in `/etc/clavren/clavren.env`. After changing it, run
 | `CLAVREN_SESSION_MAX_DAYS` | `7` | Admins are signed out this long after signing in |
 | `CLAVREN_LOGIN_MAX_FAILURES` | `5` | Failed sign-ins allowed per address and per username… |
 | `CLAVREN_LOGIN_WINDOW_MINUTES` | `15` | …within this many minutes |
-| `CLAVREN_TOKEN_DAYS` | `30` | Days an app keeps working offline after its last check |
+| `CLAVREN_TOKEN_DAYS` | `30` | The offline limit new products start with (2 to 3,650 days); each product then has its own, on the Products page |
+| `CLAVREN_CURRENCY` | `EUR` | The currency the dashboard preselects for prices (three letters, ISO 4217). Stored prices keep their own |
 | `CLAVREN_SIGNING_KEY_VERSION` | `1` | Token-signing key in use ([below](#changing-the-token-signing-key)) |
 | `CLAVREN_BACKUP_DIR` | (required for backups) | The backup drive |
 | `CLAVREN_BACKUP_KEEP` | `14` | How many backups to keep |
 | `CLAVREN_BACKUP_AGE_RECIPIENT` | (none) | An `age1…` public key: backups are encrypted to it |
+| `CLAVREN_TURNSTILE_SITE_KEY` | (none) | The licence application form's [Cloudflare Turnstile](#the-application-forms-human-check) site key. Set both or neither |
+| `CLAVREN_TURNSTILE_SECRET` | (none) | Its secret key |
 | `CLAVREN_UPDATE_SOURCE` | GitHub's latest release of `Ran-n/clavren` | Where to look for a new release (any https:// address that answers in GitHub's release format, such as Codeberg's `/api/v1/repos/Ran-n/clavren/releases/latest`), or `off`: no checks and no Update button |
 
 **Another backup folder**: change `CLAVREN_BACKUP_DIR`, and change both `/mnt/clavren-backups`
 paths in `/etc/systemd/system/clavren-backup.service` to match (the install script does this for
 `--backup-dir`). Then `sudo systemctl daemon-reload`.
+
+### The application form's human check
+
+People can apply for a licence at `https://<your address>/apply`, for the products whose
+applications you open on the Products page. To keep bots off that form, give it Cloudflare
+Turnstile (free):
+
+1. In the Cloudflare dashboard, **Turnstile** → **Add widget**: name it Clavren, add your hostname
+   (e.g. `clavren.example.com`), mode **Managed**.
+2. Put its two keys in `/etc/clavren/clavren.env`:
+
+   ```sh
+   CLAVREN_TURNSTILE_SITE_KEY=0x4AAAAAAA…
+   CLAVREN_TURNSTILE_SECRET=0x4AAAAAAA…
+   ```
+
+3. `sudo systemctl restart clavren`. The form now shows Cloudflare's check, and the server asks
+   Cloudflare (`challenges.cloudflare.com`, over HTTPS) whether each answer is good.
+
+Without the keys the form works with no check, held only by the rate limit (five applications an
+hour per address) and one waiting application per address and product. Requests sent from inside
+an application never have the check either.
 
 ### Where everything is
 

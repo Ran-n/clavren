@@ -10,6 +10,7 @@ import { Link } from "../shared/router";
 import { expanded, type Licence } from "../shared/types";
 import { CustomerField } from "./CustomerField";
 import { updateLicence } from "./licenceApi";
+import { InlinePrice } from "../shared/components/PriceField";
 
 /** The server's limit on a revocation reason. */
 const MAX_REASON = 500;
@@ -54,6 +55,16 @@ export function ReasonField({ licence, onChange }: { licence: Licence; onChange:
   );
 }
 
+export function PriceField({ licence, onChange }: { licence: Licence; onChange: Replace }) {
+  return (
+    <InlinePrice
+      price={licence.price}
+      readOnly={licence.is_test ? "Test licences aren't sold" : undefined}
+      onSave={async (price) => onChange(await updateLicence(licence.id, { price }))}
+    />
+  );
+}
+
 export function licenceColumns(onChange: Replace): Column<Licence>[] {
   return [
     { key: "key", label: "Key", render: (licence) => <KeyField licenceId={licence.id} revoked={licence.state === "revoked"} /> },
@@ -64,6 +75,7 @@ export function licenceColumns(onChange: Replace): Column<Licence>[] {
     { key: "redeemed", label: "Activated", optional: true, render: (licence) => formatDateTime(expanded(licence.active_activation)?.activated_at) },
     { key: "last_check", label: "Last check", optional: true, render: (licence) => formatDateTime(expanded(licence.active_activation)?.last_checked_at) },
     { key: "expiry", className: "table__nowrap", label: "Expires", optional: true, render: (licence) => <ExpiryField licence={licence} onChange={onChange} /> },
+    { key: "price", label: "Price", optional: true, hiddenByDefault: true, render: (licence) => <PriceField licence={licence} onChange={onChange} /> },
     { key: "notes", label: "Notes", optional: true, render: (licence) => <NotesField licence={licence} onChange={onChange} /> },
     {
       key: "open",

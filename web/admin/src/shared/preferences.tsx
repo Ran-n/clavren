@@ -12,7 +12,7 @@ import { describe } from "./errors";
 import { looksLikeKey } from "./keys";
 
 export type Theme = "system" | "light" | "dark";
-export type TableName = "licences" | "customers" | "products" | "activations" | "audit" | "backups";
+export type TableName = "licences" | "customers" | "products" | "activations" | "applications" | "audit" | "backups";
 export type TablePreferences = {
   filters?: Record<string, string>;
   search?: string;

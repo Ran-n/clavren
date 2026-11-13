@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.712018
-//+ Revised: 	2026/11/10 17:59:20.084014
+//+ Revised: 	2026/11/12 23:57:43.877804
 // -----------------------------------------------------------------------------
 
 //! The daily check: the application asks for a challenge, signs it with its device key, and gets a
@@ -107,6 +107,7 @@ pub async fn check(
         product_code: &target.product_code,
         device_public_key: &device_public_key,
         licence_expires_at: target.licence_expires_at,
+        offline_days: target.product_offline_days,
         test: target.licence_is_test,
     };
     Ok(Checked { token: tokens::issue(state, &subject, now), licence_expires_at: target.licence_expires_at })

@@ -9,12 +9,13 @@ import { Button } from "../shared/components/Button";
 import { ConfirmStrip } from "../shared/components/ConfirmStrip";
 import { CopyButton, KeyField } from "../shared/components/Copy";
 import { ErrorNotice, Loading } from "../shared/components/Notice";
+import { offlineLimit } from "../shared/errors";
 import { formatDateTime } from "../shared/format";
 import { useTitle } from "../shared/hooks";
 import { Link, navigate } from "../shared/router";
 import { expanded, type Licence } from "../shared/types";
 import { ActivationHistory } from "./ActivationHistory";
-import { ExpiryField, NotesField, ReasonField } from "./columns";
+import { ExpiryField, NotesField, PriceField, ReasonField } from "./columns";
 import { CustomerField } from "./CustomerField";
 import { DELETED_NOTICE, LICENCE_EXPAND } from "./licenceApi";
 
@@ -29,7 +30,7 @@ function computersUsing(licence: Licence): string {
 function deleteMessage(licence: Licence): string {
   switch (licence.state) {
     case "redeemed":
-      return `Delete this licence? ${computersUsing(licence)} locks at its next check, the key stops working, and the licence disappears with its history. This can't be undone.`;
+      return `Delete this licence? ${computersUsing(licence)} locks at its next check.${offlineLimit(expanded(licence.product))} The key stops working, and the licence disappears with its history. This can't be undone.`;
     case "unused":
       return "Delete this licence? Its key stops working and the licence disappears. This can't be undone.";
     case "revoked":
@@ -38,12 +39,12 @@ function deleteMessage(licence: Licence): string {
 }
 
 function resetMessage(licence: Licence): string {
-  return `Reset this licence? ${computersUsing(licence)} locks at its next check, and the same key can then be activated on another computer.`;
+  return `Reset this licence? ${computersUsing(licence)} locks at its next check.${offlineLimit(expanded(licence.product))} The same key can then be activated on another computer.`;
 }
 
 function revokeMessage(licence: Licence): string {
   const using = computersUsing(licence).toLowerCase();
-  return `Revoke this licence? Its key is deleted and can never be used again, and ${using} locks at its next check. This can't be undone.`;
+  return `Revoke this licence? Its key is deleted and can never be used again, and ${using} locks at its next check.${offlineLimit(expanded(licence.product))} This can't be undone.`;
 }
 
 function resetReason(licence: Licence): string | null {
@@ -103,6 +104,8 @@ export function LicenceDetailPage({ id }: { id: string }) {
         <dd>{formatDateTime(licence.created_at)}</dd>
         <dt>Expires</dt>
         <dd><ExpiryField licence={licence} onChange={setLicence} /></dd>
+        <dt>Price</dt>
+        <dd><PriceField licence={licence} onChange={setLicence} /></dd>
         <dt>Notes</dt>
         <dd><NotesField licence={licence} onChange={setLicence} /></dd>
         {revoked && (

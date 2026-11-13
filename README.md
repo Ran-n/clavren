@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:54.923033 )
-[//]: # (+ Revised: 	2026/11/10 18:26:26.740147 )
+[//]: # (+ Revised: 	2026/11/12 23:57:43.080791 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 <h1 align="center">Clavren</h1>
@@ -33,10 +33,12 @@ Clavren makes the keys you hand out, makes sure each one works on a single compu
 ## Why Clavren?
 
 - **One key, one computer.** A key works on the first computer it's entered on, and nowhere else.
-- **Works offline.** Apps keep working for up to 30 days without internet, so a blocked school network or a server outage doesn't lock anyone out.
+- **Works offline.** Apps keep working without internet for as many days as you set per product (30 unless you change it, from 2 to 3,650), so a blocked school network or a server outage doesn't lock anyone out.
 - **Customers can move.** After a reinstall or a new PC, you free their key in one click and they enter the same key again.
 - **You stay in control.** Cancel any key, used or not, and it stops on any computer that goes online within about a day. See who has each key and every computer it has been on.
 - **Permanent or until a date.** Sell for good, or for a school year and extend it later.
+- **Prices on record.** Give each product a price per key; every key issued records what it was charged (or that it was free), and the Overview adds up what was charged.
+- **People can apply.** Open a product to applications and people ask for a licence from inside your app or on a web form. You approve or reject each one; an approved key activates in the app by itself, or shows on the applicant's private page.
 - **Test licences.** Every new product comes with a test key that works on as many of your own computers as you like, kept out of the numbers.
 - **Yours, not a third party's.** It runs on your own Raspberry Pi; no licensing company in the middle.
 
@@ -44,11 +46,11 @@ Clavren makes the keys you hand out, makes sure each one works on a single compu
 
 ## How a key works
 
-1. You issue a key to a customer in the dashboard, for example `BRN-7KPX-4M9D-QW2R-8NFC`, and **Copy message** gives you a ready-to-send email with it.
+1. You issue a key to a customer in the dashboard, for example `BRN-7KPX-4M9D-QW2R-8NFC`; the key is copied as soon as it's issued, and **Copy message** gives you a ready-to-send email with it.
 2. The customer types the key into the app. Clavren checks it belongs to that app and isn't in use elsewhere, then ties it to that computer.
-3. The app starts straight away with its saved licence, and quietly confirms with Clavren once a day whenever it's online. Without internet it keeps working for up to 30 days.
+3. The app starts straight away with its saved licence, and quietly confirms with Clavren once a day whenever it's online. Without internet it keeps working for its product's offline days (30 unless you change it).
 4. If the customer gets a new computer, you **reset** the key; the old computer locks and the same key works on the new one.
-5. If you **revoke** a key, it never works again. A computer using it locks within about a day if it's online, or within 30 days if it never goes online.
+5. If you **revoke** a key, it never works again. A computer using it locks within about a day if it's online, or once its product's offline days run out if it never goes online.
 
 ---
 
@@ -63,7 +65,7 @@ Personal and non-commercial use is free. Commercial use needs a revenue-share ag
 <details>
 <summary><b>What happens if the Raspberry Pi is off?</b></summary>
 
-Apps keep working on their saved licence for up to 30 days. Only a new activation needs the server to be up.
+Apps keep working on their saved licence for their product's offline days (30 by default). Only a new activation needs the server to be up.
 </details>
 
 <details>
@@ -115,7 +117,7 @@ The full guide is [docs/development.md](docs/development.md).
 | [docs/spec.md](docs/spec.md) | The full specification: data model, protocol, security, deployment, tests |
 | [docs/design-decisions.md](docs/design-decisions.md) | Why it's built this way and where it departs from the usual defaults |
 | [docs/api.md](docs/api.md) | The HTTP API, with test vectors, and the `clavren-admin` commands |
-| [docs/client-integration.md](docs/client-integration.md) | Adding licensing to a desktop app with `clavren-client` |
+| [docs/client-integration.md](docs/client-integration.md) | Adding licensing to a desktop app with `clavren-client`, or without it in another language |
 | [docs/deployment.md](docs/deployment.md) | Installing and upgrading on a Raspberry Pi, step by step |
 | [docs/backup-and-recovery.md](docs/backup-and-recovery.md) | Nightly backups and restoring onto a fresh Pi |
 | [docs/development.md](docs/development.md) | Build, checks, tests, project layout, conventions |

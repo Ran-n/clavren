@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.098038 )
-[//]: # (+ Revised: 	2026/11/10 17:59:24.066867 )
+[//]: # (+ Revised: 	2026/11/12 23:57:46.655750 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Clavren — Specification
@@ -15,17 +15,19 @@ Why each decision was made is in [design-decisions.md](design-decisions.md).
 Clavren is the licensing server for Breren's own applications (avalio-lite first, others later). An application asks for a licence key when it is installed; Clavren says whether that key is valid, ties it to that computer, and keeps checking it whenever the computer is online.
 
 - The administrator hands out keys **by hand** (e.g. by email after a sale), and records who received each one.
+- People can also **apply for a licence**, from inside the application or on a web form, for the products that take applications. The administrator approves (which issues the licence) or rejects each one; an approved application's key reaches the applicant by itself.
 - Licences are **permanent** or **time-limited** (work until a date, which can be extended).
 - A key works on **one computer (one Windows user account) at a time**. The administrator can **reset** it so the customer can move to a new computer, or **revoke** it for good.
-- An application checks its licence with Clavren **once a day**: whenever its last successful check is more than 24 hours old, at start or while running, if it has internet. A revocation or expiry change reaches an online computer within about a day. A computer without internet keeps working for **up to 30 days**, then needs to check in.
+- An application checks its licence with Clavren **once a day**: whenever its last successful check is more than 24 hours old, at start or while running, if it has internet. A revocation or expiry change reaches an online computer within about a day. A computer without internet keeps working for as many days as its product's **offline limit** (30 unless the administrator sets 2 to 3,650 on the Products page), then needs to check in.
 - Expected size: hundreds to a few thousand licences, a handful of products, one administrator at first (more later).
 - It runs on a **Raspberry Pi 5**, natively (no Docker), with PostgreSQL on the same Pi, reachable from the internet through Cloudflare Tunnel.
 
 ### Out of scope
 
-- Selling: payments, shops, carts, subscriptions billing, shop webhooks. Sales happen elsewhere; the administrator issues keys by hand.
+- Selling: payments, shops, carts, subscriptions billing, shop webhooks. Sales happen elsewhere; the administrator issues keys by hand. Clavren does record prices: each product's price per key and what each key was charged (section 3), shown in the Licences table, the CSV and the Overview.
 - Sending email: the dashboard prepares the message, the administrator sends it.
-- Customer accounts or any page customers log into. Customers only ever type a key into an app.
+- Customer accounts or any page customers log into. Customers type a key into an app, or apply for one and follow their application through a private link (section 2).
+- Sending email, also for applications: the applicant sees the outcome in the application or on their application's page.
 - Trials for customers and feature tiers (editions). Can be added later. (Test licences, for the
   administrator's own testing, are in scope: section 3.)
 - Stopping people who patch the application binary to skip the check. Clavren prevents key sharing and casual piracy, not cracking; nothing is added that only aims at that.
@@ -38,8 +40,20 @@ Clavren is the licensing server for Breren's own applications (avalio-lite first
 
 1. A customer buys or is granted a product.
 2. In the dashboard the administrator clicks **Issue licences**, picks the product, the customer (an existing one, or a new name and email typed in place), how many, and optionally an expiry date.
-3. Clavren generates the keys, e.g. `BRN-7KPX-4M9D-QW2R-8NFC`, stores them encrypted and shows them.
+3. Clavren generates the keys, e.g. `BRN-7KPX-4M9D-QW2R-8NFC`, stores them encrypted and shows them, already copied to the clipboard.
 4. **Copy message** puts a ready-to-send text on the clipboard (the product's message template with the customer's name and key filled in). The administrator pastes it into an email.
+
+### Applying for a licence
+
+Each product has one page that says how to get a key: `/apply?product=<code>` (the Products page copies the link as **Copy key page link**, open or closed). It shows the product's description and the administrator's **How to get a key** text (written on the Products page; line breaks kept, `https://` addresses as links), then the application form when the product takes applications. Closed and without text, it says "Ask the seller of <name> for a licence key."; an inactive or unknown product reads "This product isn't available." Applications link to it from their key prompt (**How to get a key**, the client's `get_key_url()`) instead of carrying instructions of their own, so changing the text changes it for every installed copy at once.
+
+1. The administrator opens applications for a product (**Open** in its Applications column on the Products page). Closed is the default.
+2. Someone applies with their name, email and an optional message: in the application (the client's `apply`), on the product's key page, or on the web form at `/apply` (with a product picker over the products that take applications). The web form shows Cloudflare Turnstile's check when the server has Turnstile keys.
+3. They get a random secret: the application keeps it; the web form moves to the application's private page, `/apply/status#<secret>`, to bookmark.
+4. On the **Applications** page the administrator approves it (the issue fields inline: the customer is the existing one with that email, or a new one from the name and email; optional expiry, notes and price, empty by default), which issues one licence, or rejects it with an optional reason the applicant is shown.
+5. Once approved, the application asks (every 15 minutes while waiting) and activates the key by itself; the status page shows the key with **Copy**. A rejection shows the reason.
+
+One application per address may wait for each product; each client address sends at most five an hour. Decided applications are kept as history until the administrator deletes them.
 
 ### Activating
 
@@ -51,7 +65,7 @@ Clavren is the licensing server for Breren's own applications (avalio-lite first
 ### Once a day
 
 1. The application starts immediately if its stored token is valid (checked offline: signature, product, expiry, this device).
-2. If its last successful check is more than 24 hours old (at start, or later while it keeps running), it asks Clavren to confirm in the background. Clavren checks the licence is still valid and returns a fresh token (valid 30 days, or until the licence's expiry if sooner).
+2. If its last successful check is more than 24 hours old (at start, or later while it keeps running), it asks Clavren to confirm in the background. Clavren checks the licence is still valid and returns a fresh token (valid for the product's offline days, or until the licence's expiry if sooner).
 3. If Clavren says the licence was revoked, reset or has expired, the application locks with a clear message within seconds.
 4. If Clavren can't be reached, nothing changes: the application keeps running on its token and tries again later.
 
@@ -62,7 +76,7 @@ Clavren is the licensing server for Breren's own applications (avalio-lite first
 
 ### Revoking
 
-**Revoke** on a licence (used or not) makes it permanently unusable. A computer using it locks at its next daily check (within about a day if it goes online); an offline one at the latest when its token expires (30 days). The confirmation strip in the dashboard says this.
+**Revoke** on a licence (used or not) makes it permanently unusable. A computer using it locks at its next daily check (within about a day if it goes online); an offline one at the latest when its product's offline limit runs out (its token expires). The confirmation strip in the dashboard says this, with the product's limit.
 
 ### Changing the expiry
 
@@ -72,9 +86,10 @@ The administrator edits the expiry date in place (extend a school year, make it 
 
 ## 3. Concepts
 
-- **Product**: an application that uses Clavren. It has a unique `code` (e.g. `avalio-lite`, used in tokens), made from the name when none is given, a name, a description, an active flag, and the message template for issued keys. Deleting a product deletes all its licences and their history; their computers lock at their next check. Deactivating keeps everything.
+- **Product**: an application that uses Clavren. It has a unique `code` (e.g. `avalio-lite`, used in tokens), made from the name when none is given, a name, a description, an active flag, whether it takes licence applications (off until the administrator opens them), the message template for issued keys, its offline limit (2 to 3,650 days, 30 by default; there is no unlimited), an optional price per key, and optional instructions on how to get a key (up to 2,000 characters), shown on its key page. Deleting a product deletes all its licences and their history, and its applications; their computers lock at their next check. Deactivating keeps everything.
+- **Licence application**: someone's request for a licence of a product that takes applications: name, email, optional message, where it came from (the application or the web form), when it arrived, and the decision: waiting, **approved** (with the licence it issued, and when the key was first collected) or **rejected** (with an optional reason for the applicant). The applicant holds a 256-bit secret; only its BLAKE3 hash is stored. An approval whose licence was revoked or deleted since reads as **withdrawn** to the applicant.
 - **Customer**: who received a key: name, optional email, notes. Only the administrator sees it. One customer can have several licences.
-- **Licence**: one key for one product, optionally for a customer, optionally with an expiry date. Its state is **unused**, **redeemed** (in use on a computer) or **revoked**; the state is derived, never stored (section 7).
+- **Licence**: one key for one product, optionally for a customer, optionally with an expiry date, and what its key was charged (filled in from the product's price when issued, changeable; `0` is a key given for free, none is "not recorded"; a test licence never has one). Its state is **unused**, **redeemed** (in use on a computer) or **revoked**; the state is derived, never stored (section 7).
 - **Test licence**: a licence for trying an application against the real server, not a sale. It works on **any number of computers at once**, its tokens say it is a test licence (the application may show so), and the Overview leaves it, its computers and its checks out. Every new product comes with one (the product's creation shows its key); more are issued with **Issue licences** by ticking **Test licences**. A licence is a test licence from issuing to deletion.
 - **Activation**: one computer (Windows user account) a licence was bound to: its public key, name, platform, app version, when it was activated and last checked, and whether and why it was revoked. A licence has at most one active activation (a test licence any number); earlier ones stay as history.
 
@@ -112,6 +127,7 @@ The `clavren-client` crate does all of this for Rust applications; others follow
 
 - **At start**: validate the cached token offline (signature with the embedded public key, `aud` = this product, not expired, the token's `dev` claim matches this device's key, no clock rollback). Valid → the application starts at once. If the last successful check is more than 24 hours old, check online in the background.
 - **While running**: check online once 24 hours have passed since the last successful check. The interval is configurable in the client.
+- **While an application waits**: without an activation but with a licence application sent, ask how it went every 15 minutes (configurable); once approved, activate its key.
 - **Always online first**: without a valid cached token (first activation, token expired, clock rolled back) the application checks at once, whatever the interval.
 - **After a network failure**: retry with backoff (1, 5, 15, 60 minutes), never more often.
 - Checks run off the UI thread; the application is never blocked waiting for the network.
@@ -129,8 +145,12 @@ The application receives one typed outcome and shows its own translated message:
 | `Revoked` | Licence revoked, or this computer was reset | Locks; shows the support contact |
 | `Expired { at }` | Licence past its expiry date | Locks; shows the support contact |
 | `ProductUnavailable` | Product deactivated | Locks |
-| `NeedsCheck` | Token expired (30 days offline) or clock rolled back | Asks to connect to the internet |
+| `NeedsCheck` | Token expired (the product's offline days without a check) or clock rolled back | Asks to connect to the internet |
 | `RateLimited { retry_after }` | Too many attempts | Waits |
+| `ApplicationPending` | A licence application from this computer waits | Says so; may offer to type a key instead |
+| `ApplicationRejected { reason }` | It was rejected (or withdrawn); `reason` is the administrator's, for the applicant | Shows it; asks for a key or offers to apply again |
+
+`apply(applicant)` sends an application and answers `Sent`, `AlreadyPending` (that address has one waiting), `InvalidDetails`, `ProductUnavailable`, `AlreadyLicensed` (nothing sent), `RateLimited` or `Unreachable`. Sending one sets aside a locked licence. `dismiss_application()` sets an application aside (back to `NeedsActivation`).
 
 **Definitive** refusals (`Revoked`, `Expired`, `ProductUnavailable`, unknown activation) delete the cached token and lock immediately. **Temporary** failures (no network, timeout, server error, rate limit) change nothing while the token is valid.
 
@@ -178,19 +198,38 @@ clavren-check-v1
 - **200** `{ token, token_expires_at, licence_expires_at, server_time }`.
 - Errors: `activation_revoked` (reset or revoked), `licence_revoked`, `licence_expired`, `product_unavailable`, `challenge_invalid`.
 
+### `GET /api/v1/applications/form`
+
+`{ products: [{ code, name, description }], turnstile_site_key, server_time }`: the active products that take applications, by name, and the Turnstile site key (`null` without one).
+
+### `GET /api/v1/applications/products/{code}`
+
+A product's key page: `{ code, name, description, key_instructions, accepts_applications, server_time }`, for an active product. An inactive or unknown code is **404** `product_unavailable`, the same for both. No rate limit (one indexed read, no secrets).
+
+### `POST /api/v1/applications`
+
+Request: `product` (code), `name` (up to 200), `email`, `message` (optional, up to 2,000), `source` (`app`, the default, or `web`), `turnstile_token` (the web form's, required from `web` when the server has Turnstile keys). The product must be active and take applications.
+
+- **201** `{ application, secret, server_time }`: `secret` is 32 random bytes, shown this once; the server keeps its BLAKE3 hash.
+- Errors: `invalid_request`, `product_unavailable`, `application_pending` (409: this address already has one waiting for this product), `human_check_failed` (403). A Turnstile check that can't run (Cloudflare unreachable, a wrong secret) is `internal_error`, logged.
+
+### `POST /api/v1/applications/status`
+
+Request: `secret`. **200** `{ application, product, status, created_at, decided_at, reason, key, licence_expires_at, server_time }`; `status` is `pending`, `approved` (`key` is the licence key while the licence has one), `rejected` (`reason`, when given) or `withdrawn` (approved, but the licence was revoked or deleted since). The first answer with the key is audited. Error: `application_unknown` (404: wrong secret, or deleted).
+
 ### Activation token
 
-A JWT signed with Ed25519 (EdDSA), header `kid`. Claims: `iss` (public service URL), `aud` (product code), `sub` (licence ID), `act` (activation ID), `dev` (BLAKE3 of the device public key, base64url), `lic_exp` (licence expiry, if any), `test` (`true` for a test licence, absent otherwise), `iat`, `exp`, `jti`. `exp` = `min(now + 30 days, licence expiry)`; the 30 days are configurable.
+A JWT signed with Ed25519 (EdDSA), header `kid`. Claims: `iss` (public service URL), `aud` (product code), `sub` (licence ID), `act` (activation ID), `dev` (BLAKE3 of the device public key, base64url), `lic_exp` (licence expiry, if any), `test` (`true` for a test licence, absent otherwise), `iat`, `exp`, `jti`. `exp` = `min(now + the product's offline days, licence expiry)`; each product sets its offline days (2 to 3,650), and new products start at `CLAVREN_TOKEN_DAYS` (30).
 
 Applications embed a **list** of trusted public keys by `kid`. Each signing key is derived from the master key with a versioned context (`v1`, `v2`…). Rotation: ship application versions that trust both keys, then switch the server with a CLI command once old versions are retired.
 
 ### Errors
 
-Every error is `{ "error": "<code>", "message": "<English, for logs>" }`; 429 adds `Retry-After`. Codes: `invalid_key`, `already_activated`, `licence_revoked`, `licence_expired`, `product_unavailable`, `activation_revoked`, `challenge_invalid`, `rate_limited`, `invalid_request`, `internal_error`. An unknown key and a key for another product share `invalid_key`, so the server never reveals that a key exists for another product. Other refusals say why, because "already in use" is exactly when the customer needs to ask for a reset, and 80-bit keys with rate limits make guessing pointless.
+Every error is `{ "error": "<code>", "message": "<English, for logs>" }`; 429 adds `Retry-After`. Codes: `invalid_key`, `already_activated`, `licence_revoked`, `licence_expired`, `product_unavailable`, `activation_revoked`, `challenge_invalid`, `application_pending`, `application_unknown`, `human_check_failed`, `rate_limited`, `invalid_request`, `internal_error`. An unknown key and a key for another product share `invalid_key`, so the server never reveals that a key exists for another product. Other refusals say why, because "already in use" is exactly when the customer needs to ask for a reset, and 80-bit keys with rate limits make guessing pointless.
 
 ### Limits
 
-- Rate limits per client IP: activations 10/hour; challenges and checks 120/hour. Per activation: 30 checks/hour. Counted in memory (single instance).
+- Rate limits per client IP: activations 10/hour; challenges and checks 120/hour; applications sent 5/hour (refused ones count too); application status questions 120/hour. Per activation: 30 checks/hour. Counted in memory (single instance).
 - Request bodies up to 16 KiB; text fields up to 200 characters.
 - No CORS (desktop applications don't need it).
 
@@ -203,7 +242,7 @@ Every error is `{ "error": "<code>", "message": "<English, for logs>" }`; 429 ad
 SQL migrations embedded in the binary and run at startup. All timestamps `TIMESTAMPTZ` in UTC. Every table is in BCNF; the check per table is in `docs/design-decisions.md`.
 
 ### `products`
-`id` UUID PK · `code` text unique (immutable once it has licences, because tokens carry it) · `name` · `description` nullable · `message_template` text (placeholders `{customer_name}`, `{product_name}`, `{key}`) · `is_active` boolean · `created_at` · `updated_at`.
+`id` UUID PK · `code` text unique (immutable once it has licences, because tokens carry it) · `name` · `description` nullable · `message_template` text (placeholders `{customer_name}`, `{product_name}`, `{key}`) · `is_active` boolean · `accepts_applications` boolean (false by default) · `key_instructions` text nullable (up to 2,000 characters) · `offline_days` integer 2 to 3,650 (30 by default: how long its tokens last) · `price_amount` bigint nullable and `price_currency` text nullable (both or neither: the price per key in minor units, 0 to 99,999,999, and an ISO 4217 code) · `created_at` · `updated_at`.
 
 ### `customers`
 `id` UUID PK · `name` text · `email` nullable text, unique case-insensitively when present · `notes` nullable · `created_at` · `updated_at`.
@@ -211,9 +250,14 @@ SQL migrations embedded in the binary and run at startup. All timestamps `TIMEST
 Deleting a customer erases their personal data: their licences keep working and lose the link (`customer_id` set to NULL). Audit entries reference customers by ID only, never by name or email, so deletion really removes them.
 
 ### `licenses`
-`id` UUID PK · `product_id` FK · `customer_id` nullable FK · `key_lookup` BYTEA unique (keyed BLAKE3) · `created_at` · `expires_at` nullable (NULL = permanent) · `revoked_at` nullable · `revocation_reason` nullable · `internal_notes` nullable · `is_test` boolean (never changes once issued).
+`id` UUID PK · `product_id` FK · `customer_id` nullable FK · `key_lookup` BYTEA unique (keyed BLAKE3) · `created_at` · `expires_at` nullable (NULL = permanent) · `revoked_at` nullable · `revocation_reason` nullable · `internal_notes` nullable · `is_test` boolean (never changes once issued) · `price_amount` and `price_currency` as on `products` (what this key was charged; never on a test licence).
 
 There is no stored state and no redemption time; both would copy facts held elsewhere. The view `license_states` derives the state: **revoked** if `revoked_at` is set, else **redeemed** if it has an activation with `revoked_at IS NULL`, else **unused**. The redemption time is that activation's `activated_at` (the latest one's, for a test licence on several computers), and `active_computers` counts them.
+
+### `license_applications`
+`id` UUID PK · `product_id` FK (deleted with the product) · `name` · `email` · `message` nullable · `source` (`app` or `web`) · `secret_hash` BYTEA unique (BLAKE3 of the secret) · `created_at` · `decided_at` nullable · `decision` nullable (`approved` or `rejected`, set with `decided_at`) · `license_id` nullable unique FK (only when approved; NULL once that licence is deleted) · `rejection_reason` nullable (only when rejected) · `key_collected_at` nullable (only when approved).
+
+One waiting application per product and email, ignoring case (a partial unique index). Deleting a customer deletes the applications whose licence is theirs, so their name and email go too. Decided applications are kept as history until the administrator deletes them.
 
 ### `license_key_secrets`
 `license_id` UUID PK/FK · `ciphertext` · `nonce` · `encryption_version`. Deleted when the licence is revoked.
@@ -241,7 +285,7 @@ A trigger keeps at most one active activation per licence, except test licences 
 ### `audit_logs`
 `id` UUID PK · `admin_user_id` nullable FK · `action` · `entity_type` · `entity_id` nullable UUID · `metadata` JSONB · `ip_address` nullable INET · `created_at`.
 
-Recorded: licences issued, key revealed, copied as message or exported, licence edited (the names of the fields changed), reset, revoked, deleted (with the state it was in), activation created, refused checks (revoked, expired, unavailable), product and customer changes, admin login, failed login, logout, password and TOTP changes. Successful checks are not audited (they update `last_checked_at`). Kept indefinitely. Never contains keys, passwords, tokens, or customer names and emails.
+Recorded: licences issued, key revealed, copied as message or exported, licence edited (the names of the fields changed), reset, revoked, deleted (with the state it was in), activation created, refused checks (revoked, expired, unavailable), product and customer changes, licence applications (received, approved, rejected, deleted, key collected), admin login, failed login, logout, password and TOTP changes. Successful checks are not audited (they update `last_checked_at`). Kept indefinitely. Never contains keys, passwords, tokens, or customer names and emails.
 
 ### `backup_runs`
 `id` UUID PK · `finished_at` · `archive_name` · `size_bytes` BIGINT.
@@ -250,7 +294,7 @@ Recorded: licences issued, key revealed, copied as message or exported, licence 
 `hour` TIMESTAMPTZ PK (a whole hour) · `checks` BIGINT (> 0): successful checks in that hour, for the Overview (test licences' checks aren't counted). One row per hour, not per check.
 
 ### Housekeeping
-An hourly background task deletes used or expired challenges, expired or revoked sessions, and check counts older than 30 days.
+An hourly background task deletes used or expired challenges, expired or revoked sessions, and check counts older than 30 days. Licence applications are never cleaned up: they are history.
 
 ---
 
@@ -272,12 +316,13 @@ A polished, responsive web application (React, TypeScript, Vite) embedded in the
 
 ### Pages
 
-- **Overview**: products, licences by state, active computers, computers that checked in and checks made in the last 24 hours (all without test licences, which the page says), last successful backup (warning if over 48 hours old), and the server: its version, the last check for a newer release (or why it failed) and **Check now**.
+- **Overview**: products, licences by state, what keys were charged (last 30 days and in total, one figure per currency; how many keys have no recorded price; deleted licences aren't counted), active computers, computers that checked in and checks made in the last 24 hours (all without test licences, which the page says), last successful backup (warning if over 48 hours old), and the server: its version, the last check for a newer release (or why it failed) and **Check now**.
 - **Every page**: when a newer release is out, a notice with the version, **What's new** (the release page) and **Update to X.Y.Z**, which turns into an inline confirmation (with "Update without a backup" to tick when the backup drive isn't mounted), then shows the update's progress and, after the dashboard reloads itself, "Updated to X.Y.Z".
-- **Licences**: table with key (hidden, **Reveal** / **Copy**), product, customer, state, issued, redeemed, last check, customer, expiry and notes (inline; revocation reason inline on revoked licences); the product, key, state and dates are read-only. Search by key (normalized and looked up by hash), customer name or email, licence ID. Filters by product, state, expiry (permanent, expiring within 30 days, expired), kind (test licences), each of which can also exclude ("Except revoked"), plus a hide box for key, customer or licence ID. Test licences carry a **Test** badge. Primary action **Issue licences**: inline panel with product, customer (picked from a searchable list of every customer, or typed as a new one), quantity (up to 1,000), optional expiry and notes, and a **Test licences** tick (never remembered); the new keys appear there with **Copy message** (one customer) and **Download CSV**. Bulk: set customer, edit expiry, edit notes, edit reason, export CSV, revoke, delete (with the server's count of what goes).
+- **Licences**: table with key (hidden, **Reveal** / **Copy**), product, customer, state, issued, redeemed, last check, customer, expiry, price (an optional column, hidden by default; read-only on test licences) and notes (inline; revocation reason inline on revoked licences); the product, key, state and dates are read-only. Search by key (normalized and looked up by hash), customer name or email, licence ID. Filters by product, state, expiry (permanent, expiring within 30 days, expired), kind (test licences), each of which can also exclude ("Except revoked"), plus a hide box for key, customer or licence ID. Test licences carry a **Test** badge. Primary action **Issue licences**: inline panel with product, customer (picked from a searchable list of every customer, or typed as a new one), quantity (up to 1,000), optional expiry and notes, **Price per key** (filled in from the product, changeable, empty for none; empty and off while **Test licences** is ticked), and a **Test licences** tick (never remembered); the new keys appear there, already on the clipboard, with **Copy key(s)** (and **Copy** per key when there are several), **Copy message** (one customer) and **Download CSV**. Bulk: set customer, edit expiry, edit notes, edit price (test licences keep none, and the result says how many), edit reason, export CSV, revoke, delete (with the server's count of what goes).
 - **Licence detail**: all fields (a test licence also how many computers it is on), Reveal/Copy, **Copy message**, Reset (only when in use; every computer of a test licence), Revoke (unless revoked), Delete (any state), and the activation history (every computer it was on, with reasons).
 - **Customers**: table (inline editing and creation), search by name or email, each with their licences; delete with inline confirmation ("their licences keep working; their name and email are erased").
-- **Products**: table (inline editing and creation, the code made from the name when left empty; a new product's test licence key is shown with **Copy key** until the page is left), activate/deactivate (inline confirmation warning that every computer of that product locks at its next check), delete with its licences (the strip shows how many and how many are in use), link to its licences.
+- **Applications**: table of licence applications, newest first: received, applicant (name and email), product, message, from (application or web form), state (waiting, approved, rejected) and outcome (the licence and whether its key was collected, or the reason); filters by state (waiting by default) and product, search by name or email. **Approve** unfolds the issue fields below the row (customer prefilled: the existing customer with that email, or a new one from the name and email; expiry; notes); **Reject** and **Delete** turn into inline confirmation strips (Reject with a reason for the applicant). Bulk: reject or delete a selection, or every application matching the filter. The Overview says when applications are waiting, with a link here.
+- **Products**: table (inline editing and creation, the code made from the name when left empty; a new product's test licence key is shown with **Copy key** until the page is left), activate/deactivate (inline confirmation warning that every computer of that product locks at its next check), a **How to get a key** column (multi-line, up to 2,000 characters, shown on the product's key page), a **Price** column (per key, edited in place: an amount typed as `19.99` or `19,99` and a currency, preselected from `CLAVREN_CURRENCY`; empty for none), an **Offline** column (days its applications work without a check, 2 to 3,650, edited in place; fewer days asks first in an inline strip, more days saves at once), open or close licence applications, **Copy key page link** (open or closed), delete with its licences (the strip shows how many and how many are in use), link to its licences.
 - **Activations**: table of computers: product, licence (with a **Test** badge), customer, device name, platform, app version, activated, last check, state; filters by state, product and kind. Revoking an activation here ends that computer's activation: the same as resetting its licence, except that a test licence's other computers go on.
 - **Audit log**: who did what, when, from which IP; filters by action, admin, entity, date.
 - **Account**: change password, re-enrol TOTP, regenerate recovery codes, sign out everywhere else.
@@ -286,7 +331,7 @@ A polished, responsive web application (React, TypeScript, Vite) embedded in the
 
 Responses containing a plaintext key carry `Cache-Control: no-store`. Keys are never written to browser storage, preferences, analytics or logs, and a revealed key is hidden again when the admin leaves the page. Reveal, copy-message and export are audited.
 
-CSV export columns: `licence_id, product_code, customer_name, customer_email, key, state, issued_at, expires_at, notes, test`. Cells starting with `=`, `+`, `-`, `@`, tab or carriage return are prefixed with `'` so spreadsheets don't run them as formulas.
+CSV export columns: `licence_id, product_code, customer_name, customer_email, key, state, issued_at, expires_at, notes, test, price, currency` (`price` as a decimal with the currency's digits, e.g. `19.99`; both empty when none). Cells starting with `=`, `+`, `-`, `@`, tab or carriage return are prefixed with `'` so spreadsheets don't run them as formulas.
 
 ---
 
@@ -297,7 +342,7 @@ Under `/api/admin`, authenticated by session cookie plus CSRF header; same-origi
 - **Expand**: related entities are IDs by default and full objects with `?expand=<field>` (repeatable). No `*_id` fields and no copied convenience fields. Licence: `product`, `customer`, `active_activation`. Activation: `license`. Audit entry: `admin_user`. Expanding a page runs one query per field, never one per row.
 - **Pagination** on every list (cursor-based, page size up to 100).
 - **Bulk endpoints**: issue N licences (one multi-row insert), revoke a selection, edit expiry and/or notes of a selection, export a selection or the current filter. Up to 1,000 IDs, one transaction, all-or-nothing with an error naming the IDs that blocked it, one audit entry per item.
-- Resources: products, customers, licences (+ reveal, message, reset, revoke), activations (+ revoke), audit log, overview stats, backup status, updates (status, check now, install), session (login, logout, logout others), account (password, TOTP, recovery codes), preferences.
+- Resources: products, customers, licences (+ reveal, message, reset, revoke), activations (+ revoke), licence applications (+ approve, reject, bulk reject and delete), audit log, overview stats, backup status, updates (status, check now, install), session (login, logout, logout others), account (password, TOTP, recovery codes), preferences.
 
 ---
 
@@ -330,7 +375,7 @@ Under `/api/admin`, authenticated by session cookie plus CSRF header; same-origi
 - **Concurrency**: independent startup steps (loading the master key, connecting to the database) run in parallel; a batch inserts in one statement; list expansion is one query per field.
 - **Client IP**: forwarded headers are trusted only from configured proxies; behind Cloudflare Tunnel the header is `CF-Connecting-IP` (configurable). Otherwise every request would look like it came from `cloudflared`, and one customer could rate-limit everyone.
 - **Health**: `/health/live` (process up) and `/health/ready` (database reachable), revealing nothing else.
-- **Configuration** by environment variables (`/etc/clavren/clavren.env`): database URL, listen address (localhost by default), data directory, public service URL, token lifetime, check interval hint, rate limits, session lifetimes, trusted proxies and header, backup directory and retention.
+- **Configuration** by environment variables (`/etc/clavren/clavren.env`): database URL, listen address (localhost by default), data directory, public service URL, the offline limit new products start with, the currency prices start in, check interval hint, rate limits, session lifetimes, trusted proxies and header, backup directory and retention, and the web application form's Cloudflare Turnstile site key and secret (both or neither; without them the form has no human check).
 
 ---
 
@@ -364,14 +409,15 @@ clavren/
 │   ├── clavren-protocol/   # shared by server and client: key format and normalization,
 │   │                       # wire types, error codes, check message, token claims, test vectors
 │   ├── clavren-server/     # library + binaries `clavren` and `clavren-admin`
-│   │   └── src/            # products/ customers/ licences/ activations/ admin_auth/
+│   │   └── src/            # products/ customers/ licences/ activations/ applications/ admin_auth/
 │   │                       # admin_preferences/ audit/ backups/ crypto/ http/ maintenance/
 │   │                       # config.rs logging.rs bin/
 │   └── clavren-client/     # activation, checks, offline validation, outcomes,
 │                           # store.rs (protected state file) + dpapi.rs (Windows)
 ├── migrations/
 ├── web/admin/              # public/ (served as-is), src/ by page: licences/ customers/
-│                           # products/ activations/ audit/ account/ preferences/ shared/
+│                           # products/ activations/ applications/ audit/ account/ shared/,
+│                           # and apply/: the public application form (apply.html)
 ├── deploy/                 # clavren.service, clavren-backup.{service,timer,sh}, clavren.env.example
 ├── docs/                   # spec, design-decisions, development, api, client-integration,
 │                           # deployment, backup-and-recovery
@@ -390,6 +436,7 @@ Every step ships with its tests; none are left for the end.
 - **Property-based** (`proptest`): encode/normalize round trips; any casing, spacing or dashes of a valid key normalize to it; any character outside the alphabet is rejected; encrypt/decrypt round trips.
 - **Integration** (real PostgreSQL, real migrations, a fresh database per test): every endpoint, success and every error path.
 - **Concurrency**: simultaneous activations of one key → exactly one succeeds, no orphan rows; reset racing a check or a revoke ends consistent.
+- **Applications**: sending (every refusal, the rate limit, one waiting per address, the human check passing, failing and unable to run), status by secret (pending, approved with the key, rejected with the reason, withdrawn, unknown), approve (once; issuing in the same transaction), reject, bulk all-or-nothing, decided ones kept as history, a deleted customer or product taking theirs; the client sending, waiting across restarts and activating the approved key by itself (also against the real server).
 - **Lifecycle**: issue → activate → check → reset → activate elsewhere (old device refused) → revoke (checks refused, key gone, cannot be reset or activated); expiry edit picked up at the next check; token `exp` capped at licence expiry; product deactivation; delete in each state; product deletion; same-device retry is idempotent; deleting a customer keeps their licences working and leaves no name or email anywhere (including audit).
 - **Security**: tampered ciphertext and wrong key rejected; replayed, expired or foreign challenges rejected; wrong signature rejected; tokens with bad signature, wrong product, tampered claims or expired rejected; missing master key with existing licences refuses to start; logs never contain keys, passwords, tokens or customer data.
 - **Admin**: every admin endpoint refuses anonymous requests and missing CSRF; login with wrong password, wrong or reused TOTP, recovery code used twice, all give the same answer; rate limits; bulk endpoints are all-or-nothing; `expand` without per-row queries; preferences saved, restored, invalid ones rejected.

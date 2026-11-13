@@ -49,6 +49,8 @@ tower-http = { version = "0.7.1", features = ["trace", "timeout", "request-id", 
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 unicode-normalization = "0.1.26"
+# verifies the web application form's Turnstile answers with Cloudflare
+ureq = "3.5.1"
 uuid = { version = "1.29.0", features = ["v4", "v7", "serde"] }
 zeroize = "1.9.1"
 

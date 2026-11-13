@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.787103
-//+ Revised: 	2026/11/09 22:30:53.310749
+//+ Revised: 	2026/11/12 23:57:43.332578
 // -----------------------------------------------------------------------------
 
 //! Talking to the server: `POST` JSON, get a status and JSON back. Behind a trait so tests can
@@ -21,11 +21,19 @@ pub struct Answer {
 pub trait Transport: Send + Sync {
     /// `Err` only when no answer arrived (no network, timeout, refused connection).
     fn post(&self, path: &str, body: &Value) -> Result<Answer, String>;
+
+    /// The address of the server's web page at `path` (starting with `/`), for the application
+    /// to open in the browser. Never goes online.
+    fn page_url(&self, path: &str) -> String;
 }
 
 impl<T: Transport + ?Sized> Transport for std::sync::Arc<T> {
     fn post(&self, path: &str, body: &Value) -> Result<Answer, String> {
         (**self).post(path, body)
+    }
+
+    fn page_url(&self, path: &str) -> String {
+        (**self).page_url(path)
     }
 }
 
@@ -86,6 +94,10 @@ impl Transport for HttpTransport {
         // a proxy's HTML error page isn't JSON; the status still says what happened
         Ok(Answer { status, body: serde_json::from_str(&text).unwrap_or(Value::Null), retry_after })
     }
+
+    fn page_url(&self, path: &str) -> String {
+        format!("{}{path}", self.base_url)
+    }
 }
 
 #[cfg(test)]
@@ -111,6 +123,14 @@ mod tests {
             "",
         ] {
             assert!(!secure_or_local(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn page_addresses_never_double_the_slash() {
+        for base in ["https://licences.example.com", "https://licences.example.com/"] {
+            let url = HttpTransport::new(base).page_url("/apply?product=avalio-lite");
+            assert_eq!(url, "https://licences.example.com/apply?product=avalio-lite", "{base}");
         }
     }
 

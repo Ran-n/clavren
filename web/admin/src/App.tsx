@@ -4,6 +4,7 @@
 import { useEffect, useRef } from "react";
 import { AccountPage } from "./account/AccountPage";
 import { ActivationsPage } from "./activations/ActivationsPage";
+import { ApplicationsPage } from "./applications/ApplicationsPage";
 import { AuditPage } from "./audit/AuditPage";
 import { CustomersPage } from "./customers/CustomersPage";
 import { LicenceDetailPage } from "./licences/LicenceDetailPage";
@@ -36,6 +37,8 @@ function Page() {
       return <ProductsPage />;
     case "/activations":
       return <ActivationsPage />;
+    case "/applications":
+      return <ApplicationsPage />;
     case "/audit":
       return <AuditPage />;
     case "/account":

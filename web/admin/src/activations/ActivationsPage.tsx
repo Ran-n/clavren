@@ -10,6 +10,7 @@ import { ConfirmStrip } from "../shared/components/ConfirmStrip";
 import { DataTable, type Column } from "../shared/components/DataTable";
 import { ColumnPicker, FilterSelect, Pager, SearchBox, Toolbar } from "../shared/components/ListControls";
 import { ErrorNotice } from "../shared/components/Notice";
+import { offlineLimit } from "../shared/errors";
 import { formatDateTime } from "../shared/format";
 import { DEFAULT_PAGE_SIZE, useDebounced, usePagedList, useTitle } from "../shared/hooks";
 import { useTablePreferences } from "../shared/preferences";
@@ -63,10 +64,12 @@ function columns(onRevoke: (id: string) => void): Column<Activation>[] {
 }
 
 function revokeMessage(activation: Activation): string {
-  if (expanded(activation.licence)?.is_test) {
-    return `Revoke ${activation.device_name}? This computer locks at its next check; the test licence's other computers keep working.`;
+  const licence = expanded(activation.licence);
+  const limit = offlineLimit(expanded(licence?.product));
+  if (licence?.is_test) {
+    return `Revoke ${activation.device_name}? This computer locks at its next check.${limit} The test licence's other computers keep working.`;
   }
-  return `Revoke ${activation.device_name}? It is the same as resetting its licence: this computer locks at its next check, and the key can then be activated on another one.`;
+  return `Revoke ${activation.device_name}? It is the same as resetting its licence: this computer locks at its next check.${limit} The key can then be activated on another one.`;
 }
 
 export function ActivationsPage() {

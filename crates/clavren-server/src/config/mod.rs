@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 14:53:29.378030
-//+ Revised: 	2026/11/09 10:00:41.632218
+//+ Revised: 	2026/11/12 23:57:44.261914
 // -----------------------------------------------------------------------------
 
 //! Server configuration, read from `CLAVREN_*` environment variables (on the Pi, from
@@ -20,6 +20,9 @@ use std::time::Duration;
 use axum::http::HeaderName;
 use sqlx::postgres::PgConnectOptions;
 
+use crate::money::Currency;
+use crate::products::{MAX_OFFLINE_DAYS, MIN_OFFLINE_DAYS};
+
 pub const DATABASE_URL_VAR: &str = "CLAVREN_DATABASE_URL";
 pub const LISTEN_VAR: &str = "CLAVREN_LISTEN";
 pub const DATA_DIR_VAR: &str = "CLAVREN_DATA_DIR";
@@ -31,12 +34,18 @@ pub const SESSION_MAX_DAYS_VAR: &str = "CLAVREN_SESSION_MAX_DAYS";
 pub const LOGIN_MAX_FAILURES_VAR: &str = "CLAVREN_LOGIN_MAX_FAILURES";
 pub const LOGIN_WINDOW_MINUTES_VAR: &str = "CLAVREN_LOGIN_WINDOW_MINUTES";
 pub const TOKEN_DAYS_VAR: &str = "CLAVREN_TOKEN_DAYS";
+pub const CURRENCY_VAR: &str = "CLAVREN_CURRENCY";
 pub const SIGNING_KEY_VERSION_VAR: &str = "CLAVREN_SIGNING_KEY_VERSION";
 /// Read by `clavren-update-check.sh`; the server only needs to know whether it is `off`.
 pub const UPDATE_SOURCE_VAR: &str = "CLAVREN_UPDATE_SOURCE";
 /// Where `install.sh` put the root updater, and where it reports; only tests change these.
 pub const UPDATE_SCRIPT_VAR: &str = "CLAVREN_UPDATE_SCRIPT";
 pub const UPDATE_STATUS_VAR: &str = "CLAVREN_UPDATE_STATUS";
+/// The web application form's Cloudflare Turnstile keys: both, or neither (no human check).
+pub const TURNSTILE_SITE_KEY_VAR: &str = "CLAVREN_TURNSTILE_SITE_KEY";
+pub const TURNSTILE_SECRET_VAR: &str = "CLAVREN_TURNSTILE_SECRET";
+/// Where Turnstile answers are verified; only tests change it.
+pub const TURNSTILE_VERIFY_URL_VAR: &str = "CLAVREN_TURNSTILE_VERIFY_URL";
 
 /// Localhost only: on the Pi, `cloudflared` is the only thing that should reach Clavren.
 const DEFAULT_LISTEN: &str = "127.0.0.1:8080";
@@ -54,6 +63,7 @@ const DEFAULT_UPDATE_SCRIPT: &str = "/usr/local/lib/clavren/clavren-update.sh";
 /// In a folder only root can write (`StateDirectory=` of `clavren-update.service`): the root
 /// updater never writes where the clavren user could plant a link.
 const DEFAULT_UPDATE_STATUS: &str = "/var/lib/clavren-update/status.json";
+pub const DEFAULT_TURNSTILE_VERIFY_URL: &str = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 /// The folder under the data directory the update scripts and the server share.
 pub const UPDATES_FOLDER: &str = "updates";
 
@@ -69,6 +79,7 @@ pub struct Config {
     pub admin: AdminAuthSettings,
     pub licensing: LicensingSettings,
     pub updates: UpdateSettings,
+    pub applications: ApplicationSettings,
 }
 
 /// Which peers may tell Clavren the real client address, and in which header.
@@ -92,11 +103,16 @@ pub struct AdminAuthSettings {
 
 #[derive(Clone, Debug)]
 pub struct LicensingSettings {
-    /// How long an activation token works offline (capped at the licence's expiry).
+    /// The offline limit new products start with; each product then has its own
+    /// (`products.offline_days`), which every token of its licences lasts (capped at the licence's
+    /// expiry).
     pub token_lifetime: Duration,
     /// Which signing key new tokens use (their `kid` is `v<version>`). Raised to rotate keys once
     /// every application in use trusts the next one.
     pub signing_key_version: u32,
+    /// The currency the dashboard preselects for prices (`CLAVREN_CURRENCY`, EUR by default).
+    /// Stored prices keep their own currency, so changing it never relabels old amounts.
+    pub default_currency: Currency,
 }
 
 /// Updates are found and installed by scripts outside the server (`deploy/clavren-update*.sh`); the
@@ -110,6 +126,34 @@ pub struct UpdateSettings {
     pub installer: PathBuf,
     /// How the current or last update went, written by the root updater.
     pub status: PathBuf,
+}
+
+/// The licence application form.
+#[derive(Clone, Debug, Default)]
+pub struct ApplicationSettings {
+    /// The web form's human check; `None` shows the form without one.
+    pub turnstile: Option<TurnstileSettings>,
+}
+
+/// Cloudflare Turnstile: the site key the web form shows, and the secret the server verifies its
+/// answers with.
+#[derive(Clone)]
+pub struct TurnstileSettings {
+    pub site_key: String,
+    pub secret: String,
+    pub verify_url: String,
+}
+
+/// The secret is never printed.
+impl fmt::Debug for TurnstileSettings {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TurnstileSettings")
+            .field("site_key", &self.site_key)
+            .field("secret", &"<redacted>")
+            .field("verify_url", &self.verify_url)
+            .finish()
+    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -179,16 +223,26 @@ impl Config {
                 secure_cookies: public_url.starts_with("https://"),
             },
             licensing: LicensingSettings {
-                token_lifetime: days(parse::span(
+                // the range a product's offline_days takes, so a new product never starts outside it
+                token_lifetime: days(parse::span_from(
                     TOKEN_DAYS_VAR,
                     read(TOKEN_DAYS_VAR),
                     DEFAULT_TOKEN_DAYS,
-                    TEN_YEARS_IN_DAYS,
+                    MIN_OFFLINE_DAYS.unsigned_abs().into(),
+                    MAX_OFFLINE_DAYS.unsigned_abs().into(),
                 )?),
                 signing_key_version: parse::positive(
                     SIGNING_KEY_VERSION_VAR,
                     read(SIGNING_KEY_VERSION_VAR),
                     DEFAULT_SIGNING_KEY_VERSION,
+                )?,
+                default_currency: parse::currency(CURRENCY_VAR, read(CURRENCY_VAR))?,
+            },
+            applications: ApplicationSettings {
+                turnstile: parse::turnstile(
+                    (TURNSTILE_SITE_KEY_VAR, read(TURNSTILE_SITE_KEY_VAR)),
+                    (TURNSTILE_SECRET_VAR, read(TURNSTILE_SECRET_VAR)),
+                    (TURNSTILE_VERIFY_URL_VAR, read(TURNSTILE_VERIFY_URL_VAR)),
                 )?,
             },
             public_url,
@@ -228,9 +282,21 @@ impl Default for UpdateSettings {
     }
 }
 
+impl LicensingSettings {
+    /// The offline days a new product starts with, unless its request says otherwise.
+    pub fn new_product_offline_days(&self) -> i32 {
+        // within MIN_OFFLINE_DAYS..=MAX_OFFLINE_DAYS, checked at startup
+        i32::try_from(self.token_lifetime.as_secs() / (24 * 3600)).unwrap_or(MAX_OFFLINE_DAYS)
+    }
+}
+
 impl Default for LicensingSettings {
     fn default() -> Self {
-        Self { token_lifetime: days(DEFAULT_TOKEN_DAYS), signing_key_version: DEFAULT_SIGNING_KEY_VERSION }
+        Self {
+            token_lifetime: days(DEFAULT_TOKEN_DAYS),
+            signing_key_version: DEFAULT_SIGNING_KEY_VERSION,
+            default_currency: Currency::euro(),
+        }
     }
 }
 
@@ -262,6 +328,7 @@ impl fmt::Debug for Config {
             .field("admin", &self.admin)
             .field("licensing", &self.licensing)
             .field("updates", &self.updates)
+            .field("applications", &self.applications)
             .finish()
     }
 }

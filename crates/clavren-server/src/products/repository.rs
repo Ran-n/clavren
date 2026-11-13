@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.059583
-//+ Revised: 	2026/11/07 19:37:00.056784
+//+ Revised: 	2026/11/12 23:57:45.423313
 // -----------------------------------------------------------------------------
 
 //! Database access for products.
@@ -18,7 +18,9 @@ pub const CODE_CONSTRAINT: &str = "products_code_key";
 macro_rules! select_products {
     ($rest:literal) => {
         concat!(
-            "SELECT id, code, name, description, message_template, is_active, created_at, updated_at FROM products ",
+            "SELECT id, code, name, description, message_template, is_active, accepts_applications, key_instructions,
+                    offline_days, price_amount, price_currency, created_at, updated_at
+             FROM products ",
             $rest
         )
     };
@@ -26,8 +28,10 @@ macro_rules! select_products {
 
 pub async fn insert(executor: impl PgExecutor<'_>, product: &Product) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO products (id, code, name, description, message_template, is_active, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        "INSERT INTO products
+             (id, code, name, description, message_template, is_active, accepts_applications, key_instructions,
+              offline_days, price_amount, price_currency, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
     )
     .bind(product.id)
     .bind(&product.code)
@@ -35,6 +39,11 @@ pub async fn insert(executor: impl PgExecutor<'_>, product: &Product) -> Result<
     .bind(&product.description)
     .bind(&product.message_template)
     .bind(product.is_active)
+    .bind(product.accepts_applications)
+    .bind(&product.key_instructions)
+    .bind(product.offline_days)
+    .bind(product.price.price_amount)
+    .bind(&product.price.price_currency)
     .bind(product.created_at)
     .bind(product.updated_at)
     .execute(executor)
@@ -54,7 +63,8 @@ pub async fn find_for_update(connection: &mut PgConnection, id: Uuid) -> Result<
 pub async fn update(executor: impl PgExecutor<'_>, product: &Product) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE products SET code = $2, name = $3, description = $4, message_template = $5, is_active = $6,
-         updated_at = $7 WHERE id = $1",
+         accepts_applications = $7, key_instructions = $8, offline_days = $9, price_amount = $10,
+         price_currency = $11, updated_at = $12 WHERE id = $1",
     )
     .bind(product.id)
     .bind(&product.code)
@@ -62,6 +72,11 @@ pub async fn update(executor: impl PgExecutor<'_>, product: &Product) -> Result<
     .bind(&product.description)
     .bind(&product.message_template)
     .bind(product.is_active)
+    .bind(product.accepts_applications)
+    .bind(&product.key_instructions)
+    .bind(product.offline_days)
+    .bind(product.price.price_amount)
+    .bind(&product.price.price_currency)
     .bind(product.updated_at)
     .execute(executor)
     .await?;
@@ -71,6 +86,23 @@ pub async fn update(executor: impl PgExecutor<'_>, product: &Product) -> Result<
 pub async fn delete(executor: impl PgExecutor<'_>, id: Uuid) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM products WHERE id = $1").bind(id).execute(executor).await?;
     Ok(())
+}
+
+/// The product with this code.
+pub async fn find_by_code(executor: impl PgExecutor<'_>, code: &str) -> Result<Option<Product>, sqlx::Error> {
+    sqlx::query_as(select_products!("WHERE code = $1")).bind(code).fetch_optional(executor).await
+}
+
+/// The active product with this code: what its key page at `/apply?product=<code>` shows.
+pub async fn find_active_by_code(executor: impl PgExecutor<'_>, code: &str) -> Result<Option<Product>, sqlx::Error> {
+    sqlx::query_as(select_products!("WHERE code = $1 AND is_active")).bind(code).fetch_optional(executor).await
+}
+
+/// The active products that take licence applications, by name: what the application form offers.
+pub async fn accepting_applications(executor: impl PgExecutor<'_>) -> Result<Vec<Product>, sqlx::Error> {
+    sqlx::query_as(select_products!("WHERE is_active AND accepts_applications ORDER BY lower(name), id"))
+        .fetch_all(executor)
+        .await
 }
 
 pub async fn code_exists(executor: impl PgExecutor<'_>, code: &str) -> Result<bool, sqlx::Error> {

@@ -10,11 +10,17 @@ test.use({ permissions: ["clipboard-read", "clipboard-write"] });
 
 type Page = import("@playwright/test").Page;
 
-const clipboard = (page: Page) => page.evaluate(() => navigator.clipboard.readText());
+// Chrome on Windows stores copied line breaks as CRLF, as the Windows clipboard does
+const clipboard = (page: Page) => page.evaluate(() => navigator.clipboard.readText()).then((text) => text.replaceAll("\r\n", "\n"));
 /** The toolbar's Product filter (the column picker has a "Product" checkbox too). */
 const productFilter = (page: Page) => page.getByRole("combobox", { name: /^Product/ });
 
-test("issuing licences to a new customer, then copying the message and downloading the CSV", async ({ admin, api }) => {
+/** Waits until no copy button says "Copied", so the next one pressed is the only one that does. */
+async function copiedGone(panel: import("@playwright/test").Locator): Promise<void> {
+  await expect(panel.getByRole("button", { name: "Copied" })).toHaveCount(0);
+}
+
+test("issuing licences to a new customer copies their keys, then copying each, the message and downloading the CSV", async ({ admin, api }) => {
   const product = await createProduct(api);
   const customer = unique("Ana López");
   await admin.goto("/licences");
@@ -32,9 +38,24 @@ test("issuing licences to a new customer, then copying the message and downloadi
   const keys = await panel.getByRole("list", { name: "New keys" }).locator("code").allTextContents();
   expect(keys).toHaveLength(2);
   keys.forEach((key) => expect(key).toMatch(/^BRN(-[0-9A-Z]{4}){4}$/));
+  await expect(panel.getByText("The 2 keys are on the clipboard.")).toBeVisible();
+  expect(await clipboard(admin)).toBe(keys.join("\n"));
+
+  await admin.evaluate(() => navigator.clipboard.writeText(""));
+  await panel.getByRole("button", { name: "Copy keys" }).click();
+  await expect(panel.getByRole("button", { name: "Copied" })).toHaveCount(1);
+  expect(await clipboard(admin)).toBe(keys.join("\n"));
+  await copiedGone(panel);
+
+  const second = panel.getByRole("list", { name: "New keys" }).getByRole("listitem").nth(1);
+  await second.getByRole("button", { name: "Copy" }).click();
+  await expect(second.getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Copied" })).toHaveCount(1);
+  expect(await clipboard(admin)).toBe(keys[1]);
+  await copiedGone(panel);
 
   await panel.getByRole("button", { name: "Copy message" }).click();
-  await expect(panel.getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Copied" })).toHaveCount(1);
   const message = await clipboard(admin);
   expect(message).toContain(`Hello ${customer}`);
   keys.forEach((key) => expect(message).toContain(key));
@@ -42,12 +63,71 @@ test("issuing licences to a new customer, then copying the message and downloadi
   const download = admin.waitForEvent("download");
   await panel.getByRole("button", { name: "Download CSV" }).click();
   const csv = readFileSync(await (await download).path(), "utf8").trim().split("\r\n");
-  expect(csv[0]).toBe("licence_id,product_code,customer_name,customer_email,key,state,issued_at,expires_at,notes,test");
+  expect(csv[0]).toBe("licence_id,product_code,customer_name,customer_email,key,state,issued_at,expires_at,notes,test,price,currency");
   expect(csv).toHaveLength(3);
 
   const { data } = await api.get<{ data: { id: string; expires_at: string; internal_notes: string }[] }>(`/licences?product=${product.id}`);
   expect(data).toHaveLength(2);
   data.forEach((row) => expect([row.expires_at, row.internal_notes]).toEqual(["2027-12-31T23:59:59Z", "School order 42"]));
+});
+
+test("one licence with no customer is copied as soon as it's issued", async ({ admin, api }) => {
+  const product = await createProduct(api);
+  await admin.goto("/licences");
+  await admin.getByRole("button", { name: "Issue licences" }).click();
+  const panel = admin.getByRole("region", { name: "Issue licences" });
+  await panel.getByLabel("Product").selectOption({ label: product.name });
+  await panel.getByLabel("How many").fill("1");
+  await panel.getByRole("button", { name: "Issue", exact: true }).click();
+  await expect(panel.getByRole("heading", { name: "1 licence issued" })).toBeVisible();
+  const key = await panel.getByRole("list", { name: "New keys" }).locator("code").textContent();
+  await expect(panel.getByText("The key is on the clipboard.")).toBeVisible();
+  expect(await clipboard(admin)).toBe(key);
+  await expect(panel.getByRole("button", { name: "Copy key", exact: true })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Copy message" })).toHaveCount(0);
+  await expect(panel.getByRole("list", { name: "New keys" }).getByRole("button")).toHaveCount(0);
+
+  // Issue more, then Issue: the new key replaces the old one on the clipboard
+  await panel.getByRole("button", { name: "Issue more" }).click();
+  await panel.getByLabel("Product").selectOption({ label: product.name });
+  await panel.getByRole("button", { name: "Issue", exact: true }).click();
+  await expect(panel.getByRole("heading", { name: "1 licence issued" })).toBeVisible();
+  const next = await panel.getByRole("list", { name: "New keys" }).locator("code").textContent();
+  expect(next).not.toBe(key);
+  await expect.poll(() => clipboard(admin)).toBe(next);
+});
+
+test("a refused copy says so and the keys stay", async ({ admin, api }) => {
+  await admin.addInitScript(() => {
+    const refuse = () => Promise.reject(new DOMException("denied", "NotAllowedError"));
+    navigator.clipboard.write = refuse;
+    navigator.clipboard.writeText = refuse;
+  });
+  const product = await createProduct(api);
+  await admin.goto("/licences");
+  await admin.getByRole("button", { name: "Issue licences" }).click();
+  const panel = admin.getByRole("region", { name: "Issue licences" });
+  await panel.getByLabel("Product").selectOption({ label: product.name });
+  await panel.getByRole("button", { name: "Issue", exact: true }).click();
+  await expect(panel.getByRole("list", { name: "New keys" }).locator("code")).toHaveText(/^BRN(-[0-9A-Z]{4}){4}$/);
+  await expect(panel.getByText("The browser didn't allow copying. Copy it by hand.")).toBeVisible();
+  await expect(panel.getByText("The key is on the clipboard.")).toHaveCount(0);
+});
+
+test("a failed issue shows no copy notice", async ({ admin, api }) => {
+  const errors: Error[] = [];
+  admin.on("pageerror", (error) => errors.push(error));
+  const product = await createProduct(api);
+  await admin.goto("/licences");
+  await admin.getByRole("button", { name: "Issue licences" }).click();
+  const panel = admin.getByRole("region", { name: "Issue licences" });
+  await panel.getByLabel("Product").selectOption({ label: product.name });
+  await api.call("PATCH", `/products/${product.id}`, { is_active: false });
+  await panel.getByRole("button", { name: "Issue", exact: true }).click();
+  await expect(panel.getByRole("alert")).toBeVisible();
+  await expect(panel.getByText(/on the clipboard|Copy it by hand/)).toHaveCount(0);
+  await expect(panel.getByRole("heading", { name: "Issue licences" })).toBeVisible();
+  expect(errors).toEqual([]);
 });
 
 test("a key is revealed on request, and inline edits save on Enter or leaving, and cancel on Escape", async ({ admin, api }) => {
@@ -392,4 +472,47 @@ test("a bulk delete after signing in again in another tab deletes every selected
   await expect(admin.getByText("2 licences deleted.")).toBeVisible();
   await expect(admin.getByText("This page is out of date")).toHaveCount(0);
   expect((await api.get<{ data: unknown[] }>(`/licences?product=${product.id}`)).data).toHaveLength(0);
+});
+
+test("issuing fills in the product's price, which can change, and test licences get none", async ({ admin, api }) => {
+  const product = await createProduct(api);
+  await api.call("PATCH", `/products/${product.id}`, { price: { amount: 1999, currency: "EUR" } });
+  await admin.goto("/licences");
+  await admin.getByRole("button", { name: "Issue licences" }).click();
+  const panel = admin.getByRole("region", { name: "Issue licences" });
+  await panel.getByLabel("Product").selectOption({ label: product.name });
+  const amount = panel.getByLabel("Price per key", { exact: true });
+  await expect(amount).toHaveValue("19.99");
+  await expect(panel.getByLabel("Price per key currency")).toHaveValue("EUR");
+
+  await panel.getByLabel(/^Test licences/).check();
+  await expect(amount).toBeDisabled();
+  await expect(amount).toHaveValue("");
+  await panel.getByLabel(/^Test licences/).uncheck();
+  await expect(amount).toHaveValue("19.99");
+
+  await amount.fill("15");
+  await panel.getByRole("button", { name: "Issue", exact: true }).click();
+  await expect(panel.getByRole("heading", { name: "1 licence issued" })).toBeVisible();
+  const { data } = await api.get<{ data: { price: unknown }[] }>(`/licences?product=${product.id}`);
+  expect(data.map((licence) => licence.price)).toEqual([{ amount: 1500, currency: "EUR" }]);
+});
+
+test("the bulk bar sets a price on the selected licences, keeping test licences without one", async ({ admin, api }) => {
+  const product = await createProduct(api);
+  await issue(api, product.id, { quantity: 2 });
+  await api.call("POST", "/licences", { product: product.id, test: true });
+  await admin.goto(`/licences?product=${product.id}`);
+  const rows = admin.getByRole("row").filter({ hasText: product.name });
+  await expect(rows).toHaveCount(3);
+  for (const index of [0, 1, 2]) await rows.nth(index).getByLabel("Select this row").check();
+  const bar = admin.getByRole("region", { name: "Selected licences" });
+  await bar.getByRole("button", { name: "Edit price" }).click();
+  await bar.getByLabel("New price", { exact: true }).fill("9.50");
+  await bar.getByRole("button", { name: "Apply" }).click();
+  await expect(admin.getByRole("status")).toHaveText("2 licences updated. 1 test licence kept no price.");
+  const { data } = await api.get<{ data: { is_test: boolean; price: unknown }[] }>(`/licences?product=${product.id}`);
+  for (const licence of data) {
+    expect(licence.price).toEqual(licence.is_test ? null : { amount: 950, currency: "EUR" });
+  }
 });

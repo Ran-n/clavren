@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.890784
-//+ Revised: 	2026/11/10 17:59:20.352653
+//+ Revised: 	2026/11/12 23:57:43.951747
 // -----------------------------------------------------------------------------
 
 //! Database access for activations.
@@ -52,6 +52,8 @@ pub struct KeyedLicence {
     pub id: Uuid,
     pub product_code: String,
     pub product_active: bool,
+    /// How long the product's tokens work offline.
+    pub product_offline_days: i32,
     pub expires_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
     pub is_test: bool,
@@ -64,7 +66,8 @@ pub async fn licence_by_key(
     key_lookup: &[u8],
 ) -> Result<Option<KeyedLicence>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT l.id, p.code AS product_code, p.is_active AS product_active, l.expires_at, l.revoked_at, l.is_test
+        "SELECT l.id, p.code AS product_code, p.is_active AS product_active, p.offline_days AS product_offline_days,
+                l.expires_at, l.revoked_at, l.is_test
          FROM licenses l JOIN products p ON p.id = l.product_id
          WHERE l.key_lookup = $1 FOR UPDATE OF l",
     )
@@ -130,6 +133,8 @@ pub struct CheckTarget {
     pub licence_is_test: bool,
     pub product_code: String,
     pub product_active: bool,
+    /// How long the product's tokens work offline.
+    pub product_offline_days: i32,
 }
 
 /// The activation, locked until the transaction ends, so a check and a reset or revoke are
@@ -139,7 +144,7 @@ pub async fn check_target(connection: &mut PgConnection, id: Uuid) -> Result<Opt
         "SELECT a.id, a.license_id AS licence_id, a.device_public_key, a.revoked_at, a.revocation_reason,
                 l.revoked_at AS licence_revoked_at, l.expires_at AS licence_expires_at,
                 l.is_test AS licence_is_test, p.code AS product_code,
-                p.is_active AS product_active
+                p.is_active AS product_active, p.offline_days AS product_offline_days
          FROM activations a JOIN licenses l ON l.id = a.license_id JOIN products p ON p.id = l.product_id
          WHERE a.id = $1 FOR UPDATE OF a",
     )

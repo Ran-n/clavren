@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.689302
-//+ Revised: 	2026/11/09 22:30:55.736437
+//+ Revised: 	2026/11/12 23:57:45.649467
 // -----------------------------------------------------------------------------
 
 //! The admin endpoints behind the dashboard's other pages: activations, the overview, the audit
@@ -271,4 +271,31 @@ async fn every_console_endpoint_needs_a_session(pool: PgPool) {
 
 fn urlencode(text: &str) -> String {
     form_urlencoded::byte_serialize(text.as_bytes()).collect()
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn charged_sums_per_currency_without_test_licences(pool: PgPool) {
+    let licensing = Licensing::new(pool).await;
+    let eur = |amount: i64| json!({ "price": { "amount": amount, "currency": "EUR" } });
+    let (old, _) = licensing.issue(eur(1000)).await;
+    licensing.issue(eur(1999)).await;
+    licensing.issue(eur(0)).await; // given for free: counted as 0
+    licensing.issue(json!({ "price": { "amount": 500, "currency": "USD" } })).await;
+    licensing.issue(json!({ "price": null })).await; // not recorded
+    licensing.issue(json!({ "test": true })).await; // never a sale
+    sqlx::query("UPDATE licenses SET created_at = created_at - interval '31 days' WHERE id = $1")
+        .bind(uuid::Uuid::parse_str(&old).unwrap())
+        .execute(licensing.admin.pool())
+        .await
+        .unwrap();
+
+    let overview = licensing.admin.get("/api/admin/overview").await.body;
+    assert_eq!(
+        overview["charged"],
+        json!([
+            { "currency": "EUR", "last_30_days": 1999, "total": 2999 },
+            { "currency": "USD", "last_30_days": 500, "total": 500 },
+        ])
+    );
+    assert_eq!((&overview["unpriced"], &overview["default_currency"]), (&json!(1), &json!("EUR")));
 }

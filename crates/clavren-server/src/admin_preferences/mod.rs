@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:13.060231
-//+ Revised: 	2026/11/09 08:54:53.814544
+//+ Revised: 	2026/11/11 16:32:50.358554
 // -----------------------------------------------------------------------------
 
 //! What the dashboard remembers for each admin, on any browser: theme, the last page, per table
@@ -27,7 +27,7 @@ use crate::http::error::ApiError;
 use crate::http::extract::ApiJson;
 
 pub const VERSION: u32 = 1;
-const TABLES: [&str; 6] = ["licences", "customers", "products", "activations", "audit", "backups"];
+const TABLES: [&str; 7] = ["licences", "customers", "products", "activations", "applications", "audit", "backups"];
 const MAX_TEXT: usize = 200;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

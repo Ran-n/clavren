@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 19:43:36.881392 )
-[//]: # (+ Revised: 	2026/11/10 17:59:23.497360 )
+[//]: # (+ Revised: 	2026/11/12 23:57:46.297491 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # HTTP API
@@ -117,6 +117,74 @@ clavren-check-v1
 `200` with `token`, `token_expires_at`, `licence_expires_at` and `server_time`. The check records
 `last_checked_at` and `app_version`.
 
+### Licence applications
+
+For the products that take them (`accepts_applications`). The web form at `/apply` and the client's
+`apply` use these. The name, email and message are never logged, and the secret never leaves the
+answer that creates it.
+
+#### `GET /api/v1/applications/form`
+
+```json
+{ "products": [{ "code": "avalio-lite", "name": "Avalio Lite", "description": "Gradebook for one teacher" }],
+  "turnstile_site_key": "0x4AAAAAAA…", "server_time": "…" }
+```
+
+The active products that take applications, A to Z, and the Cloudflare Turnstile site key the web
+form shows its check with (`null` when the server has no Turnstile keys).
+
+#### `GET /api/v1/applications/products/{code}`
+
+```json
+{ "code": "avalio-lite", "name": "Avalio Lite", "description": "Gradebook for one teacher",
+  "key_instructions": "Write to licences@example.com…", "accepts_applications": true, "server_time": "…" }
+```
+
+What a product's key page at `/apply?product=<code>` shows: how to get a key, in the
+administrator's words (`null` when none were written), and whether it takes applications. Only for
+an active product: an inactive one and an unknown code are both `404` `product_unavailable`, with
+the same body apart from `server_time`. Refusals are logged with the client address. No rate limit.
+
+#### `POST /api/v1/applications`
+
+```json
+{ "product": "avalio-lite", "name": "Ana López", "email": "ana@example.com",
+  "message": "For my class of 2027", "source": "web", "turnstile_token": "0.Xa…" }
+```
+
+`name` is required (up to 200 characters), `email` must look like an address, `message` is
+optional (up to 2,000). `source` is `app` (the default) or `web`. From `web`, when the server has
+Turnstile keys, `turnstile_token` must be an answer Cloudflare accepts for the client's address;
+from `app` there is none, so the rate limit and the one-waiting rule are what hold it.
+
+**201** `{ "application": "0190…", "secret": "q8Vt…", "server_time": "…" }`. `secret` is 32 random
+bytes, base64url: the only way to ask how the application went. The server keeps its BLAKE3 hash.
+
+Errors: `invalid_request` (400), `product_unavailable` (403: unknown, inactive, or not taking
+applications), `application_pending` (409: this email, ignoring case, already has an application
+waiting for this product), `human_check_failed` (403), `rate_limited`. When Cloudflare can't be
+reached or refuses the server's secret, the answer is `internal_error` and the log says why.
+
+#### `POST /api/v1/applications/status`
+
+`{ "secret": "q8Vt…" }` →
+
+```json
+{ "application": "0190…", "product": "avalio-lite", "status": "approved",
+  "created_at": "…", "decided_at": "…", "reason": null,
+  "key": "BRN-7KPX-4M9D-QW2R-8NFC", "licence_expires_at": null, "server_time": "…" }
+```
+
+| `status` | Meaning |
+|----------|---------|
+| `pending` | Waiting for the administrator |
+| `approved` | `key` is the licence's key (as long as the licence has one) and `licence_expires_at` its expiry. The first answer with the key is audited as `application.key_collected` |
+| `rejected` | `reason` is the administrator's, for the applicant, or `null` |
+| `withdrawn` | Approved, but the licence was revoked or deleted since: no key |
+
+Error: `application_unknown` (404): no application has this secret (a wrong one, or it was
+deleted by the administrator).
+
 ### Tokens
 
 A JWT signed with Ed25519: header `{"alg":"EdDSA","typ":"JWT","kid":"v1"}`. Claims:
@@ -130,7 +198,7 @@ A JWT signed with Ed25519: header `{"alg":"EdDSA","typ":"JWT","kid":"v1"}`. Clai
 | `dev` | base64url of the BLAKE3 hash of the device public key |
 | `lic_exp` | The licence's expiry (Unix seconds); absent for a permanent licence |
 | `test` | `true` for a test licence; absent for any other (read as `false`) |
-| `iat`, `exp` | Issued and expiry (Unix seconds). `exp` is 30 days after issuing (`CLAVREN_TOKEN_DAYS`), or the licence's expiry if sooner |
+| `iat`, `exp` | Issued and expiry (Unix seconds). `exp` is the product's `offline_days` after issuing, or the licence's expiry if sooner |
 | `jti` | A unique ID |
 
 Applications embed the public keys they trust, by `kid`. `clavren-admin show-public-key` prints
@@ -147,12 +215,16 @@ them (see below).
 | `product_unavailable` | 403 | The product was deactivated | Yes |
 | `activation_revoked` | 403 | This computer was reset or revoked, or (asking for a challenge) the activation doesn't exist | Yes |
 | `challenge_invalid` | 401 | Unknown, used, expired or foreign challenge (a check for an activation that doesn't exist included), wrong nonce or signature | Ask for a new challenge |
+| `application_pending` | 409 | This email already has an application waiting for this product | Wait for the decision |
+| `application_unknown` | 404 | No application has this secret | Yes: apply again |
+| `human_check_failed` | 403 | The web form's Turnstile answer was missing or refused | Check again |
 | `rate_limited` | 429 | See `Retry-After` | No |
 | `invalid_request` | 400 | Malformed request | No |
 | `internal_error` | 500 | Server failure | No |
 
 **Limits:** 10 activations per hour per client address; 120 challenges and checks per hour per
-client address; 30 checks per hour per activation. An IPv6 client address counts by its /64
+client address; 30 checks per hour per activation; 5 applications sent per hour per client address
+(refused ones count too); 120 application status questions per hour per client address. An IPv6 client address counts by its /64
 network.
 
 ### Test vectors
@@ -160,7 +232,9 @@ network.
 A client in another language can check its implementation against these.
 
 **Key normalization.** The 10 random bytes `3A 7D 52 13 B7 E0 04 51 9C FF` make the key
-`BRN-79YN-44XQ-W025-377Z`, canonical form `BRN79YN44XQW025377Z`. All of these normalize to it:
+`BRN-79YN-44XQ-W025-377Z`, canonical form `BRN79YN44XQW025377Z`. Normalizing drops spaces, tabs
+and dashes, upper-cases the rest, and reads `I` and `L` as `1` and `O` as `0`. All of these
+normalize to it:
 `brn 79yn 44xq w025 377z`, `BRN79YN44XQWO25377Z` (`O` read as `0`), ` brn-79yn44xq-wO25-377z `.
 `BRN-79YN-44XQ-W025-377U` (`U` isn't in the alphabet) and `BRN-79YN-44XQ-W025-377` (15
 characters) are refused.
@@ -315,6 +389,10 @@ field of an expanded record. Each list says which fields it expands; any other i
   "description": null,
   "message_template": "Hello {customer_name},\n\n…{key}…",
   "is_active": true,
+  "accepts_applications": false,
+  "key_instructions": null,
+  "offline_days": 30,
+  "price": { "amount": 1999, "currency": "EUR" },
   "created_at": "2026-11-02T12:00:00Z",
   "updated_at": "2026-11-02T12:00:00Z"
 }
@@ -332,14 +410,26 @@ field of an expanded record. Each list says which fields it expands; any other i
 - Deactivating a product (`"is_active": false`) makes every computer that uses it lock at its
   next check, and keeps everything. Deleting it deletes its licences too, with their keys and
   activations; their computers lock at their next check and their keys read as unknown. Customers
-  stay.
+  stay. Its licence applications are deleted with it.
+- `accepts_applications` (false for a new product unless the request sets it) opens the product to
+  [licence applications](#licence-applications-1). Closing it refuses new ones and keeps those sent.
+- `key_instructions` (up to 2,000 characters, blank as `null`) says how to get a key, shown on the
+  product's key page (`/apply?product=<code>`) as plain text with its `https://` addresses as links.
+- `price` is the price per key, `{"amount", "currency"}` or `null`: `amount` is a whole number in the
+  currency's minor unit (1999 with `EUR` is €19.99), from 0 (free) to 99,999,999; `currency` is
+  three uppercase letters (ISO 4217; only the shape is checked). Issuing fills it in for each new
+  licence. Money is never a float anywhere in the API.
+- `offline_days` (a whole number from 2 to 3,650; on create, absent is `CLAVREN_TOKEN_DAYS`, 30 by
+  default; on update, absent leaves it as it is, and `null` is refused) is how long its
+  applications work without a check: every token of its licences lasts that long, capped at the
+  licence's expiry. A change applies at each computer's next activation or check.
 
 | Endpoint | Answer |
 |----------|--------|
 | `GET /api/admin/products?active=true\|false` | A page of products, A to Z by name |
-| `POST /api/admin/products` | `201` with the product and `test_licence` (`{"id", "key"}`, or `null`), sent with `Cache-Control: no-store`. Body: `name`, optional `code`, `description`, `message_template`, `is_active`, `test_licence` (`false` for none) |
+| `POST /api/admin/products` | `201` with the product and `test_licence` (`{"id", "key"}`, or `null`), sent with `Cache-Control: no-store`. Body: `name`, optional `code`, `description`, `message_template`, `is_active`, `accepts_applications`, `key_instructions`, `offline_days`, `price`, `test_licence` (`false` for none) |
 | `GET /api/admin/products/{id}` | The product |
-| `PATCH /api/admin/products/{id}` | The product after the change. Any of `code`, `name`, `description`, `message_template`, `is_active` |
+| `PATCH /api/admin/products/{id}` | The product after the change. Any of `code`, `name`, `description`, `message_template`, `is_active`, `accepts_applications`, `key_instructions`, `offline_days`, `price` (`null` clears it) |
 | `GET /api/admin/products/{id}/usage` | `{"licences": 120, "in_use": 34}`: what deleting it would take with it |
 | `DELETE /api/admin/products/{id}` | `204`. The product, every licence of it (no 1,000 limit), their keys and activations; one `licence.deleted` audit entry per licence and a `product.deleted` with the counts |
 
@@ -398,7 +488,8 @@ Conflict code: `customer_email_taken`.
   "expires_at": null,
   "revoked_at": null,
   "revocation_reason": null,
-  "internal_notes": null
+  "internal_notes": null,
+  "price": { "amount": 1999, "currency": "EUR" }
 }
 ```
 
@@ -414,6 +505,8 @@ Conflict code: `customer_email_taken`.
   records. The parameter repeats, or takes a comma-separated list. An activation shows `id`,
   `licence`, `device_name`, `platform`, `app_version`, `activated_at`, `last_checked_at`,
   `revoked_at` and `revocation_reason` (`reset` or `licence_revoked`).
+- `price` is what the key was charged, as on products, or `null` (not recorded); `0` is a key given
+  for free. A test licence never has one.
 - Lists and single licences never contain the key. It appears only when issuing, revealing,
   copying the message and exporting, and the last three are recorded in the audit log.
 
@@ -426,13 +519,16 @@ Conflict code: `customer_email_taken`.
   "quantity": 2,
   "expires_at": "2027-07-01T00:00:00Z",
   "internal_notes": "School order 42",
-  "test": false
+  "test": false,
+  "price": { "amount": 1999, "currency": "EUR" }
 }
 ```
 
 `customer` is an existing customer's ID, a new customer (created in the same transaction), or
 absent. `quantity` is 1 to 1,000 (default 1). `expires_at` must be in the future. `test: true`
-issues test licences. `201`:
+issues test licences. `price` is what each key is charged: absent, the product's price (none for
+test licences); `null`, none recorded. A price with `"test": true` is `invalid_request` ("test
+licences can't have a price"). `201`:
 
 ```json
 {
@@ -471,11 +567,11 @@ of `PATCH`, `revoke` and `reset` below.
 
 | Endpoint | Body | Answer |
 |----------|------|--------|
-| `PATCH /api/admin/licences/{id}` | Any of `customer` (an existing customer's ID, `{"name", "email"}` for a new one, or `null` for none), `expires_at` (`null`: permanent; a past date ends it now), `internal_notes`, `revocation_reason` (revoked licences only). Every other field (product, key, state, dates) is read-only and refused | The licence |
+| `PATCH /api/admin/licences/{id}` | Any of `customer` (an existing customer's ID, `{"name", "email"}` for a new one, or `null` for none), `expires_at` (`null`: permanent; a past date ends it now), `internal_notes`, `revocation_reason` (revoked licences only), `price` (`null`: none; `409` `test_licence_price` on a test licence). Every other field (product, key, state, dates) is read-only and refused | The licence |
 | `POST /api/admin/licences/{id}/revoke` | `{}` or `{"reason": "…"}` | The licence. The key is deleted and can never be accepted again; a computer using it locks at its next check |
 | `POST /api/admin/licences/{id}/reset` | | The licence, now `unused`. The same key activates on another computer; the old one (every one, for a test licence) locks at its next check |
 | `DELETE /api/admin/licences/{id}` | | `204`. The licence, its key and its activations are gone in any state; a computer using it locks at its next check, and the key reads as unknown (`invalid_key`) |
-| `POST /api/admin/licences/bulk/edit` | `ids` (up to 1,000) and the fields of `PATCH`; a new customer is created once for the batch | `{"updated": 3}`: the licences that changed (one already as asked isn't counted, nor audited) |
+| `POST /api/admin/licences/bulk/edit` | `ids` (up to 1,000) and the fields of `PATCH`; a new customer is created once for the batch | `{"updated": 3, "kept_test": 1}`: the licences that changed (one already as asked isn't counted, nor audited), and the test licences a `price` left without one |
 | `POST /api/admin/licences/bulk/revoke` | `ids`, optional `reason` | `{"revoked": 3}` |
 | `POST /api/admin/licences/bulk/delete` | `ids`, optional `"dry_run": true` (only counts) | `{"deleted": 12, "in_use": 3}` |
 
@@ -502,8 +598,9 @@ Errors: `not_found` (with `ids` for a batch), `licence_revoked`, `licence_not_in
 | `POST /api/admin/licences/export` | CSV, for `{"ids": [...]}` (up to 1,000) or `{"filter": {"state": "unused", …}}` (the list filters, exclusions included, up to 10,000 licences) |
 
 A revoked licence has no key left: `licence_revoked`. The CSV has the columns `licence_id,
-product_code, customer_name, customer_email, key, state, issued_at, expires_at, notes, test`
-(`test` is `true` or `false`), with CRLF
+product_code, customer_name, customer_email, key, state, issued_at, expires_at, notes, test,
+price, currency` (`test` is `true` or `false`; `price` is a decimal with the currency's digits,
+such as `19.99`, and both are empty without a price), with CRLF
 line ends. A cell that a spreadsheet would run as a formula (starting with `=`, `+`, `-`, `@`, tab
 or carriage return) starts with `'`.
 
@@ -530,6 +627,46 @@ computer; a test licence's other computers go on. It is audited as `licence.rese
 `activation`. Answer: the activation. Errors: `not_found`,
 `activation_revoked` (409) when it has already ended.
 
+## Licence applications
+
+```json
+{
+  "id": "0190…",
+  "product": "0190…",
+  "name": "Ana López",
+  "email": "ana@example.com",
+  "message": "For my class of 2027",
+  "source": "web",
+  "state": "approved",
+  "created_at": "2027-01-10T09:00:00Z",
+  "decided_at": "2027-01-10T11:30:00Z",
+  "licence": "0190…",
+  "rejection_reason": null,
+  "key_collected_at": "2027-01-10T11:42:00Z"
+}
+```
+
+`state` is `pending`, `approved` or `rejected`. `licence` is the licence the approval issued
+(`null` before, and once that licence is deleted). Expandable: `product`, `licence`, and the
+licence's own fields as `licence.product`, `licence.customer`, `licence.active_activation`. The
+secret and its hash are never shown.
+
+| Endpoint | Answer |
+|----------|--------|
+| `GET /api/admin/applications?state=&product=&q=` | A page, newest first. `q` matches part of the name or email |
+| `GET /api/admin/applications/{id}` | The application |
+| `POST /api/admin/applications/{id}/approve` | The application, approved. Body (all optional): `customer` (an existing customer's ID, or `{"name", "email"}` for a new one; none: no customer), `expires_at`, `internal_notes`, `price` (none unless given: an application is usually not a sale). Issues one licence for the application's product (audited as `licence.issued`, and `customer.created` for a new customer) and records `application.approved`, in one transaction |
+| `POST /api/admin/applications/{id}/reject` | The application, rejected. Body: `reason` (optional, up to 500 characters, shown to the applicant). Audited as `application.rejected` |
+| `DELETE /api/admin/applications/{id}` | `204`. Any state; an approved one's licence stays. Audited as `application.deleted` |
+| `POST /api/admin/applications/bulk/reject` | `204`. `{"ids": […], "reason": "…"}`: all or nothing |
+| `POST /api/admin/applications/bulk/delete` | `204`. `{"ids": […]}`: all or nothing |
+
+Errors: `application_decided` (409, naming the `ids`) when approving or rejecting one that was
+already decided; `not_found` (naming the `ids` in bulk); the issuing errors when approving
+(`product_inactive`, `customer_email_taken`, `invalid_request`). Bulk requests take 1 to 1,000 IDs;
+a repeated ID counts once. Decided applications are kept as history until deleted here;
+deleting a customer deletes the applications whose licence is theirs.
+
 ## Overview
 
 `GET /api/admin/overview` returns the numbers for the dashboard's first page:
@@ -540,7 +677,11 @@ computer; a test licence's other computers go on. It is audited as `licence.rese
   "unused": 12, "redeemed": 40, "revoked": 2,
   "active_computers": 40, "computers_checked_last_24h": 31, "checks_last_24h": 33,
   "last_backup": { "id": "0190…", "finished_at": "2027-01-15T03:00:12Z", "archive_name": "clavren-20270115.tar", "size_bytes": 20480 },
-  "backup_overdue": false
+  "backup_overdue": false,
+  "pending_applications": 3,
+  "charged": [ { "currency": "EUR", "last_30_days": 5997, "total": 39980 } ],
+  "unpriced": 4,
+  "default_currency": "EUR"
 }
 ```
 
@@ -548,6 +689,11 @@ computer; a test licence's other computers go on. It is audited as `licence.rese
 hours; `checks_last_24h` counts successful checks, by the hour (the current hour and the 23 before
 it). Test licences, their computers and their checks are left out of every number.
 `backup_overdue` is `true` when there is no backup or the last one is more than 48 hours old.
+`pending_applications` counts the licence applications waiting for a decision. `charged` sums what
+keys were charged, per currency (A to Z, in minor units, never converted): the licences issued in
+the last 30 days and all of them; a free key counts as 0, revoked ones still count, deleted ones are
+gone. `unpriced` counts the licences with no recorded price. `default_currency` is
+`CLAVREN_CURRENCY`, which the dashboard preselects for prices.
 
 ## Updates
 

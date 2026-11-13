@@ -1,11 +1,11 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.495003
-//+ Revised: 	2026/11/10 17:59:21.042715
+//+ Revised: 	2026/11/12 23:57:44.816016
 // -----------------------------------------------------------------------------
 
 //! Changing licences after issuing: editing every field but the product (customer, expiry, notes,
-//! and a revoked licence's reason), revoking, resetting (freeing a licence for another computer),
+//! price, and a revoked licence's reason), revoking, resetting (freeing a licence for another computer),
 //! and deleting. Each takes a batch of up to 1,000 licences, locks them, and
 //! either changes all of them or none, naming the licences that blocked it.
 
@@ -25,6 +25,7 @@ use crate::http::AppState;
 use crate::http::error::ApiError;
 use crate::http::fields;
 use crate::http::patch::Patch;
+use crate::money::Price;
 
 const ENTITY: &str = "licence";
 
@@ -39,6 +40,25 @@ pub struct LicenceChanges {
     pub internal_notes: Patch<String>,
     /// Only a revoked licence has one.
     pub revocation_reason: Patch<String>,
+    /// What the key was charged; a test licence has none.
+    pub price: Patch<Price>,
+}
+
+/// What to do with test licences when a price is set: a single edit refuses, a bulk one leaves
+/// them unpriced and counts them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnTestLicence {
+    Refuse,
+    Skip,
+}
+
+/// What an edit changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Edited {
+    /// How many licences changed.
+    pub updated: usize,
+    /// How many test licences were left without the price asked for.
+    pub kept_test: usize,
 }
 
 /// [`LicenceChanges`] checked: the changes for the database, with the customer still to resolve.
@@ -69,25 +89,34 @@ fn parse(changes: LicenceChanges) -> Result<Parsed, ApiError> {
         expires_at,
         internal_notes: text("internal_notes", changes.internal_notes, MAX_NOTES)?,
         revocation_reason: text("revocation_reason", changes.revocation_reason, MAX_REASON)?,
+        price: if changes.price.is_keep() { None } else { Some(changes.price.apply(None)) },
     };
     let asked = [
         customer.is_some(),
         changes.expires_at.is_some(),
         changes.internal_notes.is_some(),
         changes.revocation_reason.is_some(),
+        changes.price.is_some(),
     ];
     let fields: Vec<&'static str> =
         CHANGEABLE.into_iter().zip(asked).filter_map(|(field, on)| on.then_some(field)).collect();
     if fields.is_empty() {
         return Err(ApiError::invalid_request(
-            "give at least one of customer, expires_at, internal_notes, revocation_reason",
+            "give at least one of customer, expires_at, internal_notes, revocation_reason, price",
         ));
     }
     Ok(Parsed { customer, changes, fields })
 }
 
-/// Applies `changes` to every licence in `ids` or to none; returns how many actually changed.
-pub async fn edit(state: &AppState, actor: &Actor, ids: &[Uuid], changes: LicenceChanges) -> Result<usize, ApiError> {
+/// Applies `changes` to every licence in `ids` or to none; returns how many actually changed. A
+/// price set on test licences is refused or skipped as `on_test` says.
+pub async fn edit(
+    state: &AppState,
+    actor: &Actor,
+    ids: &[Uuid],
+    changes: LicenceChanges,
+    on_test: OnTestLicence,
+) -> Result<Edited, ApiError> {
     check_batch(ids)?;
     let Parsed { customer, mut changes, fields } = parse(changes)?;
     let mut transaction = state.pool.begin().await?;
@@ -104,13 +133,20 @@ pub async fn edit(state: &AppState, actor: &Actor, ids: &[Uuid], changes: Licenc
             ApiError::conflict("licence_not_revoked", "only a revoked licence has a revocation reason").with_ids(live)
         );
     }
+    let pricing = matches!(changes.price, Some(Some(_)));
+    let tests = if pricing { repository::test_ids(&mut *transaction, ids).await? } else { Vec::new() };
+    if on_test == OnTestLicence::Refuse && !tests.is_empty() {
+        return Err(
+            ApiError::conflict("test_licence_price", "test licences can't have a price").with_ids(tests.clone())
+        );
+    }
     let changed = repository::update(&mut *transaction, ids, &changes).await?;
     // one audit entry per licence that changed, naming the fields that did
     let mut by_fields: Vec<(Vec<&str>, Vec<Uuid>)> = Vec::new();
-    for (id, customer, expires_at, notes, reason) in changed.iter().copied() {
+    for (id, customer, expires_at, notes, reason, price) in changed.iter().copied() {
         let names: Vec<&str> = CHANGEABLE
             .iter()
-            .zip([customer, expires_at, notes, reason])
+            .zip([customer, expires_at, notes, reason, price])
             .filter_map(|(name, on)| on.then_some(*name))
             .collect();
         match by_fields.iter_mut().find(|(group, _)| *group == names) {
@@ -124,11 +160,15 @@ pub async fn edit(state: &AppState, actor: &Actor, ids: &[Uuid], changes: Licenc
     }
     transaction.commit().await?;
     tracing::info!(asked = ids.len(), changed = changed.len(), ?fields, "licences updated");
-    Ok(changed.len())
+    let priced: Vec<Uuid> = changed.iter().filter(|changed| changed.5).map(|changed| changed.0).collect();
+    if !priced.is_empty() {
+        tracing::info!(target: "clavren::licences", licences = ?priced, kept_test = tests.len(), "licence prices changed");
+    }
+    Ok(Edited { updated: changed.len(), kept_test: tests.len() })
 }
 
 /// The fields [`repository::update`] reports on, in its order.
-const CHANGEABLE: [&str; 4] = ["customer", "expires_at", "internal_notes", "revocation_reason"];
+const CHANGEABLE: [&str; 5] = ["customer", "expires_at", "internal_notes", "revocation_reason", "price"];
 
 /// Revokes for good: the keys are deleted, and the computers using them lock at their next check.
 pub async fn revoke(state: &AppState, actor: &Actor, ids: &[Uuid], reason: Option<&str>) -> Result<(), ApiError> {
@@ -292,6 +332,10 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(parsed.fields, ["customer", "expires_at", "internal_notes", "revocation_reason"]);
+        let priced = parse(changes(r#"{"price": {"amount": 1999, "currency": "EUR"}}"#)).unwrap();
+        assert_eq!(priced.fields, ["price"]);
+        assert!(matches!(priced.changes.price, Some(Some(_))));
+        assert_eq!(parse(changes(r#"{"price": null}"#)).unwrap().changes.price, Some(None));
         assert_eq!(parsed.changes.expires_at, Some(None));
         assert_eq!(parsed.changes.internal_notes, Some(None), "blank notes clear them");
         assert_eq!(parsed.changes.revocation_reason, Some(Some("dup".into())));

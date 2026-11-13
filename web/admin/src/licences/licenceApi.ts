@@ -5,7 +5,7 @@
 import { api, get, query } from "../shared/api";
 import { ApiError } from "../shared/api";
 import { formatNumber } from "../shared/format";
-import type { Licence, Page } from "../shared/types";
+import type { Licence, Page, Price } from "../shared/types";
 import type { CustomerChoice } from "./CustomerPicker";
 
 export const MAX_BATCH = 1000;
@@ -43,7 +43,7 @@ export function customerBody(choice: CustomerChoice): Exclude<CustomerBody, null
   return undefined;
 }
 
-export type LicenceChanges = { customer?: CustomerBody; expires_at?: string | null; internal_notes?: string | null; revocation_reason?: string | null };
+export type LicenceChanges = { customer?: CustomerBody; expires_at?: string | null; internal_notes?: string | null; revocation_reason?: string | null; price?: Price | null };
 
 export function updateLicence(id: string, changes: LicenceChanges): Promise<Licence> {
   return api<Licence>("PATCH", `/licences/${id}?expand=${LICENCE_EXPAND}`, changes);

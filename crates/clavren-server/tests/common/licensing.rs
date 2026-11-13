@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.513158
-//+ Revised: 	2026/11/10 17:59:22.426462
+//+ Revised: 	2026/11/11 16:32:51.817913
 // -----------------------------------------------------------------------------
 
 //! A server with a product and an admin to issue keys for it: the starting point of every test
@@ -24,7 +24,11 @@ pub struct Licensing {
 
 impl Licensing {
     pub async fn new(pool: PgPool) -> Self {
-        let admin = Admin::new(pool).await;
+        Self::with_settings(pool, super::test_settings()).await
+    }
+
+    pub async fn with_settings(pool: PgPool, settings: clavren::http::Settings) -> Self {
+        let admin = Admin::with_settings(pool, settings).await;
         let product = admin
             .create("/api/admin/products", json!({ "code": PRODUCT, "name": "Avalio Lite", "test_licence": false }))
             .await;

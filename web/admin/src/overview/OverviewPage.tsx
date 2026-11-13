@@ -5,16 +5,16 @@ import { useEffect, useState } from "react";
 import { get } from "../shared/api";
 import { Button } from "../shared/components/Button";
 import { ErrorNotice, Loading, Notice } from "../shared/components/Notice";
-import { formatBytes, formatDateTime, formatNumber } from "../shared/format";
+import { formatBytes, formatDateTime, formatNumber, formatPrice } from "../shared/format";
 import { useTitle } from "../shared/hooks";
 import { Link } from "../shared/router";
 import type { BackupRun, Overview, Updates } from "../shared/types";
 import { useUpdates } from "../shared/updates";
 
-function Stat({ value, label, to }: { value: number; label: string; to?: string }) {
+function Stat({ value, label, to }: { value: number | string; label: string; to?: string }) {
   const content = (
     <>
-      <span className="stat__value">{formatNumber(value)}</span>
+      <span className="stat__value">{typeof value === "number" ? formatNumber(value) : value}</span>
       <span className="stat__label">{label}</span>
     </>
   );
@@ -24,6 +24,26 @@ function Stat({ value, label, to }: { value: number; label: string; to?: string 
     </Link>
   ) : (
     <div className="stat">{content}</div>
+  );
+}
+
+/** What keys were charged, one line of figures per currency; test licences left out. */
+function Charged({ overview }: { overview: Overview }) {
+  const sums = overview.charged.length > 0 ? overview.charged : [{ currency: overview.default_currency, last_30_days: 0, total: 0 }];
+  return (
+    <>
+      <h2>Charged</h2>
+      {sums.map((sum) => (
+        <div className="stats" key={sum.currency}>
+          <Stat value={formatPrice({ amount: sum.last_30_days, currency: sum.currency })} label="Charged, last 30 days" />
+          <Stat value={formatPrice({ amount: sum.total, currency: sum.currency })} label="Charged in total" />
+        </div>
+      ))}
+      <p className="muted">
+        {overview.unpriced > 0 && `${overview.unpriced === 1 ? "1 key has" : `${formatNumber(overview.unpriced)} keys have`} no recorded price. `}
+        Deleted licences aren't counted.
+      </p>
+    </>
   );
 }
 
@@ -141,6 +161,14 @@ export function OverviewPage() {
       {overview && (
         <>
           <BackupWarning overview={overview} />
+          {overview.pending_applications > 0 && (
+            <Notice tone="info">
+              {overview.pending_applications === 1
+                ? "1 licence application is waiting."
+                : `${formatNumber(overview.pending_applications)} licence applications are waiting.`}{" "}
+              <Link to="/applications">Review applications</Link>
+            </Notice>
+          )}
           <h2>Licences</h2>
           <div className="stats">
             <Stat value={overview.unused} label="Unused" to="/licences?state=unused&not_test=true" />
@@ -148,6 +176,7 @@ export function OverviewPage() {
             <Stat value={overview.revoked} label="Revoked" to="/licences?state=revoked&not_test=true" />
           </div>
           <p className="muted">Test licences, their computers and their checks aren't counted here.</p>
+          <Charged overview={overview} />
           <h2>Computers and products</h2>
           <div className="stats">
             <Stat value={overview.active_computers} label="Computers using a licence" to="/activations" />
