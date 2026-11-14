@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/11 16:32:49.249876
-//+ Revised: 	2026/11/14 12:05:25.421701
+//+ Revised: 	2026/11/15 00:18:26.040800
 // -----------------------------------------------------------------------------
 
 //! Licence applications from the applicant's side and the administrator's: what the form offers,
@@ -87,7 +87,7 @@ async fn an_application_waits_for_the_administrator(pool: PgPool) {
     assert!(!stored.contains("Ana") && !stored.contains("ana@example.com"), "{stored}");
     let text = logs.text();
     assert!(text.contains("licence application received"), "{text}");
-    for secret_or_personal in [secret, "Ana", "ana@example.com", "2027"] {
+    for secret_or_personal in [secret, "Ana", "ana@example.com", "my class"] {
         assert!(!text.contains(secret_or_personal), "logged {secret_or_personal}: {text}");
     }
 }
