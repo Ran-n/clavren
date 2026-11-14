@@ -2,7 +2,7 @@
 # ------------------------------------------------------------------------------
 #+ Authors: 	Ran# <ran.hash@proton.me>
 #+ Created: 	2026/11/09 08:54:54.059029
-#+ Revised: 	2026/11/09 08:54:54.059029
+#+ Revised: 	2026/11/15 00:13:49.394795
 # ------------------------------------------------------------------------------
 
 # Prepares a Debian or Ubuntu CI machine for scripts/ci.sh: Node.js 22 for the dashboard and the
@@ -22,4 +22,4 @@ if ! node --version 2>/dev/null | grep -q '^v2[2-9]'; then
 fi
 run apt-get install -y --no-install-recommends postgresql-client-17
 node --version
-pg_dump --version
+/usr/lib/postgresql/17/bin/pg_dump --version
