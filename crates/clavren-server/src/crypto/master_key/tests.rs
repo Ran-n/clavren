@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/14 11:36:29.715372
-//+ Revised: 	2026/11/14 11:36:29.715372
+//+ Revised: 	2026/11/15 00:08:08.148787
 // -----------------------------------------------------------------------------
 
 use super::*;
@@ -80,8 +80,15 @@ fn a_leftover_temporary_file_from_a_crash_is_no_obstacle() {
 fn a_key_of_the_wrong_length_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(master_key_path(dir.path()), [7u8; 31]).unwrap();
+    // a plain write leaves it readable by others, which is refused before its length is looked at
+    #[cfg(unix)]
+    fs::set_permissions(
+        master_key_path(dir.path()),
+        <fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o600),
+    )
+    .unwrap();
     let error = read(dir.path()).unwrap_err();
-    assert!(matches!(error, MasterKeyError::WrongLength { length: 31, .. }));
+    assert!(matches!(error, MasterKeyError::WrongLength { length: 31, .. }), "{error}");
     assert!(error.to_string().contains("restore"), "{error}");
 }
 
