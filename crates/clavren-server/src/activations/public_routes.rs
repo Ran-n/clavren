@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.829876
-//+ Revised: 	2026/11/09 22:30:53.779134
+//+ Revised: 	2026/11/14 00:38:42.173101
 // -----------------------------------------------------------------------------
 
 //! `/api/v1`: the endpoints applications call. Every answer, errors included, carries the server's
@@ -50,6 +50,8 @@ async fn activation(
         let status = if activated.created { StatusCode::CREATED } else { StatusCode::OK };
         if activated.created {
             tracing::info!(activation = %activated.activation_id, %ip, "computer activated");
+        } else {
+            tracing::info!(activation = %activated.activation_id, %ip, "the same computer activated again");
         }
         let body = ActivationResponse {
             activation: activated.activation_id,
@@ -95,6 +97,7 @@ async fn check(
         let activation = activation_id(path)?;
         let ApiJson(request) = request?;
         let checked = checks::check(&state, activation, &request, ip, now).await?;
+        tracing::info!(%activation, %ip, "check passed");
         Ok(Json(CheckResponse {
             token: checked.token.token,
             token_expires_at: checked.token.expires_at,

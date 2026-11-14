@@ -6,7 +6,8 @@ import { useState } from "react";
 import { query } from "../shared/api";
 import { Button } from "../shared/components/Button";
 import { Combobox } from "../shared/components/Combobox";
-import { useDebounced, useInfiniteList } from "../shared/hooks";
+import { useInfiniteList } from "../shared/paging";
+import { useDebounced } from "../shared/hooks";
 import type { Customer } from "../shared/types";
 
 export type CustomerChoice = { kind: "existing"; customer: Customer } | { kind: "new"; name: string; email: string };
@@ -15,15 +16,17 @@ const PAGE_SIZE = 50;
 
 const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
-/** `name` with the first occurrence of `typed` in bold. */
+/** `name` with the first occurrence of `typed` (in any case) in bold. */
 function Highlighted({ name, typed }: { name: string; typed: string }) {
-  const at = typed ? name.toLowerCase().indexOf(typed.toLowerCase()) : -1;
-  if (at < 0) return <>{name}</>;
+  // matched in the name itself: lowercasing first can change its length (İ), moving the bold
+  const found = typed ? new RegExp(typed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").exec(name) : null;
+  if (!found) return <>{name}</>;
+  const end = found.index + found[0].length;
   return (
     <>
-      {name.slice(0, at)}
-      <strong>{name.slice(at, at + typed.length)}</strong>
-      {name.slice(at + typed.length)}
+      {name.slice(0, found.index)}
+      <strong>{name.slice(found.index, end)}</strong>
+      {name.slice(end)}
     </>
   );
 }

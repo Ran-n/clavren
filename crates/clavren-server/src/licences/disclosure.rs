@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.076583
-//+ Revised: 	2026/11/12 23:57:44.646971
+//+ Revised: 	2026/11/14 00:38:43.698553
 // -----------------------------------------------------------------------------
 
 //! The three ways a stored key leaves the server: **Reveal**, **Copy message** and CSV export.
@@ -29,6 +29,7 @@ pub const CSV_HEADER: &str =
 pub async fn reveal(state: &AppState, actor: &Actor, id: Uuid) -> Result<LicenceKey, ApiError> {
     let key = key_of(state, id).await?;
     audit::record_for_each(&state.pool, actor, "licence.key_revealed", ENTITY, &[id], json!({})).await?;
+    tracing::info!(licence = %id, "licence key revealed");
     Ok(key)
 }
 
@@ -42,6 +43,7 @@ pub async fn message(state: &AppState, actor: &Actor, id: Uuid) -> Result<String
         None => None,
     };
     audit::record_for_each(&state.pool, actor, "licence.message_copied", ENTITY, &[id], json!({})).await?;
+    tracing::info!(licence = %id, "licence message copied");
     Ok(fill_message(&product, customer.as_ref(), &[key]))
 }
 
@@ -66,6 +68,11 @@ pub async fn export(state: &AppState, actor: &Actor, rows: &[LicenceRow]) -> Res
     let customers =
         by_id(customers::repository::find_many(&state.pool, &distinct(rows, |row| row.customer_id)).await?, |c| c.id);
     let keys = keys_of(state, &ids).await?;
+    // only revoking deletes a key: an empty cell for any other licence would pass for a real answer
+    if let Some(row) = rows.iter().find(|row| row.state() != State::Revoked && !keys.contains_key(&row.id)) {
+        tracing::error!(licence = %row.id, "a licence that isn't revoked has no stored key");
+        return Err(ApiError::internal("a licence that isn't revoked has no stored key"));
+    }
     let mut csv = String::from(CSV_HEADER);
     csv.push_str("\r\n");
     for row in rows {

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.557866
-//+ Revised: 	2026/11/12 23:57:44.894976
+//+ Revised: 	2026/11/14 00:38:43.947077
 // -----------------------------------------------------------------------------
 
 //! Licences: one key for one product, optionally for a customer, optionally until a date. The key
@@ -11,7 +11,10 @@
 //! trying an application: it works on any number of computers, its tokens say it is one, and the
 //! Overview leaves it out.
 
+mod batch;
+mod bulk_routes;
 mod disclosure;
+mod editing;
 mod filter;
 mod issue;
 mod lifecycle;
@@ -19,6 +22,7 @@ pub mod repository;
 mod routes;
 pub mod secrets;
 mod views;
+pub mod writes;
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -27,8 +31,9 @@ use uuid::Uuid;
 
 use crate::money::PriceColumns;
 
-pub use issue::{IssueRequest, Issued, issue_in, issue_test_licence};
-pub use lifecycle::{Deleted, Edited, OnTestLicence, delete_locked, end_activation, reset};
+pub use editing::{Edited, OnTestLicence};
+pub use issue::{IssueRequest, Issued, KeySource, issue_in, issue_test_licence, issue_with_keys};
+pub use lifecycle::{Deleted, delete_locked, end_activation, reset};
 pub use routes::routes;
 pub use views::{LicenceView, present};
 

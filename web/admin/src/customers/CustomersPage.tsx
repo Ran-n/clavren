@@ -2,15 +2,16 @@
 // (which erases their name and email but keeps their licences working).
 
 import { useState } from "react";
-import { api, query } from "../shared/api";
+import { api, inTurn, query } from "../shared/api";
 import { Button } from "../shared/components/Button";
 import { ConfirmStrip } from "../shared/components/ConfirmStrip";
 import { DataTable, type Column } from "../shared/components/DataTable";
 import { InlineText } from "../shared/components/InlineText";
 import { FilterSelect, Pager, SearchBox, Toolbar } from "../shared/components/ListControls";
 import { ErrorNotice } from "../shared/components/Notice";
-import { formatDate } from "../shared/format";
-import { DEFAULT_PAGE_SIZE, useDebounced, usePagedList, useTitle } from "../shared/hooks";
+import { formatDay } from "../shared/format";
+import { DEFAULT_PAGE_SIZE, usePagedList } from "../shared/paging";
+import { useDebounced, useTitle } from "../shared/hooks";
 import { useTablePreferences } from "../shared/preferences";
 import { Link } from "../shared/router";
 import type { Customer } from "../shared/types";
@@ -26,7 +27,7 @@ function columns(save: (customer: Customer, field: "name" | "email" | "notes", v
     { key: "name", label: "Name", render: (customer) => <InlineText label="name" value={customer.name} maxLength={200} onSave={(value) => save(customer, "name", value)} /> },
     { key: "email", label: "Email", render: (customer) => <InlineText label="email" type="email" value={customer.email} maxLength={254} placeholder="Add an email" onSave={(value) => save(customer, "email", value)} /> },
     { key: "notes", label: "Notes", render: (customer) => <InlineText label="notes" value={customer.notes} maxLength={2000} placeholder="Add a note" onSave={(value) => save(customer, "notes", value)} /> },
-    { key: "added", label: "Added", render: (customer) => formatDate(customer.created_at) },
+    { key: "added", label: "Added", render: (customer) => formatDay(customer.created_at) },
     {
       key: "actions",
       label: "",
@@ -62,7 +63,7 @@ export function CustomersPage() {
   }
 
   async function save(customer: Customer, field: "name" | "email" | "notes", value: string | null) {
-    const changed = await api<Customer>("PATCH", `/customers/${customer.id}`, { [field]: value });
+    const changed = await inTurn(customer.id, () => api<Customer>("PATCH", `/customers/${customer.id}`, { [field]: value }));
     list.replace(changed, (existing) => existing.id === changed.id);
   }
 

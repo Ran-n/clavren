@@ -6,7 +6,8 @@
 import { useEffect, useId, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
 import { get } from "../api";
 import { describe } from "../errors";
-import { formatPrice, parsePrice } from "../format";
+import { currencyDigits, formatPrice, parsePrice } from "../format";
+import { useFocusOnClose } from "../hooks";
 import type { Overview, Price } from "../types";
 
 const FALLBACK_CURRENCY = "EUR";
@@ -37,7 +38,7 @@ export function useDefaultCurrency(): string {
 }
 
 /** Every currency the browser knows, A to Z, with `selected` among them even if it doesn't. */
-export function currencies(selected: string): string[] {
+function currencies(selected: string): string[] {
   const known = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("currency") : [FALLBACK_CURRENCY];
   return known.includes(selected) ? known : [...known, selected].sort();
 }
@@ -81,7 +82,7 @@ export function PriceInput({ label, amount, currency, onAmount, onCurrency, disa
 /** The decimal text of a stored price, for editing it. */
 export function priceText(price: Price | null): string {
   if (!price) return "";
-  const digits = new Intl.NumberFormat("en", { style: "currency", currency: price.currency }).resolvedOptions().maximumFractionDigits ?? 2;
+  const digits = currencyDigits(price.currency);
   return (price.amount / 10 ** digits).toFixed(digits);
 }
 
@@ -101,6 +102,7 @@ export function InlinePrice({ price, onSave, label = "price", readOnly }: Inline
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const finishing = useRef(false);
+  const trigger = useFocusOnClose<HTMLButtonElement>(draft !== null);
 
   if (readOnly !== undefined) return <span className="inline-value__placeholder" title={readOnly}>No price</span>;
 
@@ -148,7 +150,7 @@ export function InlinePrice({ price, onSave, label = "price", readOnly }: Inline
 
   if (draft === null) {
     return (
-      <button type="button" className="inline-value" onClick={start} aria-label={`Edit ${label}`} aria-describedby={valueId}>
+      <button ref={trigger} type="button" className="inline-value" onClick={start} aria-label={`Edit ${label}`} aria-describedby={valueId}>
         <span id={valueId}>{price ? formatPrice(price) : <span className="inline-value__placeholder">No price</span>}</span>
       </button>
     );

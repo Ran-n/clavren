@@ -16,6 +16,7 @@ use clavren_protocol::wire::{ActivationRequest, ErrorCode};
 use serde_json::json;
 use uuid::Uuid;
 
+use super::check_repository;
 use super::repository::{self, KeyedLicence, NewActivation};
 use super::tokens::{self, Subject};
 use crate::audit::{self, AuditEntry};
@@ -72,7 +73,7 @@ pub async fn activate(
     if let Some((existing, _)) = active.iter().find(|(_, device)| *device == valid.device_public_key) {
         let existing = *existing;
         // the same computer again (a retried activation): it gets a fresh token, as from a check
-        repository::record_check(&mut *transaction, existing, &valid.app_version, now).await?;
+        check_repository::record_check(&mut *transaction, existing, &valid.app_version, now).await?;
         transaction.commit().await?;
         let token = tokens::issue(state, &subject(existing), now);
         return Ok(Activated {

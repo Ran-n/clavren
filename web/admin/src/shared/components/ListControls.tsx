@@ -2,7 +2,7 @@
 // and the column picker. Their values are remembered by the page through its table preferences.
 
 import type { ReactNode } from "react";
-import { PAGE_SIZES, type PagedList } from "../hooks";
+import { PAGE_SIZES, type PagedList } from "../paging";
 import { Button } from "./Button";
 
 export function SearchBox({ value, onChange, label }: { value: string; onChange: (value: string) => void; label: string }) {
@@ -29,10 +29,10 @@ function renderOptions(options: Option[]) {
   ));
 }
 
-/** A select; options with a `group` go under that heading, after the ungrouped ones. */
 /**
- * A filter's select. A remembered value with no option yet (its products still loading) shows as
- * "Loading…", not as the first option, while the list is already filtered by it.
+ * A filter's select; options with a `group` go under that heading, after the ungrouped ones. A
+ * remembered value with no option yet (its products still loading) shows as "Loading…", not as
+ * the first option, while the list is already filtered by it.
  */
 export function FilterSelect({ label, value, options, onChange }: { label: string; value: string; options: Option[]; onChange: (value: string) => void }) {
   const groups = [...new Set(options.flatMap((option) => (option.group ? [option.group] : [])))];

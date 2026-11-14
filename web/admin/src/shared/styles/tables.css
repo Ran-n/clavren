@@ -1,0 +1,77 @@
+/* Tables: frames, cells, row states, empty rows and the pager. */
+
+.table-wrap {
+  overflow-x: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+.table-note {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  background: var(--color-primary-soft);
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.table.is-loading tbody {
+  opacity: 0.55;
+}
+.table th,
+.table td {
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+.table th {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  font-weight: 600;
+  background: var(--color-surface-raised);
+  white-space: nowrap;
+}
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+.table tr.is-selected td {
+  background: var(--color-primary-soft);
+}
+.table__check {
+  width: 2.2rem;
+}
+.table__nowrap {
+  white-space: nowrap;
+}
+.table__action {
+  text-align: right;
+  white-space: nowrap;
+}
+.table__empty {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: 2rem 1rem;
+}
+.table__below > td {
+  background: var(--color-surface-raised);
+}
+.table__new td {
+  background: var(--color-primary-soft);
+}
+.table__new input {
+  width: 100%;
+}
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+.pager__size {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+}

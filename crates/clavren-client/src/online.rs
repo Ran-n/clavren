@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.244813
-//+ Revised: 	2026/11/11 16:32:49.778338
+//+ Revised: 	2026/11/14 11:48:57.955562
 // -----------------------------------------------------------------------------
 
 //! Going online: activating a key, and the check that renews the token. The state lock is never
@@ -12,84 +12,19 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use clavren_protocol::check::check_message;
 use clavren_protocol::encoding;
-use clavren_protocol::licence_key::LicenceKey;
 use clavren_protocol::token;
-use clavren_protocol::wire::{ActivationResponse, ChallengeResponse, CheckResponse, ErrorCode, ErrorResponse};
+use clavren_protocol::wire::{ChallengeResponse, CheckResponse, ErrorCode, ErrorResponse};
 use ed25519_dalek::Signer;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use zeroize::Zeroize;
-
 use crate::client::{Client, refusal_outcome, server_now, signing_key};
 use crate::outcome::{Outcome, Temporary};
 use crate::state::{Application, Refusal, State};
-use crate::store::StoreError;
 use crate::transport::Answer;
 
 impl Client {
-    /// Activates `typed_key` on this computer. `Err` when the device key couldn't be saved (then
-    /// nothing was sent: the key would be bound to a device this computer can't prove it is), or
-    /// when the activation couldn't be saved after the server accepted it; retrying then is safe,
-    /// because the device key was saved first and the server knows it as the same computer.
-    pub fn activate(&self, typed_key: &str) -> Result<Outcome, StoreError> {
-        let Some(key) = LicenceKey::parse(typed_key) else { return Ok(Outcome::InvalidKey) };
-        let public_key = self.device_public_key()?;
-        let body = json!({
-            "product": self.config.product,
-            "key": key.canonical(),
-            "device_public_key": encoding::encode(&public_key),
-            "device_name": self.config.device_name,
-            "platform": self.config.platform,
-            "app_version": self.config.app_version,
-        });
-        let answer = match self.transport.post("/api/v1/activations", &body) {
-            Ok(answer) => answer,
-            Err(error) => {
-                log::warn!("activation couldn't reach the licence server: {error}");
-                return Ok(Outcome::Unreachable);
-            }
-        };
-        if matches!(answer.status, 200 | 201) {
-            let Some(ActivationResponse { activation, token, .. }) = parsed(&answer) else {
-                // e.g. a proxy's page with status 200: nothing the client can keep
-                log::error!("activation got HTTP {} without an activation and a token", answer.status);
-                return Ok(Outcome::Unreachable);
-            };
-            let now = self.clock.now();
-            let mut state = self.lock();
-            let mut activated = state.clone();
-            activated.activation = Some(activation);
-            activated.refusal = None;
-            activated.token = None;
-            // a key in use ends any licence application sent from here
-            activated.application = None;
-            if let Err(problem) = self.accept_token(&mut activated, token, now) {
-                // kept as activated: the next check asks again, with backoff
-                log::error!("the activation's token can't be used: {problem}");
-                activated.last_check = Some(now);
-            }
-            self.save(&activated)?;
-            *state = activated;
-            drop(state);
-            log::info!("licence activated");
-            return Ok(self.status());
-        }
-        Ok(match error_code(&answer) {
-            Some(ErrorCode::InvalidKey) => Outcome::InvalidKey,
-            Some(ErrorCode::AlreadyActivated) => Outcome::AlreadyActivatedElsewhere,
-            Some(ErrorCode::LicenceRevoked) => Outcome::Revoked,
-            Some(ErrorCode::LicenceExpired) => Outcome::Expired { at: None },
-            Some(ErrorCode::ProductUnavailable) => Outcome::ProductUnavailable,
-            Some(ErrorCode::RateLimited) => Outcome::RateLimited { retry_after: retry_after(&answer) },
-            other => {
-                log::error!("activation failed: HTTP {} ({other:?})", answer.status);
-                Outcome::Unreachable
-            }
-        })
-    }
-
     /// Asks the server whether the licence still holds and renews the token. A definitive answer
     /// (revoked, reset, expired, withdrawn) is kept and returned; anything else is `Err` and
     /// changes nothing. Without an activation but with a licence application waiting, asks how
@@ -142,8 +77,7 @@ impl Client {
         if let Err(problem) = self.accept_token(&mut renewed, token, now) {
             return Err(Temporary::Server(format!("the renewed token can't be used: {problem}")));
         }
-        self.save(&renewed)?;
-        *state = renewed;
+        self.commit(&mut state, renewed)?;
         drop(state);
         log::info!("licence checked");
         Ok(self.status())
@@ -176,26 +110,10 @@ impl Client {
             // this activation is over for good; a new key (or the same one, after a reset) starts afresh
             refused.activation = None;
         }
-        self.save(&refused)?;
-        *state = refused;
+        self.commit(&mut state, refused)?;
         drop(state);
         log::warn!("the licence server refused the licence: {refusal:?}");
         Ok(refusal_outcome(refusal))
-    }
-
-    /// The device key's public half, creating and saving the key first if there is none.
-    fn device_public_key(&self) -> Result<[u8; 32], StoreError> {
-        let mut state = self.lock();
-        if let Some(key) = signing_key(&state) {
-            return Ok(key.verifying_key().to_bytes());
-        }
-        let mut seed = [0u8; 32];
-        getrandom::fill(&mut seed).map_err(|error| StoreError::Protect(std::io::Error::other(error.to_string())))?;
-        let key = ed25519_dalek::SigningKey::from_bytes(&seed);
-        state.device_key = Some(encoding::encode(&seed));
-        seed.zeroize();
-        self.save(&state)?;
-        Ok(key.verifying_key().to_bytes())
     }
 
     /// The licence expiry the last token carried, for telling the user when it ended.
@@ -209,7 +127,7 @@ impl Client {
 impl Client {
     /// Takes `token` into `state` when it can be run on, with the clock measured anew (see
     /// [`accept_clock`]); leaves `state` as it was when it can't.
-    fn accept_token(&self, state: &mut State, token: String, now: DateTime<Utc>) -> Result<(), String> {
+    pub(crate) fn accept_token(&self, state: &mut State, token: String, now: DateTime<Utc>) -> Result<(), String> {
         let issued_at = token::unverified_claims(&token).ok_or("it is not a token")?.iat;
         let mut accepted = state.clone();
         accept_clock(&mut accepted, now, issued_at);
@@ -242,6 +160,23 @@ pub(crate) fn error_code(answer: &Answer) -> Option<ErrorCode> {
     parsed::<ErrorResponse>(answer).and_then(|error| ErrorCode::parse(&error.error))
 }
 
+/// How long the server asked to wait: a minute when it didn't say, and never more than a day,
+/// whatever the header says.
 pub(crate) fn retry_after(answer: &Answer) -> Duration {
-    Duration::from_secs(answer.retry_after.unwrap_or(60))
+    Duration::from_secs(answer.retry_after.unwrap_or(DEFAULT_RETRY_AFTER_SECONDS)).min(LONGEST_RETRY_AFTER)
 }
+
+const DEFAULT_RETRY_AFTER_SECONDS: u64 = 60;
+const LONGEST_RETRY_AFTER: Duration = Duration::from_secs(24 * 3600);
+/// What the server takes as a device name (1 to 200 characters).
+const MAX_DEVICE_NAME: usize = 200;
+const UNNAMED_DEVICE: &str = "computer";
+
+/// The device name as the server takes it: trimmed, at most 200 characters, never empty.
+pub(crate) fn device_name(configured: &str) -> String {
+    let name: String = configured.trim().chars().take(MAX_DEVICE_NAME).collect();
+    if name.is_empty() { UNNAMED_DEVICE.to_string() } else { name }
+}
+
+#[cfg(test)]
+mod tests;

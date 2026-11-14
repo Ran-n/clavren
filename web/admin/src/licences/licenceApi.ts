@@ -2,10 +2,9 @@
 // customer as the API takes it), and the IDs of every licence matching a filter (for bulk actions
 // on "all that match").
 
-import { api, get, query } from "../shared/api";
-import { ApiError } from "../shared/api";
+import { ApiError, api, getAll, inTurn, query } from "../shared/api";
 import { formatNumber } from "../shared/format";
-import type { Licence, Page, Price } from "../shared/types";
+import type { Licence, Price } from "../shared/types";
 import type { CustomerChoice } from "./CustomerPicker";
 
 export const MAX_BATCH = 1000;
@@ -46,18 +45,12 @@ export function customerBody(choice: CustomerChoice): Exclude<CustomerBody, null
 export type LicenceChanges = { customer?: CustomerBody; expires_at?: string | null; internal_notes?: string | null; revocation_reason?: string | null; price?: Price | null };
 
 export function updateLicence(id: string, changes: LicenceChanges): Promise<Licence> {
-  return api<Licence>("PATCH", `/licences/${id}?expand=${LICENCE_EXPAND}`, changes);
+  return inTurn(id, () => api<Licence>("PATCH", `/licences/${id}?expand=${LICENCE_EXPAND}`, changes));
 }
 
 /** Every licence ID the filter matches, up to MAX_BATCH; more is an error the admin can act on. */
 export async function matchingIds(filters: LicenceFilters): Promise<string[]> {
-  const ids: string[] = [];
-  let after: string | null = null;
-  do {
-    const page: Page<Licence> = await get(`/licences${query({ ...filterBody(filters), limit: 100, after })}`);
-    ids.push(...page.data.map((licence) => licence.id));
-    after = page.next_cursor;
-  } while (after && ids.length <= MAX_BATCH);
+  const ids = (await getAll<Licence>(`/licences${query(filterBody(filters))}`, MAX_BATCH)).map((licence) => licence.id);
   if (ids.length > MAX_BATCH) {
     throw new ApiError("invalid_request", `more than ${formatNumber(MAX_BATCH)} licences match: narrow the filter, or work in parts`, 400);
   }

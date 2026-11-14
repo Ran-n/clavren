@@ -1,167 +1,8 @@
-// Hooks every table page uses: cursor paging over an API list (page by page, or one list that
-// grows as it scrolls), row selection, and a value that settles after typing stops.
+// General hooks: a value that settles after typing stops, the browser tab's title, and giving the
+// keyboard its place back when an inline editor closes. Paging and selection live in paging.ts and
+// selection.ts.
 
-import { useCallback, useEffect, useState } from "react";
-import { get } from "./api";
-import type { Page } from "./types";
-
-export const PAGE_SIZES = [10, 25, 50, 100] as const;
-export const DEFAULT_PAGE_SIZE = 50;
-
-type ListState<T> = { rows: T[]; next: string | null; loading: boolean; error: unknown };
-
-export type PagedList<T> = ListState<T> & {
-  page: number;
-  hasPrevious: boolean;
-  goNext: () => void;
-  goPrevious: () => void;
-  reload: () => void;
-  replace: (row: T, matches: (existing: T) => boolean) => void;
-};
-
-function withLimit(path: string, pageSize: number): string {
-  return `${path}${path.includes("?") ? "&" : "?"}limit=${pageSize}`;
-}
-
-/**
- * The page of `source` after the cursor `after`, loaded again whenever `version` changes; with
- * `append`, a later page is added to the rows already loaded instead of replacing them. A slower
- * answer to an older request never replaces a newer one. A `null` source loads nothing.
- */
-function useListPage<T>(source: string | null, after: string | null, version: number, append: boolean) {
-  const [state, setState] = useState<ListState<T>>({ rows: [], next: null, loading: source !== null, error: null });
-  useEffect(() => {
-    if (source === null) return;
-    let current = true;
-    setState((previous) => ({ ...previous, loading: true, error: null }));
-    const url = after ? `${source}&after=${encodeURIComponent(after)}` : source;
-    get<Page<T>>(url).then(
-      (page) =>
-        current &&
-        setState((previous) => ({ rows: append && after ? [...previous.rows, ...page.data] : page.data, next: page.next_cursor, loading: false, error: null })),
-      (error: unknown) => current && setState((previous) => ({ ...previous, loading: false, error })),
-    );
-    return () => {
-      current = false;
-    };
-  }, [source, after, version, append]);
-  return [state, setState] as const;
-}
-
-/** One page of `path` (which already holds its filters), with Previous and Next. */
-export function usePagedList<T>(path: string, pageSize: number): PagedList<T> {
-  const source = withLimit(path, pageSize);
-  const [shown, setShown] = useState(source);
-  const [cursors, setCursors] = useState<(string | null)[]>([null]);
-  const [version, setVersion] = useState(0);
-  if (shown !== source) {
-    // New filters start again from the first page.
-    setShown(source);
-    setCursors([null]);
-  }
-  const after = cursors[cursors.length - 1] ?? null;
-  const [state, setState] = useListPage<T>(source, after, version, false);
-
-  // while a page loads, `next` still belongs to the page before: a second press would repeat it
-  const nextCursor = state.loading ? null : state.next;
-  const goNext = useCallback(() => setCursors((stack) => (nextCursor ? [...stack, nextCursor] : stack)), [nextCursor]);
-  const goPrevious = useCallback(() => setCursors((stack) => (stack.length > 1 ? stack.slice(0, -1) : stack)), []);
-  const reload = useCallback(() => setVersion((value) => value + 1), []);
-  const replace = useCallback((row: T, matches: (existing: T) => boolean) => {
-    setState((previous) => ({ ...previous, rows: previous.rows.map((existing) => (matches(existing) ? row : existing)) }));
-  }, []);
-
-  return { ...state, page: cursors.length, hasPrevious: cursors.length > 1, goNext, goPrevious, reload, replace };
-}
-
-export type InfiniteList<T> = {
-  rows: T[];
-  loading: boolean;
-  error: unknown;
-  /** More rows follow the ones loaded. */
-  more: boolean;
-  loadMore: () => void;
-  retry: () => void;
-};
-
-/** `path` page after page, each added below the last (for a list that loads as it scrolls); a
- * `null` path loads nothing. A new path starts again from the top. */
-export function useInfiniteList<T>(path: string | null, pageSize: number): InfiniteList<T> {
-  const source = path === null ? null : withLimit(path, pageSize);
-  const [shown, setShown] = useState(source);
-  const [after, setAfter] = useState<string | null>(null);
-  const [version, setVersion] = useState(0);
-  const [state, setState] = useListPage<T>(source, after, version, true);
-  if (shown !== source) {
-    setShown(source);
-    setAfter(null);
-    setState({ rows: [], next: null, loading: source !== null, error: null });
-  }
-  const { next, loading, error } = state;
-  const loadMore = useCallback(() => {
-    if (next && !loading && !error) setAfter(next);
-  }, [next, loading, error]);
-  const retry = useCallback(() => setVersion((value) => value + 1), []);
-  return { rows: state.rows, loading, error, more: Boolean(next), loadMore, retry };
-}
-
-export type Selection = {
-  ids: Set<string>;
-  /** Every row matching the filter, not only the ones ticked... */
-  allMatching: boolean;
-  /** ...but these, unticked since. */
-  excluded: Set<string>;
-  /** Whether the row `id` is ticked. */
-  has: (id: string) => boolean;
-  toggle: (id: string) => void;
-  setPage: (ids: string[], selected: boolean) => void;
-  selectAllMatching: () => void;
-  clear: () => void;
-};
-
-/** Ticked rows; cleared whenever `scope` (the filters) changes. */
-export function useSelection(scope: string): Selection {
-  const [ids, setIds] = useState<Set<string>>(new Set());
-  const [allMatching, setAllMatching] = useState(false);
-  const [excluded, setExcluded] = useState<Set<string>>(new Set());
-  const [shownScope, setShownScope] = useState(scope);
-  if (shownScope !== scope) {
-    setShownScope(scope);
-    setIds(new Set());
-    setAllMatching(false);
-    setExcluded(new Set());
-  }
-  const flip = (id: string) => (current: Set<string>) => {
-    const next = new Set(current);
-    if (!next.delete(id)) next.add(id);
-    return next;
-  };
-  // under "all matching", unticking a row excludes it, so every other matching row stays chosen
-  const toggle = useCallback((id: string) => (allMatching ? setExcluded(flip(id)) : setIds(flip(id))), [allMatching]);
-  const setPage = useCallback(
-    (page: string[], selected: boolean) => {
-      const apply = (add: boolean) => (current: Set<string>) => {
-        const next = new Set(current);
-        page.forEach((id) => (add ? next.add(id) : next.delete(id)));
-        return next;
-      };
-      if (allMatching) setExcluded(apply(!selected));
-      else setIds(apply(selected));
-    },
-    [allMatching],
-  );
-  const has = useCallback((id: string) => (allMatching ? !excluded.has(id) : ids.has(id)), [allMatching, excluded, ids]);
-  const selectAllMatching = useCallback(() => {
-    setAllMatching(true);
-    setExcluded(new Set());
-  }, []);
-  const clear = useCallback(() => {
-    setIds(new Set());
-    setAllMatching(false);
-    setExcluded(new Set());
-  }, []);
-  return { ids, allMatching, excluded, has, toggle, setPage, selectAllMatching, clear };
-}
+import { useEffect, useRef, useState, type RefObject } from "react";
 
 /** `value`, once it has stopped changing for `delayMs`. */
 export function useDebounced<T>(value: T, delayMs = 300): T {
@@ -171,6 +12,32 @@ export function useDebounced<T>(value: T, delayMs = 300): T {
     return () => window.clearTimeout(timer);
   }, [value, delayMs]);
   return settled;
+}
+
+/**
+ * Gives the keyboard its place back when an editor that took the place of its trigger closes
+ * (Enter, Escape): without it focus falls to the page and Tab starts again from the top. Put the
+ * ref on the trigger, or on what holds it; nothing happens when focus already went elsewhere
+ * (the editor closed because the person clicked or tabbed away).
+ */
+export function useFocusOnClose<T extends HTMLElement>(open: boolean): RefObject<T | null> {
+  const home = useRef<T>(null);
+  const wasOpen = useRef(open);
+  useEffect(() => {
+    const closed = wasOpen.current && !open;
+    wasOpen.current = open;
+    if (closed) focusIfLost(home.current);
+  }, [open]);
+  return home;
+}
+
+const FOCUSABLE = "button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled)";
+
+/** Focuses `home` (or the first control in it) when nothing on the page has focus. */
+export function focusIfLost(home: HTMLElement | null): void {
+  if (!home?.isConnected) return;
+  if (document.activeElement && document.activeElement !== document.body) return;
+  (home.matches(FOCUSABLE) ? home : home.querySelector<HTMLElement>(FOCUSABLE))?.focus();
 }
 
 /** Sets the browser tab's title for the page. */

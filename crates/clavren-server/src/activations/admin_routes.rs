@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.653413
-//+ Revised: 	2026/11/10 17:59:19.951500
+//+ Revised: 	2026/11/14 00:38:42.083250
 // -----------------------------------------------------------------------------
 
 //! `/api/admin/activations`: every computer a licence was used on. Revoking an activation ends that
@@ -57,7 +57,7 @@ async fn list(
 ) -> Result<Json<Page<serde_json::Value>>, ApiError> {
     expand.check(&["licence", "licence.product", "licence.customer", "licence.active_activation"])?;
     let page = PageParams { limit: params.limit, after: params.after };
-    let (limit, cursor) = (page.limit()?, page.cursor()?);
+    let (limit, cursor) = (page.limit()?, page.cursor_by_id()?);
     let pattern = params.q.as_deref().filter(|q| !q.trim().is_empty()).map(contains_pattern);
     let active = params.state.map(|wanted| wanted == ActivationState::Active);
     let rows: Vec<Activation> = sqlx::query_as(

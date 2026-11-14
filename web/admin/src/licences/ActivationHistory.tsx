@@ -1,10 +1,10 @@
 // Every computer a licence was activated on, newest first, with why each one stopped.
 
 import { useEffect, useState } from "react";
-import { get } from "../shared/api";
+import { getAll } from "../shared/api";
 import { ErrorNotice, Loading } from "../shared/components/Notice";
 import { formatDateTime } from "../shared/format";
-import type { Activation, Page } from "../shared/types";
+import type { Activation } from "../shared/types";
 import { activationState } from "../activations/activationState";
 
 export function ActivationHistory({ licenceId }: { licenceId: string }) {
@@ -12,20 +12,13 @@ export function ActivationHistory({ licenceId }: { licenceId: string }) {
   const [error, setError] = useState<unknown>(null);
   useEffect(() => {
     let current = true;
-    // every page: a licence moved between computers often enough has more than one
-    async function load() {
-      const all: Activation[] = [];
-      let after: string | null = null;
-      do {
-        const page: Page<Activation> = await get(`/activations?licence=${licenceId}&limit=100${after ? `&after=${encodeURIComponent(after)}` : ""}`);
-        all.push(...page.data);
-        after = page.next_cursor;
-      } while (after);
-      if (current) setActivations(all);
-    }
     setActivations(null);
     setError(null);
-    load().catch((failure: unknown) => current && setError(failure));
+    // every page: a licence moved between computers often enough has more than one
+    getAll<Activation>(`/activations?licence=${licenceId}`).then(
+      (all) => current && setActivations(all),
+      (failure: unknown) => current && setError(failure),
+    );
     return () => {
       current = false;
     };

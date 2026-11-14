@@ -6,24 +6,18 @@
 // per key. Copying them is not audited: the issue already is, and the keys came in its answer.
 
 import { useEffect, useState, type FormEvent } from "react";
-import { api, download } from "../shared/api";
+import { api } from "../shared/api";
 import { Button } from "../shared/components/Button";
-import { CopyButton, copyFailure, copyText } from "../shared/components/Copy";
-import { ErrorNotice, Notice } from "../shared/components/Notice";
-import { plural } from "../shared/errors";
+import { copyFailure, copyText } from "../shared/components/Copy";
+import { ErrorNotice } from "../shared/components/Notice";
 import { PriceInput, priceText, useDefaultCurrency } from "../shared/components/PriceField";
 import { fromDateInput, parsePrice } from "../shared/format";
-import type { Customer, Licence, Product } from "../shared/types";
-import type { IssueDraft } from "../shared/preferences";
+import type { Product } from "../shared/types";
+import type { IssueDraft } from "../shared/preferenceTypes";
 import { CustomerPicker, type CustomerChoice } from "./CustomerPicker";
-import { MAX_BATCH, csvName, customerBody } from "./licenceApi";
+import { MAX_BATCH, customerBody } from "./licenceApi";
+import { IssuedKeys, keysText, type Copied, type Issued } from "./IssuedKeys";
 
-type Issued = { licences: (Licence & { key: string })[]; customer: Customer | null; message: string | null };
-/** How copying the new keys went: copied, the reason it failed, or still under way (`null`). */
-type Copied = "copied" | { failed: string } | null;
-
-/** The new keys, one per line, in the order shown. */
-const keysText = (issued: Issued) => issued.licences.map((licence) => licence.key).join("\n");
 type Props = {
   products: Product[];
   /** Whether `products` is the complete list. */
@@ -37,46 +31,6 @@ type Props = {
   onIssued: () => void;
   onMore: () => void;
 };
-
-function CopiedNotice({ copied, count }: { copied: Copied; count: number }) {
-  if (copied === null) return null;
-  if (copied === "copied") return <Notice tone="success">{count === 1 ? "The key is on the clipboard." : `The ${count} keys are on the clipboard.`}</Notice>;
-  return <Notice tone="warning">{copied.failed}</Notice>;
-}
-
-function IssuedKeys({ issued, copied, onMore, onClose }: { issued: Issued; copied: Copied; onMore: () => void; onClose: () => void }) {
-  const [error, setError] = useState<unknown>(null);
-  const ids = issued.licences.map((licence) => licence.id);
-  const count = issued.licences.length;
-  return (
-    <div className="issue-result">
-      <h2>
-        {plural(issued.licences.length, issued.licences[0]?.is_test ? "test licence" : "licence")} issued
-      </h2>
-      <CopiedNotice copied={copied} count={count} />
-      <ul className="issue-result__keys" aria-label="New keys">
-        {issued.licences.map((licence) => (
-          <li key={licence.id}>
-            <code className="key">{licence.key}</code>
-            {count > 1 && <CopyButton label="Copy" text={() => Promise.resolve(licence.key)} />}
-          </li>
-        ))}
-      </ul>
-      <div className="button-row">
-        <CopyButton size="normal" label={count === 1 ? "Copy key" : "Copy keys"} text={() => Promise.resolve(keysText(issued))} />
-        {issued.message && <CopyButton size="normal" label="Copy message" text={() => Promise.resolve(issued.message as string)} />}
-        <Button onClick={() => download("/licences/export", { ids }, csvName()).catch(setError)}>Download CSV</Button>
-        <Button variant="quiet" onClick={onMore}>
-          Issue more
-        </Button>
-        <Button variant="quiet" onClick={onClose}>
-          Close
-        </Button>
-      </div>
-      <ErrorNotice error={error} />
-    </div>
-  );
-}
 
 export function IssuePanel({ products, productsLoaded, productsError, draft, onDraft, onClose, onIssued, onMore }: Props) {
   const active = products.filter((product) => product.is_active);

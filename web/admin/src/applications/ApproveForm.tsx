@@ -37,14 +37,20 @@ export function ApproveForm({ application, onApproved, onCancel }: Props) {
   useEffect(() => {
     let current = true;
     existingCustomer(application.email).then(
-      (found) => current && found && setCustomer({ kind: "existing", customer: found }),
+      // only while the choice is still the one the form opened with: the admin may have picked meanwhile
+      (found) =>
+        current &&
+        found &&
+        setCustomer((chosen) =>
+          chosen.kind === "new" && chosen.name === application.name && chosen.email === application.email ? { kind: "existing", customer: found } : chosen,
+        ),
       // no match found is the default: a new customer from the application
       () => undefined,
     );
     return () => {
       current = false;
     };
-  }, [application.email]);
+  }, [application.email, application.name]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();

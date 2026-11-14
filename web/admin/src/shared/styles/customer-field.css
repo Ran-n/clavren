@@ -1,0 +1,36 @@
+/* A licence's customer, shown with an editor in place. */
+
+/* A licence's customer, and its editor in place. */
+.customer-field {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+}
+.customer-field--compact {
+  align-items: flex-start;
+}
+/* In a table row the "Edit" link shows on hover and on focus, so the cell stays compact. */
+.customer-field__edit {
+  font-size: 0.85rem;
+  opacity: 0;
+}
+tr:hover .customer-field__edit,
+.customer-field__edit:focus-visible {
+  opacity: 1;
+}
+.customer-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: min(18rem, 100%);
+}
+.customer-editor .combobox {
+  margin-bottom: 0.4rem;
+}
+.revoked-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+}

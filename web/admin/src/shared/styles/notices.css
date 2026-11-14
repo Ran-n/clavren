@@ -1,0 +1,81 @@
+/* Notices, inline errors, the update notice and the loading spinner. */
+
+.notice {
+  border-radius: var(--radius-small);
+  padding: 0.65rem 0.85rem;
+  margin: 0 0 1rem;
+  border: 1px solid transparent;
+}
+.notice--error {
+  background: var(--color-danger-soft);
+  border-color: var(--color-danger);
+}
+.notice--warning {
+  background: var(--color-warning-soft);
+  border-color: var(--color-warning);
+}
+.notice--success {
+  background: var(--color-success-soft);
+  border-color: var(--color-success);
+}
+.notice--info {
+  background: var(--color-primary-soft);
+}
+/* The update notice: its text, then its links and button on the same line when they fit. */
+.update-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.9rem;
+}
+.update-notice__text {
+  flex: 1 1 20rem;
+  margin: 0;
+}
+.update-notice__actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+}
+.update-notice .confirm-strip {
+  flex-basis: 100%;
+  margin: 0.25rem 0 0;
+}
+.server-facts {
+  margin: 0 0 0.5rem;
+}
+.server-facts p {
+  margin: 0.2rem 0;
+}
+.inline-error {
+  display: block;
+  color: var(--color-danger);
+  font-size: 0.88rem;
+  margin-top: 0.25rem;
+}
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--color-text-muted);
+  padding: 1rem;
+}
+.loading__spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--color-border-strong);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading__spinner {
+    animation: none;
+  }
+}

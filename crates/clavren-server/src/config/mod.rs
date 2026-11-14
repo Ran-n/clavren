@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 14:53:29.378030
-//+ Revised: 	2026/11/12 23:57:44.261914
+//+ Revised: 	2026/11/14 11:42:03.776330
 // -----------------------------------------------------------------------------
 
 //! Server configuration, read from `CLAVREN_*` environment variables (on the Pi, from
@@ -9,61 +9,26 @@
 //! at startup with a message naming the variable, never later.
 
 mod parse;
+mod settings;
 #[cfg(test)]
 mod tests;
+mod vars;
 
 use std::fmt;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::time::Duration;
 
-use axum::http::HeaderName;
 use sqlx::postgres::PgConnectOptions;
 
-use crate::money::Currency;
 use crate::products::{MAX_OFFLINE_DAYS, MIN_OFFLINE_DAYS};
+use settings::*;
 
-pub const DATABASE_URL_VAR: &str = "CLAVREN_DATABASE_URL";
-pub const LISTEN_VAR: &str = "CLAVREN_LISTEN";
-pub const DATA_DIR_VAR: &str = "CLAVREN_DATA_DIR";
-pub const PUBLIC_URL_VAR: &str = "CLAVREN_PUBLIC_URL";
-pub const TRUSTED_PROXIES_VAR: &str = "CLAVREN_TRUSTED_PROXIES";
-pub const CLIENT_IP_HEADER_VAR: &str = "CLAVREN_CLIENT_IP_HEADER";
-pub const SESSION_IDLE_HOURS_VAR: &str = "CLAVREN_SESSION_IDLE_HOURS";
-pub const SESSION_MAX_DAYS_VAR: &str = "CLAVREN_SESSION_MAX_DAYS";
-pub const LOGIN_MAX_FAILURES_VAR: &str = "CLAVREN_LOGIN_MAX_FAILURES";
-pub const LOGIN_WINDOW_MINUTES_VAR: &str = "CLAVREN_LOGIN_WINDOW_MINUTES";
-pub const TOKEN_DAYS_VAR: &str = "CLAVREN_TOKEN_DAYS";
-pub const CURRENCY_VAR: &str = "CLAVREN_CURRENCY";
-pub const SIGNING_KEY_VERSION_VAR: &str = "CLAVREN_SIGNING_KEY_VERSION";
-/// Read by `clavren-update-check.sh`; the server only needs to know whether it is `off`.
-pub const UPDATE_SOURCE_VAR: &str = "CLAVREN_UPDATE_SOURCE";
-/// Where `install.sh` put the root updater, and where it reports; only tests change these.
-pub const UPDATE_SCRIPT_VAR: &str = "CLAVREN_UPDATE_SCRIPT";
-pub const UPDATE_STATUS_VAR: &str = "CLAVREN_UPDATE_STATUS";
-/// The web application form's Cloudflare Turnstile keys: both, or neither (no human check).
-pub const TURNSTILE_SITE_KEY_VAR: &str = "CLAVREN_TURNSTILE_SITE_KEY";
-pub const TURNSTILE_SECRET_VAR: &str = "CLAVREN_TURNSTILE_SECRET";
-/// Where Turnstile answers are verified; only tests change it.
-pub const TURNSTILE_VERIFY_URL_VAR: &str = "CLAVREN_TURNSTILE_VERIFY_URL";
+pub use settings::{
+    AdminAuthSettings, ApplicationSettings, DEFAULT_TURNSTILE_VERIFY_URL, LicensingSettings, ProxySettings,
+    TurnstileSettings, UpdateSettings,
+};
+pub use vars::*;
 
-/// Localhost only: on the Pi, `cloudflared` is the only thing that should reach Clavren.
-const DEFAULT_LISTEN: &str = "127.0.0.1:8080";
-const DEFAULT_DATA_DIR: &str = "/var/lib/clavren";
-/// `cloudflared` runs on the same machine and connects from localhost.
-const DEFAULT_TRUSTED_PROXIES: &str = "127.0.0.1,::1";
-const DEFAULT_CLIENT_IP_HEADER: &str = "cf-connecting-ip";
-const DEFAULT_SESSION_IDLE_HOURS: u64 = 12;
-const DEFAULT_SESSION_MAX_DAYS: u64 = 7;
-const DEFAULT_LOGIN_MAX_FAILURES: u32 = 5;
-const DEFAULT_LOGIN_WINDOW_MINUTES: u64 = 15;
-const DEFAULT_TOKEN_DAYS: u64 = 30;
-const DEFAULT_SIGNING_KEY_VERSION: u32 = 1;
-const DEFAULT_UPDATE_SCRIPT: &str = "/usr/local/lib/clavren/clavren-update.sh";
-/// In a folder only root can write (`StateDirectory=` of `clavren-update.service`): the root
-/// updater never writes where the clavren user could plant a link.
-const DEFAULT_UPDATE_STATUS: &str = "/var/lib/clavren-update/status.json";
-pub const DEFAULT_TURNSTILE_VERIFY_URL: &str = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 /// The folder under the data directory the update scripts and the server share.
 pub const UPDATES_FOLDER: &str = "updates";
 
@@ -80,80 +45,6 @@ pub struct Config {
     pub licensing: LicensingSettings,
     pub updates: UpdateSettings,
     pub applications: ApplicationSettings,
-}
-
-/// Which peers may tell Clavren the real client address, and in which header.
-#[derive(Clone, Debug)]
-pub struct ProxySettings {
-    pub trusted: Vec<IpAddr>,
-    pub client_ip_header: HeaderName,
-}
-
-#[derive(Clone, Debug)]
-pub struct AdminAuthSettings {
-    /// A session not used for this long ends.
-    pub session_idle: Duration,
-    /// A session ends this long after login, used or not.
-    pub session_lifetime: Duration,
-    pub login_max_failures: u32,
-    pub login_failure_window: Duration,
-    /// `Secure` cookies, sent over HTTPS only: on whenever the public URL is https://.
-    pub secure_cookies: bool,
-}
-
-#[derive(Clone, Debug)]
-pub struct LicensingSettings {
-    /// The offline limit new products start with; each product then has its own
-    /// (`products.offline_days`), which every token of its licences lasts (capped at the licence's
-    /// expiry).
-    pub token_lifetime: Duration,
-    /// Which signing key new tokens use (their `kid` is `v<version>`). Raised to rotate keys once
-    /// every application in use trusts the next one.
-    pub signing_key_version: u32,
-    /// The currency the dashboard preselects for prices (`CLAVREN_CURRENCY`, EUR by default).
-    /// Stored prices keep their own currency, so changing it never relabels old amounts.
-    pub default_currency: Currency,
-}
-
-/// Updates are found and installed by scripts outside the server (`deploy/clavren-update*.sh`); the
-/// server reads what they write and writes requests for them in `dir`.
-#[derive(Clone, Debug)]
-pub struct UpdateSettings {
-    pub dir: PathBuf,
-    /// `false` when `CLAVREN_UPDATE_SOURCE=off`.
-    pub checking: bool,
-    /// The root updater; when it isn't installed (a source installation), there is no Update button.
-    pub installer: PathBuf,
-    /// How the current or last update went, written by the root updater.
-    pub status: PathBuf,
-}
-
-/// The licence application form.
-#[derive(Clone, Debug, Default)]
-pub struct ApplicationSettings {
-    /// The web form's human check; `None` shows the form without one.
-    pub turnstile: Option<TurnstileSettings>,
-}
-
-/// Cloudflare Turnstile: the site key the web form shows, and the secret the server verifies its
-/// answers with.
-#[derive(Clone)]
-pub struct TurnstileSettings {
-    pub site_key: String,
-    pub secret: String,
-    pub verify_url: String,
-}
-
-/// The secret is never printed.
-impl fmt::Debug for TurnstileSettings {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("TurnstileSettings")
-            .field("site_key", &self.site_key)
-            .field("secret", &"<redacted>")
-            .field("verify_url", &self.verify_url)
-            .finish()
-    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -248,71 +139,6 @@ impl Config {
             public_url,
         })
     }
-}
-
-impl Default for ProxySettings {
-    fn default() -> Self {
-        Self {
-            trusted: vec![IpAddr::from([127, 0, 0, 1]), IpAddr::from([0, 0, 0, 0, 0, 0, 0, 1])],
-            client_ip_header: HeaderName::from_static(DEFAULT_CLIENT_IP_HEADER),
-        }
-    }
-}
-
-impl Default for AdminAuthSettings {
-    fn default() -> Self {
-        Self {
-            session_idle: hours(DEFAULT_SESSION_IDLE_HOURS),
-            session_lifetime: days(DEFAULT_SESSION_MAX_DAYS),
-            login_max_failures: DEFAULT_LOGIN_MAX_FAILURES,
-            login_failure_window: minutes(DEFAULT_LOGIN_WINDOW_MINUTES),
-            secure_cookies: true,
-        }
-    }
-}
-
-impl Default for UpdateSettings {
-    fn default() -> Self {
-        Self {
-            dir: PathBuf::from(DEFAULT_DATA_DIR).join(UPDATES_FOLDER),
-            checking: true,
-            installer: PathBuf::from(DEFAULT_UPDATE_SCRIPT),
-            status: PathBuf::from(DEFAULT_UPDATE_STATUS),
-        }
-    }
-}
-
-impl LicensingSettings {
-    /// The offline days a new product starts with, unless its request says otherwise.
-    pub fn new_product_offline_days(&self) -> i32 {
-        // within MIN_OFFLINE_DAYS..=MAX_OFFLINE_DAYS, checked at startup
-        i32::try_from(self.token_lifetime.as_secs() / (24 * 3600)).unwrap_or(MAX_OFFLINE_DAYS)
-    }
-}
-
-impl Default for LicensingSettings {
-    fn default() -> Self {
-        Self {
-            token_lifetime: days(DEFAULT_TOKEN_DAYS),
-            signing_key_version: DEFAULT_SIGNING_KEY_VERSION,
-            default_currency: Currency::euro(),
-        }
-    }
-}
-
-/// The longest any configured length of time may be.
-const TEN_YEARS_IN_DAYS: u64 = 3650;
-
-fn minutes(count: u64) -> Duration {
-    Duration::from_secs(count * 60)
-}
-
-fn hours(count: u64) -> Duration {
-    minutes(count * 60)
-}
-
-fn days(count: u64) -> Duration {
-    hours(count * 24)
 }
 
 /// The database URL can hold a password, so it is never printed.

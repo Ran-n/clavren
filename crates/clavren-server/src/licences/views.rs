@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.810047
-//+ Revised: 	2026/11/12 23:57:45.120859
+//+ Revised: 	2026/11/14 11:42:03.314495
 // -----------------------------------------------------------------------------
 
 //! What the admin API shows of a licence. Related records are IDs unless expanded
@@ -80,4 +80,19 @@ pub async fn present(pool: &PgPool, rows: Vec<LicenceRow>, expand: &Expand) -> R
             internal_notes: row.internal_notes,
         })
         .collect())
+}
+
+#[derive(Serialize)]
+pub(super) struct IssuedLicence {
+    #[serde(flatten)]
+    pub(super) licence: LicenceView,
+    pub(super) key: String,
+}
+
+#[derive(Serialize)]
+pub(super) struct IssueResponse {
+    pub(super) licences: Vec<IssuedLicence>,
+    pub(super) customer: Option<Customer>,
+    /// The product's message for the customer, with every key; only when there is a customer.
+    pub(super) message: Option<String>,
 }

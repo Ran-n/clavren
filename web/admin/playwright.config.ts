@@ -24,7 +24,7 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   projects: [
-    { name: "flows", testIgnore: /rendered\.spec\.ts/, use: { baseURL: SERVERS.flows.url } },
-    { name: "rendered", testMatch: /rendered\.spec\.ts/, use: { baseURL: SERVERS.rendered.url } },
+    { name: "flows", testIgnore: /rendered[-\w]*\.spec\.ts/, use: { baseURL: SERVERS.flows.url } },
+    { name: "rendered", testMatch: /rendered[-\w]*\.spec\.ts/, use: { baseURL: SERVERS.rendered.url } },
   ],
 });

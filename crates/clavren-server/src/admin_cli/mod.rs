@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:35.673534
-//+ Revised: 	2026/11/08 14:55:44.503947
+//+ Revised: 	2026/11/14 00:38:42.616338
 // -----------------------------------------------------------------------------
 
 //! `clavren-admin`: managing administrator accounts on the server itself (there is no
@@ -63,6 +63,8 @@ pub enum CliError {
     Database(#[from] sqlx::Error),
     #[error("could not read from the keyboard: {0}")]
     Input(#[from] std::io::Error),
+    #[error("could not show the recovery codes ({0}); nothing was changed")]
+    Output(#[source] std::io::Error),
     #[error(
         "{0:?} is not a valid username: use lowercase letters, digits, '.', '_' or '-', starting with a letter or digit"
     )]

@@ -1,0 +1,130 @@
+// -----------------------------------------------------------------------------
+//+ Authors: 	Ran# <ran.hash@proton.me>
+//+ Created: 	2026/11/14 12:05:26.925259
+//+ Revised: 	2026/11/14 12:05:26.925259
+// -----------------------------------------------------------------------------
+
+//! Undoing single migrations keeps what was there before them.
+
+use super::*;
+
+/// Undoing test licences keeps them as ordinary licences, each on its latest computer only, so
+/// the one-computer index can come back.
+#[sqlx::test(migrations = false)]
+async fn undoing_test_licences_keeps_them_on_their_latest_computer(pool: PgPool) {
+    MIGRATOR.run(&pool).await.unwrap();
+    let licence: uuid::Uuid = sqlx::query_scalar(
+        "WITH p AS (INSERT INTO products (code, name) VALUES ('avalio-lite', 'Avalio Lite') RETURNING id)
+         INSERT INTO licenses (product_id, key_lookup, is_test) SELECT id, $1, TRUE FROM p RETURNING id",
+    )
+    .bind([3u8; 32].as_slice())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for (day, device) in [(1, 1u8), (3, 3), (2, 2)] {
+        sqlx::query(
+            "INSERT INTO activations (license_id, device_public_key, device_name, platform, app_version, activated_at)
+             VALUES ($1, $2, 'PC', 'windows', '1.0.0', '2026-11-01'::timestamptz + make_interval(days => $3))",
+        )
+        .bind(licence)
+        .bind([device; 32].as_slice())
+        .bind(day)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    MIGRATOR.undo(&pool, 20261109000001).await.unwrap();
+    assert!(index_exists(&pool, "activations_one_active_per_license").await);
+    let active: Vec<Vec<u8>> = sqlx::query_scalar("SELECT device_public_key FROM activations WHERE revoked_at IS NULL")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(active, [vec![3u8; 32]], "the latest computer stays");
+    let reset: i64 = sqlx::query_scalar("SELECT count(*) FROM activations WHERE revocation_reason = 'reset'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(reset, 2);
+    MIGRATOR.run(&pool).await.unwrap();
+    let is_test: bool = sqlx::query_scalar("SELECT is_test FROM licenses").fetch_one(&pool).await.unwrap();
+    assert!(!is_test, "the licence stays, as an ordinary one");
+}
+
+/// Undoing licence applications drops them and the products' flag, and keeps everything else.
+#[sqlx::test(migrations = false)]
+async fn undoing_applications_keeps_products_and_licences(pool: PgPool) {
+    MIGRATOR.run(&pool).await.unwrap();
+    sqlx::query(
+        "WITH p AS (INSERT INTO products (code, name, accepts_applications) VALUES ('avalio-lite', 'Avalio Lite', TRUE)
+                    RETURNING id)
+         INSERT INTO license_applications (product_id, name, email, source, secret_hash)
+         SELECT id, 'Ana', 'ana@example.com', 'app', $1 FROM p",
+    )
+    .bind([4u8; 32].as_slice())
+    .execute(&pool)
+    .await
+    .unwrap();
+    MIGRATOR.undo(&pool, 20261110000001).await.unwrap();
+    assert!(!existing_tables(&pool).await.contains(&"license_applications".to_string()));
+    let names: Vec<String> = sqlx::query_scalar("SELECT name FROM products").fetch_all(&pool).await.unwrap();
+    assert_eq!(names, ["Avalio Lite"]);
+    MIGRATOR.run(&pool).await.unwrap();
+    let open: bool = sqlx::query_scalar("SELECT accepts_applications FROM products").fetch_one(&pool).await.unwrap();
+    assert!(!open, "applications start closed again");
+}
+
+/// Undoing the key instructions drops only that column; applying again starts it empty.
+#[sqlx::test(migrations = false)]
+async fn undoing_key_instructions_keeps_the_products(pool: PgPool) {
+    MIGRATOR.run(&pool).await.unwrap();
+    sqlx::query("INSERT INTO products (code, name, key_instructions) VALUES ('avalio-lite', 'Avalio Lite', 'Ask')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    MIGRATOR.undo(&pool, 20261111000001).await.unwrap();
+    let names: Vec<String> = sqlx::query_scalar("SELECT name FROM products").fetch_all(&pool).await.unwrap();
+    assert_eq!(names, ["Avalio Lite"]);
+    MIGRATOR.run(&pool).await.unwrap();
+    let text: Option<String> =
+        sqlx::query_scalar("SELECT key_instructions FROM products").fetch_one(&pool).await.unwrap();
+    assert_eq!(text, None);
+}
+
+/// Products made before offline days get 30; undoing drops only that column.
+#[sqlx::test(migrations = false)]
+async fn existing_products_get_30_offline_days_and_undoing_keeps_them(pool: PgPool) {
+    MIGRATOR.run(&pool).await.unwrap();
+    MIGRATOR.undo(&pool, 20261112000001).await.unwrap();
+    sqlx::query("INSERT INTO products (code, name) VALUES ('avalio-lite', 'Avalio Lite')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    MIGRATOR.run(&pool).await.unwrap();
+    let days: i32 = sqlx::query_scalar("SELECT offline_days FROM products").fetch_one(&pool).await.unwrap();
+    assert_eq!(days, 30);
+    MIGRATOR.undo(&pool, 20261112000001).await.unwrap();
+    let names: Vec<String> = sqlx::query_scalar("SELECT name FROM products").fetch_all(&pool).await.unwrap();
+    assert_eq!(names, ["Avalio Lite"]);
+}
+
+/// Undoing prices drops the four columns and keeps the products and licences.
+#[sqlx::test(migrations = false)]
+async fn undoing_prices_keeps_products_and_licences(pool: PgPool) {
+    MIGRATOR.run(&pool).await.unwrap();
+    sqlx::query(
+        "WITH p AS (INSERT INTO products (code, name, price_amount, price_currency)
+                    VALUES ('avalio-lite', 'Avalio Lite', 1999, 'EUR') RETURNING id)
+         INSERT INTO licenses (product_id, key_lookup, price_amount, price_currency) SELECT id, $1, 1999, 'EUR' FROM p",
+    )
+    .bind([5u8; 32].as_slice())
+    .execute(&pool)
+    .await
+    .unwrap();
+    MIGRATOR.undo(&pool, 20261112000002).await.unwrap();
+    let licences: i64 = sqlx::query_scalar("SELECT count(*) FROM licenses").fetch_one(&pool).await.unwrap();
+    assert_eq!(licences, 1);
+    MIGRATOR.run(&pool).await.unwrap();
+    let price: Option<i64> = sqlx::query_scalar("SELECT price_amount FROM licenses").fetch_one(&pool).await.unwrap();
+    assert_eq!(price, None, "applied again, prices start empty");
+}

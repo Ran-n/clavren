@@ -1,9 +1,13 @@
 // The inline confirmation a destructive action turns into: what will happen in plain words, an
 // optional reason, a red Confirm and Cancel. Escape cancels. No dialogs. For the gravest actions,
 // `confirmWord` must be typed before Confirm is enabled; with `acknowledge`, a box must be ticked.
+// It opens with the keyboard on the reason, the word or the tick, else on Cancel: never on Confirm,
+// so pressing Enter twice on a destructive button doesn't go through with it. When it closes, the
+// keyboard goes back to where the strip was.
 
-import { useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { describe } from "../errors";
+import { focusIfLost } from "../hooks";
 import { Button } from "./Button";
 
 type Props = {
@@ -27,6 +31,18 @@ export function ConfirmStrip({ message, confirmLabel, withReason, confirmWord, a
   const unticked = withTick && !ticked;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const strip = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // what holds the strip: the button that opened it is there (again) once the strip is gone,
+    // named like the strip's own Confirm ("Delete", "Revoke"); else the first control there
+    const home = strip.current?.parentElement ?? null;
+    return () =>
+      void requestAnimationFrame(() => {
+        const opener = [...(home?.querySelectorAll<HTMLElement>("button:not(:disabled)") ?? [])].find((button) => button.textContent?.trim() === confirmLabel);
+        focusIfLost(opener ?? home);
+      });
+    // the label a strip opens with is the one its opener has
+  }, []);
 
   async function confirm() {
     setBusy(true);
@@ -47,7 +63,7 @@ export function ConfirmStrip({ message, confirmLabel, withReason, confirmWord, a
   }
 
   return (
-    <div className="confirm-strip" role="group" aria-label={confirmLabel} onKeyDown={onKeyDown}>
+    <div ref={strip} className="confirm-strip" role="group" aria-label={confirmLabel} onKeyDown={onKeyDown}>
       <p className="confirm-strip__message">{message}</p>
       {withReason && (
         <input
@@ -87,11 +103,10 @@ export function ConfirmStrip({ message, confirmLabel, withReason, confirmWord, a
           busy={busy}
           disabledReason={untyped ? `Type ${confirmWord} to confirm` : unticked ? "Tick the box above to confirm" : null}
           onClick={() => void confirm()}
-          autoFocus={!withReason && confirmWord === undefined && !withTick}
         >
           {confirmLabel}
         </Button>
-        <Button size="small" onClick={onCancel} disabled={busy}>
+        <Button size="small" onClick={onCancel} disabled={busy} autoFocus={!withReason && confirmWord === undefined && !withTick}>
           Cancel
         </Button>
       </span>

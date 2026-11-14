@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/11 16:32:49.346002
-//+ Revised: 	2026/11/11 16:32:54.038893
+//+ Revised: 	2026/11/14 00:38:45.537179
 // -----------------------------------------------------------------------------
 
 //! Licence applications in tests: a product that takes them, sending one, asking how it went, and
@@ -105,6 +105,16 @@ pub async fn fake_turnstile() -> Settings {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address: SocketAddr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, Router::new().route("/siteverify", post(verify))).await });
+    turnstile_settings(&format!("http://{address}/siteverify"), TURNSTILE_SECRET)
+}
+
+/// A stand-in for a `siteverify` that is broken: it answers every question with `status` and
+/// `body`. Returns settings that use it.
+pub async fn broken_turnstile(status: StatusCode, body: &'static str) -> Settings {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address: SocketAddr = listener.local_addr().unwrap();
+    let app = Router::new().route("/siteverify", post(move || async move { (status, body) }));
+    tokio::spawn(async move { axum::serve(listener, app).await });
     turnstile_settings(&format!("http://{address}/siteverify"), TURNSTILE_SECRET)
 }
 

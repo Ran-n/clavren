@@ -43,20 +43,27 @@ test("changing the password, and signing out everywhere else", async ({ admin, c
   const changed = `${original} changed`;
   await admin.goto("/account");
   const card = admin.getByRole("form", { name: "Password" });
+  const change = async (from: string, to: string) => {
+    await card.getByLabel("Current password").fill(from);
+    await card.getByLabel("New password", { exact: true }).fill(to);
+    await card.getByLabel("New password again").fill(to);
+    await card.getByRole("button", { name: "Change password" }).click();
+    await expect(card.getByText("Password changed.")).toBeVisible();
+  };
   await card.getByLabel("Current password").fill(original);
   await card.getByLabel("New password", { exact: true }).fill("too short");
   await expect(card.getByRole("button", { name: "Change password" })).toBeDisabled();
-  await card.getByLabel("New password", { exact: true }).fill(changed);
-  await card.getByLabel("New password again").fill(changed);
-  await card.getByRole("button", { name: "Change password" }).click();
-  await expect(card.getByText("Password changed.")).toBeVisible();
-
-  // And back, so the other specs keep signing in.
-  await card.getByLabel("Current password").fill(changed);
-  await card.getByLabel("New password", { exact: true }).fill(original);
-  await card.getByLabel("New password again").fill(original);
-  await card.getByRole("button", { name: "Change password" }).click();
-  await expect(card.getByText("Password changed.")).toBeVisible();
+  let current = original;
+  try {
+    await change(original, changed);
+    current = changed;
+  } finally {
+    // And back, whatever failed above: every other spec signs in with the original.
+    if (current !== original) {
+      await admin.goto("/account");
+      await change(changed, original);
+    }
+  }
 
   const sessions = admin.getByRole("form", { name: "Other sessions" });
   await sessions.getByRole("button", { name: "Sign out everywhere else" }).click();

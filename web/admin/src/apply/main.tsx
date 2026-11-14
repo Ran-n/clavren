@@ -10,14 +10,33 @@ import { ApplyForm } from "./ApplyForm";
 import { KeyPage } from "./KeyPage";
 import { StatusView } from "./StatusView";
 import "../shared/theme.css";
-import "../shared/components.css";
+import "../shared/styles/layout.css";
+import "../shared/styles/buttons.css";
+import "../shared/styles/forms.css";
+import "../shared/styles/notices.css";
+import "../shared/styles/toolbar.css";
+import "../shared/styles/tables.css";
+import "../shared/styles/inline-editing.css";
+import "../shared/styles/confirm-strip.css";
+import "../shared/styles/badges-stats.css";
+import "../shared/styles/licences.css";
+import "../shared/styles/bulk-bar.css";
+import "../shared/styles/customer-field.css";
+import "../shared/styles/pages.css";
+import "../shared/styles/responsive.css";
+import "../shared/styles/approve-form.css";
 import "./apply.css";
 
 const STATUS_PATH = "/apply/status";
 const productInAddress = () => new URLSearchParams(window.location.search).get("product") ?? "";
 
 function secretInAddress(): string {
-  return window.location.pathname === STATUS_PATH ? decodeURIComponent(window.location.hash.slice(1)) : "";
+  if (window.location.pathname !== STATUS_PATH) return "";
+  try {
+    return decodeURIComponent(window.location.hash.slice(1));
+  } catch {
+    return ""; // a stray % in a mangled link: shown as incomplete, which reloading can't fix
+  }
 }
 
 function ApplyPage() {

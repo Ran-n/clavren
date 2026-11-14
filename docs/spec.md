@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.098038 )
-[//]: # (+ Revised: 	2026/11/12 23:57:46.655750 )
+[//]: # (+ Revised: 	2026/11/14 00:38:46.375728 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Clavren — Specification
@@ -150,7 +150,7 @@ The application receives one typed outcome and shows its own translated message:
 | `ApplicationPending` | A licence application from this computer waits | Says so; may offer to type a key instead |
 | `ApplicationRejected { reason }` | It was rejected (or withdrawn); `reason` is the administrator's, for the applicant | Shows it; asks for a key or offers to apply again |
 
-`apply(applicant)` sends an application and answers `Sent`, `AlreadyPending` (that address has one waiting), `InvalidDetails`, `ProductUnavailable`, `AlreadyLicensed` (nothing sent), `RateLimited` or `Unreachable`. Sending one sets aside a locked licence. `dismiss_application()` sets an application aside (back to `NeedsActivation`).
+`apply(applicant)` sends an application and answers `Sent`, `AlreadyPending` (that address has one waiting, or this computer does: nothing sent), `InvalidDetails`, `ProductUnavailable`, `AlreadyLicensed` (nothing sent), `RateLimited` or `Unreachable`. Sending one sets aside the licence the computer had (locked, or waiting for a check). `dismiss_application()` sets an application aside (back to `NeedsActivation`).
 
 **Definitive** refusals (`Revoked`, `Expired`, `ProductUnavailable`, unknown activation) delete the cached token and lock immediately. **Temporary** failures (no network, timeout, server error, rate limit) change nothing while the token is valid.
 
@@ -184,7 +184,7 @@ Returns `{ challenge, nonce, expires_at }`: a random 32-byte nonce valid for 2 m
 
 ### `POST /api/v1/activations/{activation}/checks`
 
-Request: `challenge`, `signature`, `app_version`. The signature is Ed25519 over the UTF-8 bytes of:
+Request: `challenge`, `nonce` (as the challenge gave it), `signature`, `app_version`. The signature is Ed25519 over the UTF-8 bytes of:
 
 ```
 clavren-check-v1
@@ -225,7 +225,7 @@ Applications embed a **list** of trusted public keys by `kid`. Each signing key 
 
 ### Errors
 
-Every error is `{ "error": "<code>", "message": "<English, for logs>" }`; 429 adds `Retry-After`. Codes: `invalid_key`, `already_activated`, `licence_revoked`, `licence_expired`, `product_unavailable`, `activation_revoked`, `challenge_invalid`, `application_pending`, `application_unknown`, `human_check_failed`, `rate_limited`, `invalid_request`, `internal_error`. An unknown key and a key for another product share `invalid_key`, so the server never reveals that a key exists for another product. Other refusals say why, because "already in use" is exactly when the customer needs to ask for a reset, and 80-bit keys with rate limits make guessing pointless.
+Every error is `{ "error": "<code>", "message": "<English, for logs>" }`; 429 adds `Retry-After`. A method an address doesn't take is `method_not_allowed` (405) and a request cut off after 30 seconds `request_timeout` (408), in the same shape. Codes: `invalid_key`, `already_activated`, `licence_revoked`, `licence_expired`, `product_unavailable`, `activation_revoked`, `challenge_invalid`, `application_pending`, `application_unknown`, `human_check_failed`, `rate_limited`, `invalid_request`, `internal_error`. An unknown key and a key for another product share `invalid_key`, so the server never reveals that a key exists for another product. Other refusals say why, because "already in use" is exactly when the customer needs to ask for a reset, and 80-bit keys with rate limits make guessing pointless.
 
 ### Limits
 
@@ -257,10 +257,10 @@ There is no stored state and no redemption time; both would copy facts held else
 ### `license_applications`
 `id` UUID PK · `product_id` FK (deleted with the product) · `name` · `email` · `message` nullable · `source` (`app` or `web`) · `secret_hash` BYTEA unique (BLAKE3 of the secret) · `created_at` · `decided_at` nullable · `decision` nullable (`approved` or `rejected`, set with `decided_at`) · `license_id` nullable unique FK (only when approved; NULL once that licence is deleted) · `rejection_reason` nullable (only when rejected) · `key_collected_at` nullable (only when approved).
 
-One waiting application per product and email, ignoring case (a partial unique index). Deleting a customer deletes the applications whose licence is theirs, so their name and email go too. Decided applications are kept as history until the administrator deletes them.
+One waiting application per product and email, ignoring case (a partial unique index). Deleting a customer deletes the applications whose licence is theirs and the ones sent from their email address (waiting ones too), so their name and email go too. Decided applications are kept as history until the administrator deletes them.
 
 ### `license_key_secrets`
-`license_id` UUID PK/FK · `ciphertext` · `nonce` · `encryption_version`. Deleted when the licence is revoked.
+`license_id` UUID PK/FK · `ciphertext` · `nonce` · `encryption_version` (1 for every key so far; written so that keys encrypted another way later can be told from these, and not read until then). Deleted when the licence is revoked.
 
 ### `activations`
 `id` UUID PK · `license_id` FK · `device_public_key` BYTEA · `device_fingerprint_hash` nullable BYTEA · `device_name` · `platform` · `app_version` (last reported) · `activated_at` · `last_checked_at` nullable · `revoked_at` nullable · `revocation_reason` nullable (`reset` or `licence_revoked`).
@@ -304,9 +304,9 @@ A polished, responsive web application (React, TypeScript, Vite) embedded in the
 
 ### Interaction rules (every page)
 
-- **Inline editing**: click a value (product name, description, message template, customer name, email, notes, licence customer, expiry, notes and revocation reason), edit, Enter or leaving the field saves, Escape cancels. No edit dialogs or edit pages.
+- **Inline editing**: click a value (product name, description, message template, customer name, email, notes, licence expiry, price, notes and revocation reason), edit, Enter or leaving the field saves, Escape cancels. A licence's customer is edited in place too, with **Save**: it is a picker (an existing customer, or a new name and email), so there is no single value to save on Enter. An edit that changes nothing sends nothing. No edit dialogs or edit pages.
 - **Inline creation**: a new product or customer is a new editable row at the top of its table; a new customer can also be typed straight into the **Issue licences** panel.
-- **No modal dialogs**: a destructive action (revoke, reset, deactivate, delete licence, delete product, delete customer) turns its button into an inline confirmation strip: what will happen in plain words, an optional reason, a red **Confirm** and **Cancel**. Escape cancels. Deleting a product that has licences also needs its code typed before **Confirm** is enabled.
+- **No modal dialogs**: a destructive action (revoke, reset, deactivate, delete licence, delete product, delete customer) turns its button into an inline confirmation strip: what will happen in plain words, an optional reason, a red **Confirm** and **Cancel**. Escape cancels; the strip opens with the keyboard on its reason or on **Cancel**, never on **Confirm**, and closing it (or an inline editor) gives the keyboard its place back. Deleting a product that has licences also needs its code typed before **Confirm** is enabled.
 - **Disabled actions look disabled**: dimmed background and label, with a tooltip saying why (e.g. Reset on a licence that isn't in use).
 - **One primary action per page**, large and on its own line (e.g. **Issue licences**); secondary actions smaller.
 - **Everything is remembered**: theme, filters, search, sort, page size, visible columns and last page are saved in `admin_preferences` and restored at the next login, on any browser. Defaults (theme follows the system) apply until the admin picks something.
@@ -318,7 +318,7 @@ A polished, responsive web application (React, TypeScript, Vite) embedded in the
 
 - **Overview**: products, licences by state, what keys were charged (last 30 days and in total, one figure per currency; how many keys have no recorded price; deleted licences aren't counted), active computers, computers that checked in and checks made in the last 24 hours (all without test licences, which the page says), last successful backup (warning if over 48 hours old), and the server: its version, the last check for a newer release (or why it failed) and **Check now**.
 - **Every page**: when a newer release is out, a notice with the version, **What's new** (the release page) and **Update to X.Y.Z**, which turns into an inline confirmation (with "Update without a backup" to tick when the backup drive isn't mounted), then shows the update's progress and, after the dashboard reloads itself, "Updated to X.Y.Z".
-- **Licences**: table with key (hidden, **Reveal** / **Copy**), product, customer, state, issued, redeemed, last check, customer, expiry, price (an optional column, hidden by default; read-only on test licences) and notes (inline; revocation reason inline on revoked licences); the product, key, state and dates are read-only. Search by key (normalized and looked up by hash), customer name or email, licence ID. Filters by product, state, expiry (permanent, expiring within 30 days, expired), kind (test licences), each of which can also exclude ("Except revoked"), plus a hide box for key, customer or licence ID. Test licences carry a **Test** badge. Primary action **Issue licences**: inline panel with product, customer (picked from a searchable list of every customer, or typed as a new one), quantity (up to 1,000), optional expiry and notes, **Price per key** (filled in from the product, changeable, empty for none; empty and off while **Test licences** is ticked), and a **Test licences** tick (never remembered); the new keys appear there, already on the clipboard, with **Copy key(s)** (and **Copy** per key when there are several), **Copy message** (one customer) and **Download CSV**. Bulk: set customer, edit expiry, edit notes, edit price (test licences keep none, and the result says how many), edit reason, export CSV, revoke, delete (with the server's count of what goes).
+- **Licences**: table with key (hidden, **Reveal** / **Copy**), product, customer, state, issued, redeemed, last check, customer, expiry, price (an optional column, hidden by default; read-only on test licences) and notes (inline; revocation reason inline on revoked licences); the product, key, state and the issued, redeemed and last-check dates are read-only. Search by key (normalized and looked up by hash), customer name or email, licence ID. Filters by product, state, expiry (permanent, expiring within 30 days, expired), kind (test licences), each of which can also exclude ("Except revoked"), plus a hide box for key, customer or licence ID. Test licences carry a **Test** badge. Primary action **Issue licences**: inline panel with product, customer (picked from a searchable list of every customer, or typed as a new one), quantity (up to 1,000), optional expiry and notes, **Price per key** (filled in from the product, changeable, empty for none; empty and off while **Test licences** is ticked), and a **Test licences** tick (never remembered); the new keys appear there, already on the clipboard, with **Copy key(s)** (and **Copy** per key when there are several), **Copy message** (one customer) and **Download CSV**. Bulk: set customer, edit expiry, edit notes, edit price (test licences keep none, and the result says how many), edit reason, export CSV, revoke, delete (with the server's count of what goes).
 - **Licence detail**: all fields (a test licence also how many computers it is on), Reveal/Copy, **Copy message**, Reset (only when in use; every computer of a test licence), Revoke (unless revoked), Delete (any state), and the activation history (every computer it was on, with reasons).
 - **Customers**: table (inline editing and creation), search by name or email, each with their licences; delete with inline confirmation ("their licences keep working; their name and email are erased").
 - **Applications**: table of licence applications, newest first: received, applicant (name and email), product, message, from (application or web form), state (waiting, approved, rejected) and outcome (the licence and whether its key was collected, or the reason); filters by state (waiting by default) and product, search by name or email. **Approve** unfolds the issue fields below the row (customer prefilled: the existing customer with that email, or a new one from the name and email; expiry; notes); **Reject** and **Delete** turn into inline confirmation strips (Reject with a reason for the applicant). Bulk: reject or delete a selection, or every application matching the filter. The Overview says when applications are waiting, with a link here.
@@ -409,19 +409,23 @@ clavren/
 │   ├── clavren-protocol/   # shared by server and client: key format and normalization,
 │   │                       # wire types, error codes, check message, token claims, test vectors
 │   ├── clavren-server/     # library + binaries `clavren` and `clavren-admin`
-│   │   └── src/            # products/ customers/ licences/ activations/ applications/ admin_auth/
-│   │                       # admin_preferences/ audit/ backups/ crypto/ http/ maintenance/
-│   │                       # config.rs logging.rs bin/
+│   │   ├── src/            # products/ customers/ licences/ activations/ applications/ admin_auth/
+│   │   │                   # admin_cli/ admin_preferences/ audit/ backups/ updates/ crypto/ http/
+│   │   │                   # config/ maintenance.rs overview.rs money.rs logging.rs bin/
+│   │   └── tests/          # integration tests against a real database
 │   └── clavren-client/     # activation, checks, offline validation, outcomes,
-│                           # store.rs (protected state file) + dpapi.rs (Windows)
+│                           # store.rs (protected state file) + dpapi.rs (Windows);
+│                           # tests/: against a fake server and the real one
+├── xtask/                  # repository tasks (`cargo dev`)
 ├── migrations/
-├── web/admin/              # public/ (served as-is), src/ by page: licences/ customers/
-│                           # products/ activations/ applications/ audit/ account/ shared/,
-│                           # and apply/: the public application form (apply.html)
-├── deploy/                 # clavren.service, clavren-backup.{service,timer,sh}, clavren.env.example
-├── docs/                   # spec, design-decisions, development, api, client-integration,
-│                           # deployment, backup-and-recovery
-└── tests/                  # cross-crate integration and end-to-end
+├── web/admin/              # public/ (served as-is), src/ by page: login/ overview/ licences/
+│                           # customers/ products/ activations/ applications/ audit/ account/,
+│                           # shell/ (the frame around them), shared/, and apply/: the public
+│                           # application form (apply.html); e2e/: the Playwright tests
+├── deploy/                 # clavren.service, the backup, update and install scripts and units,
+│                           # clavren.env.example
+└── docs/                   # spec, design-decisions, development, api, client-integration,
+                            # deployment, backup-and-recovery
 ```
 
 No file over about 200 lines and no function over about 20 lines without a strong reason. Every `.rs` and `.md` file has the author header (`metadata` tool).

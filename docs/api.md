@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 19:43:36.881392 )
-[//]: # (+ Revised: 	2026/11/12 23:57:46.297491 )
+[//]: # (+ Revised: 	2026/11/14 00:38:45.844352 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # HTTP API
@@ -22,7 +22,8 @@ Every error has the same shape and an HTTP status that matches it:
 ```
 
 Clients decide what to do from `error`. The `message` is English text for logs and is not meant to
-be shown to end users.
+be shown to end users; the dashboard and the application form show it only for `invalid_request`,
+where it names the field and what is wrong with it.
 
 | `error` | Status | When |
 |---------|--------|------|
@@ -31,6 +32,8 @@ be shown to end users.
 | `unauthorized` | 401 | No session, or the session expired, was revoked, or its admin was disabled |
 | `csrf_failed` | 403 | A state-changing request without this session's `X-CSRF-Token` |
 | `not_found` | 404 | Nothing has this ID (a malformed ID too) |
+| `method_not_allowed` | 405 | The address exists, but not for this method |
+| `request_timeout` | 408 | The request took longer than 30 seconds |
 | *conflict codes* | 409 | The request clashes with existing data; each endpoint lists its codes |
 | `weak_password` | 422 | A new password shorter than 12 characters (or longer than the maximum) |
 | `rate_limited` | 429 | Too many failed attempts. `Retry-After` gives the seconds to wait |
@@ -52,8 +55,8 @@ be shown to end users.
 What applications call, under `/api/v1`. The [`clavren-client`](../crates/clavren-client) crate
 does all of it for Rust applications. Bodies are JSON, up to 16 KiB. Binary values are unpadded
 base64url, IDs are lowercase hyphenated UUIDs, and times are RFC 3339 in UTC. **Every answer,
-errors included, has `server_time`** (except a path that doesn't exist and a request cut off after
-30 seconds), for diagnostics. It isn't signed, so `clavren-client` takes the server's time from
+errors included, has `server_time`** (except a path that doesn't exist, a method an address
+doesn't take and a request cut off after 30 seconds), for diagnostics. It isn't signed, so `clavren-client` takes the server's time from
 the token's signed `iat` instead and judges tokens by that rather than by the computer's clock: a
 wrong clock still works and a clock set back gains nothing.
 
@@ -459,7 +462,8 @@ later like any key.
 - `name` is required, up to 200 characters. `email` is optional and unique ignoring case. `notes`
   are up to 2,000 characters.
 - **Deleting a customer erases them.** Their licences keep working, without the link. The audit
-  log refers to customers by ID only, so nothing personal remains.
+  log refers to customers by ID only, so nothing personal remains. The licence applications their
+  licences came from go too, and the ones sent from their email address.
 
 | Endpoint | Answer |
 |----------|--------|
@@ -665,7 +669,8 @@ Errors: `application_decided` (409, naming the `ids`) when approving or rejectin
 already decided; `not_found` (naming the `ids` in bulk); the issuing errors when approving
 (`product_inactive`, `customer_email_taken`, `invalid_request`). Bulk requests take 1 to 1,000 IDs;
 a repeated ID counts once. Decided applications are kept as history until deleted here;
-deleting a customer deletes the applications whose licence is theirs.
+deleting a customer deletes the applications whose licence is theirs and the ones sent from
+their email address, waiting ones included.
 
 ## Overview
 
@@ -789,7 +794,7 @@ and the product, quantity (1 to 1,000) and expiry date chosen in it. Its custome
 personal data or free text and are never stored.
 
 `theme` is `system` (the default), `light` or `dark`. Tables are `licences`, `customers`,
-`products`, `activations`, `audit` and `backups`. `page_size` is 10–100; texts are up to 200
+`products`, `activations`, `applications`, `audit` and `backups`. `page_size` is 10–100; texts are up to 200
 characters. Unknown fields, another `version`, and anything that reads as a licence key (in
 `search` or a filter) are refused with `invalid_request`, so a key typed into a search box is
 never stored.

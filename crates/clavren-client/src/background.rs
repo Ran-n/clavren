@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:09.222740
-//+ Revised: 	2026/11/09 22:30:52.782718
+//+ Revised: 	2026/11/14 00:38:41.107280
 // -----------------------------------------------------------------------------
 
 //! Checking in the background: a thread that checks whenever a check is due, retries a failed one
@@ -124,7 +124,9 @@ impl Retry {
     }
 
     fn wait_at_least(&mut self, now: Instant, wait: Duration) -> Duration {
-        self.not_before = Some(now + wait);
+        // a wait the clock can't hold (never one of ours) is the longest step instead of a panic
+        let longest = BACKOFF[BACKOFF.len() - 1];
+        self.not_before = now.checked_add(wait).or_else(|| now.checked_add(longest));
         wait
     }
 }
@@ -164,6 +166,15 @@ mod tests {
         assert_eq!(retry.pending(start + LONGEST_SLEEP), Some(50 * MINUTE));
         assert_eq!(retry.pending(start + 59 * MINUTE), Some(MINUTE));
         assert_eq!(retry.pending(start + 60 * MINUTE), None);
+    }
+
+    /// Regression: `Instant + Duration` panicked on a wait too long for the clock, ending the
+    /// checker's thread for good.
+    #[test]
+    fn a_wait_too_long_for_the_clock_never_panics() {
+        let (mut retry, start) = (Retry::default(), Instant::now());
+        retry.failed(start, &Temporary::RateLimited(Duration::MAX));
+        assert_eq!(retry.pending(start + 59 * MINUTE), Some(MINUTE), "the longest step is kept instead");
     }
 
     #[test]

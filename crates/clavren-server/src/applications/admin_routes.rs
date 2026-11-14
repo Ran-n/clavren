@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/11 16:32:48.465515
-//+ Revised: 	2026/11/11 16:32:53.178580
+//+ Revised: 	2026/11/14 00:38:42.891767
 // -----------------------------------------------------------------------------
 
 //! `/api/admin/applications`: list and search, read, approve (issuing the licence), reject,
@@ -55,7 +55,7 @@ async fn list(
 ) -> Result<Json<Page<ApplicationView>>, ApiError> {
     expand.check(&EXPANDABLE)?;
     let page = PageParams { limit: params.limit, after: params.after };
-    let (limit, cursor) = (page.limit()?, page.cursor()?);
+    let (limit, cursor) = (page.limit()?, page.cursor_by_id()?);
     let filter = Filter {
         state: params.state,
         product: params.product,

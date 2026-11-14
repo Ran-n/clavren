@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:35.614538
-//+ Revised: 	2026/11/03 04:54:18.768761
+//+ Revised: 	2026/11/14 00:38:42.529287
 // -----------------------------------------------------------------------------
 
 //! Setting up an admin's credentials at the keyboard: a password typed twice, an authenticator app
@@ -79,8 +79,16 @@ fn qr_code(uri: &str) -> String {
     }
 }
 
-pub fn show_recovery_codes(terminal: &mut dyn Terminal, codes: &[String]) {
-    terminal.say("\nRecovery codes. Each one works once instead of an app code, if you lose your phone.");
-    terminal.say("Store them somewhere safe now: they won't be shown again.\n");
-    codes.iter().for_each(|code| terminal.say(&format!("  {code}")));
+/// Shown before the account is saved: they can't be shown again, so when they can't be written
+/// (stdout closed or full) nothing is changed.
+pub fn show_recovery_codes(terminal: &mut dyn Terminal, codes: &[String]) -> Result<(), CliError> {
+    let mut text = String::from(
+        "\nRecovery codes. Each one works once instead of an app code, if you lose your phone.\n\
+         Store them somewhere safe now: they won't be shown again.\n",
+    );
+    for code in codes {
+        text.push_str("\n  ");
+        text.push_str(code);
+    }
+    terminal.show(&text).map_err(CliError::Output)
 }

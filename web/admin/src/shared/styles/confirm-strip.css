@@ -1,0 +1,47 @@
+/* The confirmation strip that asks before a risky action. */
+
+.confirm-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 0.9rem;
+  padding: 0.75rem 0.9rem;
+  margin: 0.75rem 0;
+  background: var(--color-danger-soft);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-small);
+}
+.confirm-strip__message {
+  margin: 0;
+  flex: 1 1 20rem;
+}
+.confirm-strip__reason {
+  flex: 1 1 14rem;
+}
+.confirm-strip__word {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1 1 14rem;
+  font-size: 0.9rem;
+}
+.field--tick {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.45rem;
+}
+.confirm-strip__tick {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1 1 100%;
+}
+.confirm-strip__actions {
+  display: inline-flex;
+  gap: 0.5rem;
+}
+.confirm-strip__error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--color-danger);
+}

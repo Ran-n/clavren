@@ -12,7 +12,8 @@ import { ColumnPicker, FilterSelect, Pager, SearchBox, Toolbar } from "../shared
 import { ErrorNotice } from "../shared/components/Notice";
 import { offlineLimit } from "../shared/errors";
 import { formatDateTime } from "../shared/format";
-import { DEFAULT_PAGE_SIZE, useDebounced, usePagedList, useTitle } from "../shared/hooks";
+import { DEFAULT_PAGE_SIZE, usePagedList } from "../shared/paging";
+import { useDebounced, useTitle } from "../shared/hooks";
 import { useTablePreferences } from "../shared/preferences";
 import { Link } from "../shared/router";
 import { expanded, idOf, type Activation } from "../shared/types";

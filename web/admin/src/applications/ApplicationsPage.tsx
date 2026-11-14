@@ -5,21 +5,20 @@
 
 import { useState } from "react";
 import { api } from "../shared/api";
-import { Badge } from "../shared/components/Badge";
 import { Button } from "../shared/components/Button";
 import { ConfirmStrip } from "../shared/components/ConfirmStrip";
-import { DataTable, type Column } from "../shared/components/DataTable";
+import { DataTable } from "../shared/components/DataTable";
 import { ColumnPicker, FilterSelect, Pager, SearchBox, Toolbar } from "../shared/components/ListControls";
 import { ErrorNotice, Notice } from "../shared/components/Notice";
 import { plural } from "../shared/errors";
-import { formatDateTime } from "../shared/format";
-import { DEFAULT_PAGE_SIZE, useDebounced, usePagedList, useSelection, useTitle } from "../shared/hooks";
+import { useDebounced, useTitle } from "../shared/hooks";
+import { DEFAULT_PAGE_SIZE, usePagedList } from "../shared/paging";
 import { useTablePreferences } from "../shared/preferences";
-import { Link } from "../shared/router";
-import { expanded, idOf } from "../shared/types";
+import { useSelection } from "../shared/selection";
 import { useDropDeletedProducts, useProducts } from "../licences/useProducts";
-import { listPath, matchingIds, type Application, type ApplicationState } from "./applicationApi";
+import { listPath, matchingIds, type Application } from "./applicationApi";
 import { ApproveForm } from "./ApproveForm";
+import { columns } from "./columns";
 
 const PRODUCT_FILTERS = ["product"] as const;
 const STATE_OPTIONS = [
@@ -28,71 +27,10 @@ const STATE_OPTIONS = [
   { value: "rejected", label: "Rejected" },
   { value: "all", label: "All" },
 ];
-const STATES: Record<ApplicationState, { label: string; tone: string }> = {
-  pending: { label: "Waiting", tone: "neutral" },
-  approved: { label: "Approved", tone: "good" },
-  rejected: { label: "Rejected", tone: "bad" },
-};
+
 
 type Open = { id: string; action: "approve" | "reject" | "delete" } | null;
 type Bulk = { action: "reject" | "delete"; ids: string[] } | null;
-
-function Outcome({ application }: { application: Application }) {
-  if (application.state === "rejected") {
-    return application.rejection_reason ? <span className="clamp">{application.rejection_reason}</span> : <span className="muted">No reason given</span>;
-  }
-  if (application.state === "pending") return <span className="muted">—</span>;
-  const licence = idOf(application.licence);
-  if (!licence) return <span className="muted">Licence deleted</span>;
-  return (
-    <span className="stacked">
-      <Link to={`/licences/${licence}`}>Open licence</Link>
-      <span className="muted">{application.key_collected_at ? `Key collected ${formatDateTime(application.key_collected_at)}` : "Key not collected yet"}</span>
-    </span>
-  );
-}
-
-function columns(open: (id: string, action: "approve" | "reject" | "delete") => void): Column<Application>[] {
-  return [
-    { key: "received", className: "table__nowrap", label: "Received", render: (application) => formatDateTime(application.created_at) },
-    {
-      key: "applicant",
-      label: "Applicant",
-      render: (application) => (
-        <span className="stacked">
-          <span>{application.name}</span>
-          <span className="muted">{application.email}</span>
-        </span>
-      ),
-    },
-    { key: "product", label: "Product", optional: true, render: (application) => expanded(application.product)?.name ?? "—" },
-    { key: "message", label: "Message", optional: true, render: (application) => (application.message ? <span className="clamp">{application.message}</span> : <span className="muted">—</span>) },
-    { key: "source", label: "From", optional: true, render: (application) => (application.source === "web" ? "Web form" : "Application") },
-    { key: "state", label: "State", render: (application) => <Badge tone={STATES[application.state].tone}>{STATES[application.state].label}</Badge> },
-    { key: "outcome", label: "Outcome", optional: true, render: (application) => <Outcome application={application} /> },
-    {
-      key: "actions",
-      label: "",
-      className: "table__action",
-      render: (application) => {
-        const decided = application.state !== "pending" ? "This application has already been decided" : null;
-        return (
-          <span className="button-row">
-            <Button size="small" variant="quiet" onClick={() => open(application.id, "approve")} disabledReason={decided}>
-              Approve
-            </Button>
-            <Button size="small" variant="quiet" onClick={() => open(application.id, "reject")} disabledReason={decided}>
-              Reject
-            </Button>
-            <Button size="small" variant="quiet" onClick={() => open(application.id, "delete")}>
-              Delete
-            </Button>
-          </span>
-        );
-      },
-    },
-  ];
-}
 
 export function ApplicationsPage() {
   useTitle("Applications");
@@ -100,6 +38,8 @@ export function ApplicationsPage() {
   const [search, setSearch] = useState(table.search ?? "");
   const [opened, setOpened] = useState<Open>(null);
   const [bulk, setBulk] = useState<Bulk>(null);
+  /** The bulk action whose applications are being looked up ("every matching" asks the server). */
+  const [choosing, setChoosing] = useState<"reject" | "delete" | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const { products, loaded: productsLoaded, error: productsError } = useProducts();
@@ -136,6 +76,7 @@ export function ApplicationsPage() {
   async function chooseBulk(action: "reject" | "delete") {
     setError(null);
     setDone(null);
+    setChoosing(action);
     try {
       const ids = selection.allMatching
         ? (await matchingIds(filters)).filter((id) => !selection.excluded.has(id))
@@ -143,6 +84,8 @@ export function ApplicationsPage() {
       setBulk({ action, ids });
     } catch (failure) {
       setError(failure);
+    } finally {
+      setChoosing(null);
     }
   }
   async function runBulk(reason: string | null) {
@@ -178,8 +121,8 @@ export function ApplicationsPage() {
       {anyChosen && (
         <div className="bulk-bar" role="group" aria-label="Selected applications">
           <span className="bulk-bar__count">{chosen} selected</span>
-          <Button size="small" onClick={() => void chooseBulk("reject")}>Reject</Button>
-          <Button size="small" onClick={() => void chooseBulk("delete")}>Delete</Button>
+          <Button size="small" busy={choosing === "reject"} disabled={choosing !== null} onClick={() => void chooseBulk("reject")}>Reject</Button>
+          <Button size="small" busy={choosing === "delete"} disabled={choosing !== null} onClick={() => void chooseBulk("delete")}>Delete</Button>
           <Button size="small" variant="quiet" onClick={selection.clear}>Clear selection</Button>
         </div>
       )}

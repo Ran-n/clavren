@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.213599 )
-[//]: # (+ Revised: 	2026/11/13 19:46:09.133233 )
+[//]: # (+ Revised: 	2026/11/14 12:10:22.548859 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Development
@@ -59,32 +59,40 @@ PostgreSQL server. `.cargo/config.toml` points `DATABASE_URL` at it, and every d
 creates and drops its own database there (`#[sqlx::test]`), so tests never see each other's data
 or the development database. An explicit `DATABASE_URL` in the environment wins.
 
+A name ending in `/` is a folder: `main.rs` holds what its tests share, and each group of tests
+has a file of its own beside it. It is still one test binary, named after the folder
+(`cargo test --test licences`).
+
 | File | What it covers |
 |------|----------------|
 | `src/**` (`#[cfg(test)]`) | Unit and property tests next to the code: configuration, master key file, key derivation (with golden values cross-checked with `b3sum`), encryption, passwords, TOTP, recovery codes, cookies, CSRF tokens, client addresses, the rate limiter, error shapes |
-| `tests/migrations.rs` | Migrations apply, undo and apply again; re-running keeps data |
-| `tests/schema.rs` | The rules the database enforces itself, and the pinned column list of every table |
+| `tests/migrations/` | Migrations apply, undo and apply again; re-running keeps data |
+| `tests/schema/` | The rules the database enforces itself, and the pinned column list of every table |
 | `tests/startup.rs` | Startup against a real database: master key created or reused or refused, errors, clean shutdown, no secrets in logs |
 | `tests/health.rs` | The health endpoints, request IDs, and what request logs contain |
 | `tests/entry_point.rs` | The `clavren` and `clavren-admin` binaries: exit codes and messages, and working for real |
-| `tests/admin_cli.rs` | `clavren-admin` commands through a scripted terminal that answers with real authenticator codes |
-| `tests/admin_login.rs` | Sign-in: one answer for every failure, one-time codes, recovery codes, rate limits, addresses behind the tunnel, no secrets in logs or the audit log |
+| `tests/admin_cli/` | `clavren-admin` commands through a scripted terminal that answers with real authenticator codes |
+| `tests/admin_login/` | Sign-in: one answer for every failure, one-time codes, recovery codes, rate limits, addresses behind the tunnel, no secrets in logs or the audit log |
 | `tests/admin_session.rs` | Session expiry, sign-out, signing out other sessions, CSRF checks, disabled admins |
-| `tests/admin_account.rs` | Changing password, recovery codes and authenticator app |
+| `tests/admin_account/` | Changing password, recovery codes and authenticator app |
 | `tests/maintenance.rs` | The hourly clean-up and its shutdown |
-| `tests/products.rs` | Products: create (codes made from names), list, edit, delete with their licences; the code lock; audit; session and CSRF |
+| `tests/products/` | Products: create (codes made from names), list, edit, delete with their licences; the code lock; audit; session and CSRF |
 | `tests/customers.rs` | Customers: create, search, order, edit, delete without leaving personal data |
-| `tests/licences.rs` | Issuing (keys only as hash and ciphertext), customers typed in place, the message, search by key, name or ID, filters and exclusions, orders, `expand` |
-| `tests/licence_lifecycle.rs` | Edit every field but the product (customer, expiry, notes, reason), revoke, reset, delete, bulk all-or-nothing, reveal, message, CSV export and its formula guard |
-| `tests/activation.rs` | Activating a key: one computer per licence, the same computer again, refusals, rate limits, two computers racing for one key (and for one test key, all getting in) |
-| `tests/test_licences.rs` | Test licences: one with every new product, issued, listed and exported as such, on several computers, the `test` token claim, ending one computer or all, revoking, left out of the Overview |
-| `tests/checks.rs` | Challenges and checks: signed tokens, the device signature, replayed and expired challenges, reset, revoked and deleted licences and products, per-activation limits |
-| `tests/admin_console.rs` | Activations list and revoke, the overview and its backup warning, the audit log, backups, preferences |
+| `tests/licences/` | Issuing (keys only as hash and ciphertext), customers typed in place, the message, search by key, name or ID, filters and exclusions, orders, `expand` |
+| `tests/licence_lifecycle/` | Edit every field but the product (customer, expiry, notes, reason), revoke, reset, delete, bulk all-or-nothing, reveal, message, CSV export and its formula guard |
+| `tests/activation/` | Activating a key: one computer per licence, the same computer again, refusals, rate limits, two computers racing for one key (and for one test key, all getting in) |
+| `tests/test_licences/` | Test licences: one with every new product, issued, listed and exported as such, on several computers, the `test` token claim, ending one computer or all, revoking, left out of the Overview |
+| `tests/checks/` | Challenges and checks: signed tokens, the device signature, replayed and expired challenges, reset, revoked and deleted licences and products, per-activation limits |
+| `tests/applications/` | Licence applications from both sides: what the form offers, sending one, asking how it went with the secret, approving (which issues the licence whose key the applicant collects) and rejecting with a reason |
+| `tests/application_rules/` | The rules around applications: the rate limits, the web form's human check (passing, failing, unable to run), bulk decisions, the list's filters, history, what deleting a customer or a product takes with it |
+| `tests/admin_console/` | Activations list and revoke, the overview and its backup warning, the audit log, backups, preferences |
 | `tests/dashboard.rs` | The embedded dashboard: its files, every page path, cache and security headers, API paths that stay JSON errors |
-| `tests/updates.rs` | Updates: what the scripts' files say (newer only, failed checks, unreadable files), Check now, the install request and its refusals, audit and rollback, session and CSRF |
+| `tests/updates/` | Updates: what the scripts' files say (newer only, failed checks, unreadable files), Check now, the install request and its refusals, audit and rollback, session and CSRF |
 | `tests/backup_restore.rs` | A `pg_dump` archive restores into an empty database and everything still works with the same master key; the deploy scripts parse |
-| `crates/clavren-client/tests/offline_and_online.rs` | The client against a fake server: offline days, refusals, clock rollback, the background checker |
-| `crates/clavren-client/tests/against_server.rs` | The client against the real server over HTTP: activate, check, reset, a second computer, revoke, a deleted licence or product |
+| `crates/clavren-client/tests/offline_and_online/` | The client against a fake server: offline days, refusals, clock rollback, the background checker |
+| `crates/clavren-client/tests/applying/` | Applying from the application against a fake server: sending, waiting across restarts, the approved key activated by itself, a rejection with its reason, every refusal |
+| `crates/clavren-client/tests/against_server/` | The client against the real server over HTTP: activate, check, reset, a second computer, revoke, a deleted licence or product |
+| `xtask/tests/tasks.rs` | The `xtask` binary as `cargo xtask` runs it: only known tasks run |
 
 Tests that check logs use `common::capture_logs`. It installs one global subscriber that sends each
 line to the capture buffer of the thread that logged it. A scoped subscriber per test
@@ -116,6 +124,10 @@ cargo dev
 Ctrl+C at the username prompt, or a second Ctrl+C when the server doesn't stop, ends `cargo dev`
 at once (still stopping a database it started). On Windows every process it starts ends with it,
 even when the window is closed.
+
+While `cargo dev` or `cargo run` is running, Windows keeps `target/debug/clavren.exe` open, so
+`cargo test` can't rebuild it ("failed to remove file … Access is denied"). Stop the server
+first, or test in another build folder: `$env:CARGO_TARGET_DIR = "target/tests"; cargo test`.
 
 `cargo run` runs only the server, for when the database, the dashboard build and an admin are
 already there. Either way, `http://localhost:8080/health/ready` answers `{"status":"ok"}`.
@@ -230,6 +242,10 @@ it, as light items written up in full only when promoted.
 - Every `.rs` and `.md` file starts with the author header, maintained with the `metadata` tool
   (`metadata -c` on a new file, `metadata -m` after each edit).
 - No source file over about 200 lines and no function over about 20 lines without a strong
-  reason.
+  reason. A file that grows past it is split by what changes together: a module's unit tests go
+  to `tests.rs` beside it (`foo/tests.rs` for `foo.rs`), an integration test file becomes a
+  folder (above), a stylesheet a file per component under `web/admin/src/shared/styles/`. The
+  strong reason exists for `deploy/install.sh` and `deploy/clavren-update.sh`: each must work as
+  the one file that is copied and run (see `design-decisions.md`).
 - Logging goes through `tracing`, one target per module; secrets are never logged.
 - Every change comes with tests of every applicable kind (see the spec, section 15).

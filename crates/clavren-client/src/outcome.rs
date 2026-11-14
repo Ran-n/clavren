@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.545654
-//+ Revised: 	2026/11/11 16:32:49.856298
+//+ Revised: 	2026/11/14 00:38:41.419009
 // -----------------------------------------------------------------------------
 
 //! What the application is told about its licence, and about sending a licence application. It
@@ -30,7 +30,8 @@ pub enum Outcome {
     Expired { at: Option<DateTime<Utc>> },
     /// The product was withdrawn: lock.
     ProductUnavailable,
-    /// The cached token ran out (30 days offline) or the clock was set back: ask to connect.
+    /// The cached token ran out (the product's offline days without a check) or the clock was set
+    /// back: ask to connect.
     NeedsCheck,
     /// Too many attempts: wait this long.
     RateLimited { retry_after: Duration },

@@ -9,6 +9,7 @@
 
 pub mod activate;
 mod admin_routes;
+pub mod check_repository;
 pub mod checks;
 pub mod public_routes;
 pub mod repository;

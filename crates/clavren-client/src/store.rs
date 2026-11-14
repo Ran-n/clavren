@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.718170
-//+ Revised: 	2026/11/09 23:01:00.706374
+//+ Revised: 	2026/11/14 11:36:29.622142
 // -----------------------------------------------------------------------------
 
 //! Where the client's state lives between runs: a file whose contents are protected by the
@@ -26,6 +26,15 @@ pub trait SecretStore: Send + Sync {
     /// `None` when nothing was saved yet.
     fn load(&self) -> Result<Option<Vec<u8>>, StoreError>;
     fn save(&self, plain: &[u8]) -> Result<(), StoreError>;
+    /// Saves `plain` only while what is stored is still `expected` (what this program last loaded
+    /// or saved); `false`, saving nothing, when another program changed it meanwhile. A store
+    /// shared between programs overrides this to compare and save in one step.
+    fn save_if_unchanged(&self, expected: Option<&[u8]>, plain: &[u8]) -> Result<bool, StoreError> {
+        if self.load()?.as_deref() != expected {
+            return Ok(false);
+        }
+        self.save(plain).map(|()| true)
+    }
 }
 
 /// A shared store is a store: a test can restart the client on the same one.
@@ -36,6 +45,10 @@ impl<T: SecretStore + ?Sized> SecretStore for std::sync::Arc<T> {
 
     fn save(&self, plain: &[u8]) -> Result<(), StoreError> {
         (**self).save(plain)
+    }
+
+    fn save_if_unchanged(&self, expected: Option<&[u8]>, plain: &[u8]) -> Result<bool, StoreError> {
+        (**self).save_if_unchanged(expected, plain)
     }
 }
 
@@ -56,12 +69,18 @@ pub enum StoreError {
          or check that this Windows account may read the file"
     )]
     Unreadable(String),
+    /// Another copy of the application saved the licence since this one last read it. This copy
+    /// has loaded what the other one saved; whatever it was doing can be tried again.
+    #[error("another copy of the application changed the saved licence; it was loaded again, so try once more")]
+    ChangedElsewhere,
 }
 
 /// A file, protected with `protector`. Writes go to a temporary file of their own first, flushed to
 /// the disk, then replace the old one, so neither a crash nor a power cut leaves half a file.
 /// Reads and writes hold a lock on `<name>.lock` next to it, so two programs sharing the file (two
-/// copies of the application) never read or replace it halfway through each other's write.
+/// copies of the application) never read or replace it halfway through each other's write, and
+/// one never saves over what the other saved without having read it
+/// ([`SecretStore::save_if_unchanged`]).
 pub struct FileStore {
     path: PathBuf,
     protector: Box<dyn Protector>,
@@ -104,6 +123,27 @@ impl SecretStore for FileStore {
             .lock(false)
             .inspect_err(|error| log::warn!("reading the licence state without its lock: {error}"))
             .ok();
+        self.read()
+    }
+
+    fn save(&self, plain: &[u8]) -> Result<(), StoreError> {
+        let _lock = self.lock(true)?;
+        self.write(plain)
+    }
+
+    fn save_if_unchanged(&self, expected: Option<&[u8]>, plain: &[u8]) -> Result<bool, StoreError> {
+        // one lock over the comparison and the write: nothing changes the file in between
+        let _lock = self.lock(true)?;
+        if self.read()?.as_deref() != expected {
+            return Ok(false);
+        }
+        self.write(plain).map(|()| true)
+    }
+}
+
+impl FileStore {
+    /// The stored state, unprotected; the caller holds the lock (or reads without it).
+    fn read(&self) -> Result<Option<Vec<u8>>, StoreError> {
         match std::fs::read(&self.path) {
             Ok(protected) => self.protector.unprotect(&protected).map(Some),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -111,12 +151,12 @@ impl SecretStore for FileStore {
         }
     }
 
-    fn save(&self, plain: &[u8]) -> Result<(), StoreError> {
+    /// Replaces the file with `plain`, protected; the caller holds the exclusive lock.
+    fn write(&self, plain: &[u8]) -> Result<(), StoreError> {
         let protected = self.protector.protect(plain)?;
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| self.io(error))?;
         }
-        let _lock = self.lock(true)?;
         let temporary = temporary_path(&self.path);
         let written = File::create_new(&temporary)
             .and_then(|mut file| file.write_all(&protected).and_then(|()| file.sync_all()))
@@ -149,114 +189,4 @@ impl SecretStore for MemoryStore {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Reverses the bytes: enough to tell protected from plain in a test.
-    struct Reverse;
-
-    impl Protector for Reverse {
-        fn protect(&self, plain: &[u8]) -> Result<Vec<u8>, StoreError> {
-            Ok(plain.iter().rev().copied().collect())
-        }
-
-        fn unprotect(&self, protected: &[u8]) -> Result<Vec<u8>, StoreError> {
-            self.protect(protected)
-        }
-    }
-
-    #[test]
-    fn a_file_store_keeps_only_protected_bytes() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("nested").join("licence.dat");
-        let store = FileStore::new(path.clone(), Box::new(Reverse));
-        assert!(store.load().unwrap().is_none());
-        store.save(b"state").unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), b"etats");
-        assert_eq!(store.load().unwrap().unwrap(), b"state");
-        let mut left: Vec<_> = std::fs::read_dir(path.parent().unwrap())
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-            .collect();
-        left.sort();
-        assert_eq!(left, ["licence.dat", "licence.lock"], "no temporary file is left behind");
-    }
-
-    /// Regression: every save used to write `licence.tmp`, so two copies of an application saving
-    /// at once wrote into the same temporary file.
-    #[test]
-    fn saves_from_many_threads_never_mix() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = std::sync::Arc::new(FileStore::new(directory.path().join("licence.dat"), Box::new(Reverse)));
-        let writers: Vec<_> = (0..8u8)
-            .map(|writer| {
-                let store = store.clone();
-                std::thread::spawn(move || {
-                    for _ in 0..20 {
-                        store.save(&[writer; 4096]).unwrap();
-                    }
-                })
-            })
-            .collect();
-        for writer in writers {
-            writer.join().unwrap();
-        }
-        let saved = store.load().unwrap().unwrap();
-        assert_eq!(saved.len(), 4096);
-        assert!(saved.iter().all(|byte| *byte == saved[0]), "one whole save, not a mix of two");
-    }
-
-    #[test]
-    fn a_lock_that_cant_be_taken_still_reads() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("licence.dat");
-        let store = FileStore::new(path.clone(), Box::new(Reverse));
-        store.save(b"state").unwrap();
-        // a folder where the lock file should be: it can't be opened
-        std::fs::remove_file(path.with_extension("lock")).unwrap();
-        std::fs::create_dir(path.with_extension("lock")).unwrap();
-        assert_eq!(store.load().unwrap().unwrap(), b"state");
-        assert!(matches!(store.save(b"other"), Err(StoreError::Io { .. })), "writing still needs it");
-    }
-
-    #[test]
-    fn temporary_names_never_repeat() {
-        let path = Path::new("licence.dat");
-        assert_ne!(temporary_path(path), temporary_path(path));
-    }
-
-    #[test]
-    fn a_failed_write_leaves_no_temporary_file() {
-        let directory = tempfile::tempdir().unwrap();
-        // a folder where the file should be: the final rename fails
-        let path = directory.path().join("licence.dat");
-        std::fs::create_dir(&path).unwrap();
-        std::fs::write(path.join("inside"), b"x").unwrap();
-        let store = FileStore::new(path, Box::new(Reverse));
-        assert!(matches!(store.save(b"state"), Err(StoreError::Io { .. })));
-        let left: Vec<_> = std::fs::read_dir(directory.path())
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-            .filter(|name| name.ends_with(".tmp"))
-            .collect();
-        assert!(left.is_empty(), "{left:?}");
-    }
-
-    #[test]
-    fn a_file_that_cant_be_read_is_an_error_naming_it_not_nothing() {
-        let directory = tempfile::tempdir().unwrap();
-        // a folder where the file should be: it exists, but can't be read as one
-        let store = FileStore::new(directory.path().to_path_buf(), Box::new(Reverse));
-        let error = store.load().unwrap_err();
-        assert!(matches!(error, StoreError::Io { .. }), "{error}");
-        assert!(error.to_string().contains(&directory.path().display().to_string()), "{error}");
-    }
-
-    #[test]
-    fn a_memory_store_round_trips() {
-        let store = MemoryStore::default();
-        assert!(store.load().unwrap().is_none());
-        store.save(b"x").unwrap();
-        assert_eq!(store.load().unwrap().unwrap(), b"x");
-    }
-}
+mod tests;

@@ -4,6 +4,7 @@
 
 import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { describe } from "../errors";
+import { useFocusOnClose } from "../hooks";
 
 type Props = {
   value: string | null;
@@ -23,6 +24,7 @@ export function InlineText({ value, onSave, label, placeholder = "Add", multilin
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const finishing = useRef(false);
+  const trigger = useFocusOnClose<HTMLButtonElement>(draft !== null);
 
   function start() {
     setDraft(value ?? "");
@@ -66,7 +68,7 @@ export function InlineText({ value, onSave, label, placeholder = "Add", multilin
 
   if (draft === null) {
     return (
-      <button type="button" className="inline-value" onClick={start} aria-label={`Edit ${label}`} aria-describedby={valueId}>
+      <button ref={trigger} type="button" className="inline-value" onClick={start} aria-label={`Edit ${label}`} aria-describedby={valueId}>
         {/* the label names the action; the value, shown inside, is read as its description */}
         <span id={valueId}>{value ? (display ?? value) : <span className="inline-value__placeholder">{placeholder}</span>}</span>
       </button>

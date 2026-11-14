@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:13.529185
-//+ Revised: 	2026/11/11 16:32:50.710337
+//+ Revised: 	2026/11/14 00:38:43.276145
 // -----------------------------------------------------------------------------
 
 //! `/api/admin/customers`: search, create, read, edit and delete customers. Logs and audit entries
@@ -16,19 +16,16 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use super::repository::{self, EMAIL_CONSTRAINT, Order};
-use super::{Customer, CustomerChanges, NewCustomer};
+use super::repository::{self, Order};
+use super::{Customer, CustomerChanges, ENTITY, NewCustomer, email_taken};
 use crate::admin_auth::guard::Admin;
 use crate::applications;
 use crate::audit::{self, AuditEntry};
-use crate::database::violates_unique;
 use crate::http::AppState;
 use crate::http::error::ApiError;
 use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::http::fields::contains_pattern;
-use crate::http::pagination::{Page, PageParams, fetch_count};
-
-const ENTITY: &str = "customer";
+use crate::http::pagination::{Page, PageParams, fetch_count, wrong_order};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -55,7 +52,7 @@ async fn list(
     let page = PageParams { limit: params.limit, after: params.after };
     let (limit, cursor) = (page.limit()?, page.cursor()?);
     if cursor.as_ref().is_some_and(|cursor| !repository::cursor_fits(params.order, cursor)) {
-        return Err(ApiError::invalid_request("the cursor belongs to a list in another order"));
+        return Err(wrong_order());
     }
     let pattern = params.q.as_deref().filter(|q| !q.trim().is_empty()).map(contains_pattern);
     let rows =
@@ -70,8 +67,7 @@ async fn create(
 ) -> Result<impl IntoResponse, ApiError> {
     let customer = request.into_customer(Uuid::now_v7(), admin.actor.at)?;
     let mut transaction = state.pool.begin().await?;
-    repository::insert(&mut *transaction, &customer).await.map_err(email_taken)?;
-    audit::record(&mut *transaction, AuditEntry::by(&admin.actor, "customer.created", ENTITY, customer.id)).await?;
+    super::create(&mut transaction, &admin.actor, &customer).await?;
     transaction.commit().await?;
     tracing::info!(customer = %customer.id, admin = %admin.username, "customer created");
     Ok((StatusCode::CREATED, Json(customer)))
@@ -119,12 +115,4 @@ async fn remove(
     transaction.commit().await?;
     tracing::info!(customer = %id, admin = %admin.username, "customer deleted; their licences keep working");
     Ok(StatusCode::NO_CONTENT)
-}
-
-fn email_taken(error: sqlx::Error) -> ApiError {
-    if violates_unique(&error, EMAIL_CONSTRAINT) {
-        ApiError::conflict("customer_email_taken", "another customer already has this email")
-    } else {
-        error.into()
-    }
 }

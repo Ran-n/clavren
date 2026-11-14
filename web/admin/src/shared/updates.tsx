@@ -3,7 +3,7 @@
 // share the request; polling (after Check now, during an update) stops on sign-out.
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, get } from "./api";
+import { ApiError, api, get } from "./api";
 import type { Updates } from "./types";
 
 /** Check now: the check runs on the server and usually takes a few seconds. */
@@ -15,7 +15,13 @@ const INSTALL_GIVE_UP_MS = 5 * 60_000;
 /** Remembers across the reload after an update which version it was, to say so once. */
 const UPDATED_KEY = "clavren.updated_to";
 
-export type CheckProgress = "idle" | "waiting" | "slow";
+type CheckProgress = "idle" | "asking" | "waiting" | "slow";
+
+/** What a server that is restarting (or the tunnel in front of it) answers: no answer, or a 5xx
+ * without one of the API's own codes. Any other failure is a real one, to be shown. */
+function isRestarting(failure: unknown): boolean {
+  return failure instanceof ApiError && (failure.code === "network" || failure.code === "internal_error" || failure.code === "unexpected");
+}
 
 /** An update this page started or found running: where it is from the dashboard's point of view. */
 export type Installing = { version: string; phase: "running" | "restarting" | "slow" };
@@ -91,9 +97,16 @@ export function UpdatesProvider({ children }: { children: ReactNode }) {
         let answer: Updates;
         try {
           answer = await get<Updates>("/updates");
-        } catch {
-          setInstalling({ version, phase: "restarting" }); // expected while the server restarts
-          continue;
+        } catch (failure) {
+          if (!alive.current) return;
+          if (isRestarting(failure)) {
+            setInstalling({ version, phase: "restarting" }); // expected while the server restarts
+            continue;
+          }
+          // the server answers, but not about the update: say why instead of "restarting"
+          setError(failure);
+          setInstalling(null);
+          return;
         }
         if (!alive.current) return;
         setUpdates(answer);
@@ -130,7 +143,13 @@ export function UpdatesProvider({ children }: { children: ReactNode }) {
 
   const checkNow = useCallback(async () => {
     const before = updates?.last_check?.checked_at ?? null;
-    await api("POST", "/updates/check");
+    setCheck("asking"); // busy from the click on: a second click sends no second check
+    try {
+      await api("POST", "/updates/check");
+    } catch (failure) {
+      setCheck("idle");
+      throw failure;
+    }
     setCheck("waiting");
     const giveUpAt = Date.now() + CHECK_GIVE_UP_MS;
     while (alive.current && Date.now() < giveUpAt) {

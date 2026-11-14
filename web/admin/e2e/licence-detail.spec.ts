@@ -3,10 +3,7 @@
 // on, and its customer and revocation reason edited in place. Checked through the API.
 
 import { createProduct, issue, licence, unique } from "./data";
-import { Device, expect, test } from "./fixtures";
-
-/** The toolbar's Product filter (the column picker has a "Product" checkbox too). */
-const productFilter = (page: import("@playwright/test").Page) => page.getByRole("combobox", { name: /^Product/ });
+import { Device, expect, productFilter, test } from "./fixtures";
 
 test.use({ permissions: ["clipboard-read", "clipboard-write"] });
 
@@ -171,4 +168,47 @@ test("the Revoke strip says when an offline computer locks at the latest, from i
   await admin.goto(`/licences/${issued.id}`);
   await admin.getByRole("button", { name: "Revoke" }).click();
   await expect(admin.getByRole("group", { name: "Revoke" })).toContainText("locks at its next check. If it is offline, at the latest in 7 days.");
+});
+
+// Regression: a strip opened with the keyboard on Confirm, so Enter twice on Delete deleted; and
+// closing a strip or an inline editor with the keyboard left focus on the page's body.
+test("strips open on Cancel, and the keyboard gets its place back when they and editors close", async ({ admin, api }) => {
+  const product = await createProduct(api);
+  const customer = unique("Fran");
+  const issued = (await issue(api, product.id, { customer: { name: customer } })).licences[0]!;
+  let patches = 0;
+  admin.on("request", (request) => {
+    if (request.method() === "PATCH") patches += 1;
+  });
+  await admin.goto(`/licences/${issued.id}`);
+
+  await admin.getByRole("button", { name: "Delete" }).focus();
+  await admin.keyboard.press("Enter");
+  const strip = admin.getByRole("group", { name: "Delete" });
+  await expect(strip.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await admin.keyboard.press("Enter"); // a second Enter cancels: nothing is deleted
+  await expect(strip).toBeHidden();
+  await expect(admin.getByRole("button", { name: "Delete" })).toBeFocused(); // back where it was
+  expect((await licence(api, issued.id)).id).toBe(issued.id);
+
+  const notes = admin.getByRole("button", { name: "Edit notes" });
+  await notes.click();
+  await admin.getByLabel("notes").press("Escape");
+  await expect(notes).toBeFocused();
+  await notes.click();
+  await admin.getByLabel("notes").fill("Kept by the keyboard");
+  await admin.getByLabel("notes").press("Enter");
+  await expect(notes).toHaveText("Kept by the keyboard");
+  await expect(notes).toBeFocused();
+
+  // picking the customer the licence already has saves nothing
+  const before = patches;
+  await admin.getByRole("button", { name: "Change" }).click();
+  const editor = admin.getByRole("group", { name: "Customer" });
+  const field = editor.getByRole("combobox", { name: "Customer (optional)" });
+  await field.fill(customer); // the whole name: earlier runs left other Frans
+  await editor.getByRole("option", { name: new RegExp(customer) }).click();
+  await editor.getByRole("button", { name: "Save" }).click();
+  await expect(editor).toBeHidden();
+  expect(patches, "the same customer again sends nothing").toBe(before);
 });

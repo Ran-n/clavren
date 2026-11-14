@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:17.000102
-//+ Revised: 	2026/11/11 16:32:51.991400
+//+ Revised: 	2026/11/14 00:38:45.608623
 // -----------------------------------------------------------------------------
 
 //! The embedded dashboard: its files, `index.html` for every page path, security and cache
@@ -81,6 +81,26 @@ async fn missing_files_and_api_paths_are_not_pages(pool: PgPool) {
         assert_eq!(body["error"], "not_found", "{path}");
     }
     assert_eq!(send(&app, Method::POST, "/licences").await.status, StatusCode::METHOD_NOT_ALLOWED);
+}
+
+/// Regression: an API address asked with a method it doesn't take answered 405 with an empty body,
+/// not the documented error shape.
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn an_api_address_asked_the_wrong_way_is_a_json_error(pool: PgPool) {
+    let app = app(pool);
+    let wrong = [
+        (Method::GET, "/api/v1/activations"),
+        (Method::DELETE, "/api/v1/applications/form"),
+        (Method::PUT, "/api/admin/licences"),
+        (Method::PUT, "/api/admin/session"),
+    ];
+    for (method, path) in wrong {
+        let answer = send(&app, method.clone(), path).await;
+        assert_eq!(answer.status, StatusCode::METHOD_NOT_ALLOWED, "{method} {path}");
+        let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        assert_eq!(body["error"], "method_not_allowed", "{method} {path}");
+        assert_eq!(header(&answer, header::CACHE_CONTROL), "no-store", "{method} {path}");
+    }
 }
 
 /// Regression: the 0.4.0 release left the dashboard's `package.json` at 0.3.0. The dashboard and

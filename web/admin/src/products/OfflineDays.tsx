@@ -5,13 +5,14 @@
 import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { Badge } from "../shared/components/Badge";
 import { describe, plural } from "../shared/errors";
+import { useFocusOnClose } from "../shared/hooks";
 
-export const MIN_OFFLINE_DAYS = 2;
-export const MAX_OFFLINE_DAYS = 3650;
+const MIN_OFFLINE_DAYS = 2;
+const MAX_OFFLINE_DAYS = 3650;
 const OUT_OF_RANGE = "Enter 2 to 3,650 days.";
 
 /** The days typed, when they are a whole number in range. */
-export function parseOfflineDays(text: string): number | null {
+function parseOfflineDays(text: string): number | null {
   const trimmed = text.trim();
   if (!/^\d+$/.test(trimmed)) return null;
   const days = Number(trimmed);
@@ -30,6 +31,7 @@ export function OfflineDays({ days, onSave }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const finishing = useRef(false);
+  const trigger = useFocusOnClose<HTMLButtonElement>(draft !== null);
 
   function start() {
     setDraft(String(days));
@@ -74,7 +76,7 @@ export function OfflineDays({ days, onSave }: Props) {
 
   if (draft === null) {
     return (
-      <button type="button" className="inline-value" onClick={start} aria-label="Edit days offline" aria-describedby={valueId}>
+      <button ref={trigger} type="button" className="inline-value" onClick={start} aria-label="Edit days offline" aria-describedby={valueId}>
         <span id={valueId}>
           <Badge tone="neutral">{plural(days, "day")}</Badge>
         </span>

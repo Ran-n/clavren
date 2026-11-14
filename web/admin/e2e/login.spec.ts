@@ -4,17 +4,17 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
-import { expect, newSession, signedInPage, test } from "./fixtures";
+import { expect, lastPageSaved, newSession, signedInPage, test, type AdminApi } from "./fixtures";
 import { SERVERS } from "./servers";
 
 const CHECK_REQUEST = join(SERVERS.flows.dataDir, "updates", "check-request");
 const OUT_OF_DATE = "This page is out of date";
 
 /** The Overview, open and idle: its last page is saved, so Check now is the next change. */
-async function overviewOpen(admin: Page): Promise<void> {
+async function overviewOpen(admin: Page, api: AdminApi): Promise<void> {
   await admin.goto("/");
   await expect(admin.getByRole("button", { name: "Check now" })).toBeEnabled();
-  await admin.waitForTimeout(600);
+  await lastPageSaved(api, "/");
 }
 
 test("signing in takes the right code, and signing out ends the session", async ({ page, credentials }) => {
@@ -52,7 +52,7 @@ test("a session that ends while the dashboard is open goes back to signing in", 
 test("signing out of a session that already ended goes back to signing in", async ({ admin, api }) => {
   await admin.goto("/");
   await expect(admin.getByRole("heading", { name: "Overview" })).toBeVisible();
-  await admin.waitForTimeout(600); // the last page is saved by now: nothing else asks the server
+  await lastPageSaved(api, "/"); // nothing else asks the server from here on
   await api.call("DELETE", "/session");
   await admin.getByRole("button", { name: "Sign out" }).click();
   await expect(admin.getByRole("button", { name: "Sign in" })).toBeVisible();
@@ -65,8 +65,8 @@ test.describe("a session replaced in another tab", () => {
 
   // Regression: signing in again in another tab left this page with the old session's CSRF token,
   // so Check now (and every other change) answered "This page is out of date".
-  test("a change after signing in again in another tab goes through", async ({ admin, credentials, request, baseURL }) => {
-    await overviewOpen(admin);
+  test("a change after signing in again in another tab goes through", async ({ admin, api, credentials, request, baseURL }) => {
+    await overviewOpen(admin, api);
     const { username, password } = credentials.info;
     await signedInPage(admin, await newSession(request, username, password, credentials.recoveryCode()), baseURL as string);
     await admin.getByRole("button", { name: "Check now" }).click();
@@ -75,10 +75,10 @@ test.describe("a session replaced in another tab", () => {
     await expect(admin.getByText(OUT_OF_DATE)).toHaveCount(0);
   });
 
-  test("a change after another admin signed in in another tab switches to their account", async ({ admin, credentials, request, baseURL }) => {
+  test("a change after another admin signed in in another tab switches to their account", async ({ admin, api, credentials, request, baseURL }) => {
     const other = credentials.info.other;
     if (!other) throw new Error("the flows server has no second admin");
-    await overviewOpen(admin);
+    await overviewOpen(admin, api);
     await expect(admin.locator(".app-header__user")).toHaveText(credentials.info.username);
     await signedInPage(admin, await newSession(request, other.username, other.password, credentials.otherRecoveryCode()), baseURL as string);
     await admin.getByRole("button", { name: "Check now" }).click();
@@ -90,10 +90,10 @@ test.describe("a session replaced in another tab", () => {
     await expect(admin.getByText("You signed in as another admin")).toHaveCount(0);
   });
 
-  test("a change whose session ended meanwhile goes back to signing in", async ({ admin, credentials, request, baseURL }) => {
+  test("a change whose session ended meanwhile goes back to signing in", async ({ admin, api, credentials, request, baseURL }) => {
     const other = credentials.info.other;
     if (!other) throw new Error("the flows server has no second admin");
-    await overviewOpen(admin);
+    await overviewOpen(admin, api);
     await signedInPage(admin, await newSession(request, other.username, other.password, credentials.otherRecoveryCode()), baseURL as string);
     // the session ends between the refusal and asking for the new token
     await admin.route("**/api/admin/session", (route) =>
@@ -107,8 +107,8 @@ test.describe("a session replaced in another tab", () => {
     expect(existsSync(CHECK_REQUEST)).toBe(false);
   });
 
-  test("a change refused again with the new token is sent only twice and says the page is out of date", async ({ admin }) => {
-    await overviewOpen(admin);
+  test("a change refused again with the new token is sent only twice and says the page is out of date", async ({ admin, api }) => {
+    await overviewOpen(admin, api);
     let checks = 0;
     let sessionReads = 0;
     await admin.route("**/api/admin/updates/check", (route) => {

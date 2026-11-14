@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/03 04:54:17.375058 )
-[//]: # (+ Revised: 	2026/11/07 19:37:00.854995 )
+[//]: # (+ Revised: 	2026/11/14 00:38:45.929777 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Backup and recovery
@@ -33,8 +33,8 @@ The script:
   never fills the SD card;
 - writes into a work folder on the backup drive and moves the finished archive into place, so a
   half-written archive never looks like a backup;
-- checks the checksum it wrote, records the run in the database (the dashboard's Overview and
-  Backups pages), and keeps the newest `CLAVREN_BACKUP_KEEP` archives (14);
+- checks the checksum it wrote, records the run in the database (shown on the dashboard's
+  Overview), and keeps the newest `CLAVREN_BACKUP_KEEP` archives (14);
 - exits non-zero on any failure: it shows in `systemctl --failed` and
   `journalctl -u clavren-backup`. The Overview warns when the last backup is more than 48 hours
   old.

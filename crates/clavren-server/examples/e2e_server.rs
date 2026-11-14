@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.529843
-//+ Revised: 	2026/11/09 13:58:24.225086
+//+ Revised: 	2026/11/14 00:38:41.991079
 // -----------------------------------------------------------------------------
 
 //! The server the dashboard's end-to-end tests drive (`web/admin/e2e`): a fresh
@@ -163,11 +163,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Completes when the test runner closes stdin (or exits), or on Ctrl+C.
+/// Completes when the test runner closes stdin (or exits), or on Ctrl+C. Stdin is read on a
+/// thread of its own, not one of the runtime's: the runtime waits for its blocking tasks when it
+/// shuts down, so after Ctrl+C the process would stay until stdin closed.
 async fn stdin_closed() {
-    let closed = tokio::task::spawn_blocking(|| for _ in io::stdin().lock().lines() {});
+    let (tell, closed) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        for _ in io::stdin().lock().lines() {}
+        // nobody listens after Ctrl+C
+        let _ = tell.send(());
+    });
     tokio::select! {
         _ = closed => {}
-        _ = startup::shutdown_signal() => {}
+        () = startup::shutdown_signal() => {}
     }
 }

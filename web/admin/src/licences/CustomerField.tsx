@@ -1,11 +1,14 @@
 // A licence's customer, edited in place: "Add customer" or "Change" swaps the line for the
 // customer picker with Save and Cancel (Escape cancels); "Remove customer" unlinks the licence and
-// keeps the customer, who may have other licences. `compact` is the table-row form: the customer
+// keeps the customer, who may have other licences. A picker has no one value to save on Enter or
+// on leaving it (a new customer is a name and an email), so this editor saves with its button;
+// picking the customer the licence already has saves nothing. `compact` is the table-row form: the customer
 // and a small "Edit" link that shows on hover, on focus, and always on a phone.
 
 import { useState, type KeyboardEvent } from "react";
 import { Button } from "../shared/components/Button";
 import { ErrorNotice } from "../shared/components/Notice";
+import { useFocusOnClose } from "../shared/hooks";
 import { expanded, type Licence } from "../shared/types";
 import { CustomerPicker, type CustomerChoice } from "./CustomerPicker";
 import { customerBody, updateLicence, type CustomerBody } from "./licenceApi";
@@ -20,6 +23,7 @@ export function CustomerField({ licence, onChange, compact }: Props) {
   const [choice, setChoice] = useState<CustomerChoice>(NOTHING_CHOSEN);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const field = useFocusOnClose<HTMLSpanElement>(editing);
 
   function start() {
     setChoice(NOTHING_CHOSEN);
@@ -27,6 +31,8 @@ export function CustomerField({ licence, onChange, compact }: Props) {
     setEditing(true);
   }
   async function save(body: CustomerBody) {
+    // the customer it has already (or none, when it has none): nothing to save
+    if (body === (customer?.id ?? null)) return setEditing(false);
     setBusy(true);
     setError(null);
     try {
@@ -59,7 +65,7 @@ export function CustomerField({ licence, onChange, compact }: Props) {
       <span className="muted">No customer</span>
     );
     return (
-      <span className={compact ? "customer-field customer-field--compact" : "customer-field"}>
+      <span ref={field} className={compact ? "customer-field customer-field--compact" : "customer-field"}>
         {shown}
         {compact ? (
           <button type="button" className="link-button customer-field__edit" onClick={start} aria-label="Edit customer">

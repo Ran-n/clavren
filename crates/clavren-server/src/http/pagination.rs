@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:13.854795
-//+ Revised: 	2026/11/08 14:55:44.880949
+//+ Revised: 	2026/11/14 00:38:43.595799
 // -----------------------------------------------------------------------------
 
 //! Cursor pagination for every admin list: `?limit=50&after=<cursor>` answers
@@ -36,6 +36,21 @@ impl PageParams {
     pub fn cursor(&self) -> Result<Option<Cursor>, ApiError> {
         self.after.as_deref().filter(|after| !after.is_empty()).map(Cursor::decode).transpose()
     }
+
+    /// [`Self::cursor`] for a list ordered by a sort key and then by ID.
+    pub fn cursor_by_key(&self) -> Result<Option<Cursor>, ApiError> {
+        self.cursor()?.map(|cursor| if cursor.key.is_some() { Ok(cursor) } else { Err(wrong_order()) }).transpose()
+    }
+
+    /// [`Self::cursor`] for a list ordered by ID alone.
+    pub fn cursor_by_id(&self) -> Result<Option<Cursor>, ApiError> {
+        self.cursor()?.map(|cursor| if cursor.key.is_none() { Ok(cursor) } else { Err(wrong_order()) }).transpose()
+    }
+}
+
+/// A cursor from a list in another order would continue at the wrong place, so it is refused.
+pub fn wrong_order() -> ApiError {
+    ApiError::invalid_request("the cursor belongs to a list in another order")
 }
 
 /// Where the previous page ended: the last row's sort key (when the order isn't by ID alone) and
@@ -116,6 +131,19 @@ mod tests {
         let by_id = Cursor { key: None, id: Uuid::now_v7() };
         assert_eq!(params(None, Some(&by_id.encode())).cursor().unwrap(), Some(by_id));
         assert_eq!(params(None, Some("")).cursor().unwrap(), None);
+    }
+
+    #[test]
+    fn a_cursor_from_a_list_in_another_order_is_refused() {
+        let keyed = Cursor { key: Some("ana".into()), id: Uuid::now_v7() };
+        let by_id = Cursor { key: None, id: keyed.id };
+        assert_eq!(params(None, Some(&keyed.encode())).cursor_by_key().unwrap(), Some(keyed.clone()));
+        assert_eq!(params(None, Some(&by_id.encode())).cursor_by_id().unwrap(), Some(by_id.clone()));
+        assert_eq!(params(None, Some(&by_id.encode())).cursor_by_key().unwrap_err().code(), "invalid_request");
+        assert_eq!(params(None, Some(&keyed.encode())).cursor_by_id().unwrap_err().code(), "invalid_request");
+        assert_eq!(params(None, None).cursor_by_key().unwrap(), None);
+        assert_eq!(params(None, None).cursor_by_id().unwrap(), None);
+        assert_eq!(params(None, Some("garbage!")).cursor_by_id().unwrap_err().code(), "invalid_request");
     }
 
     #[test]

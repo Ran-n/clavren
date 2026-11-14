@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:34.824500
-//+ Revised: 	2026/11/09 22:30:54.140807
+//+ Revised: 	2026/11/14 00:38:42.311497
 // -----------------------------------------------------------------------------
 
 //! What a signed-in admin can change about their own account: password, recovery codes and
@@ -110,8 +110,9 @@ pub async fn replace_authenticator(
     ip: IpAddr,
 ) -> Result<(), ApiError> {
     let admin = confirm_password(state, signed_in, request.password, ip).await?;
-    let secret = totp::secret_from_text(&request.secret)
-        .ok_or_else(|| ApiError::invalid_request("the secret is not one Clavren issued"))?;
+    let secret = totp::secret_from_text(&request.secret).ok_or_else(|| {
+        ApiError::invalid_request("the secret must be a 20-byte Base32 key, as the setup answer gives it")
+    })?;
     let now = state.clock.now();
     let step = totp::matching_step(&secret, &admin.username, request.code.trim(), now)
         .ok_or_else(|| ApiError::invalid_request("the code doesn't match the new secret; check the app's clock"))?;
@@ -138,12 +139,21 @@ async fn confirm_password(
     let now = state.clock.now();
     // counted first, as at sign-in, and taken back when the password is right
     state.login_failures.attempt(std::slice::from_ref(&key), now).map_err(ApiError::rate_limited)?;
-    if passwords::verify(password, admin.password_hash.clone()).await.map_err(ApiError::internal)? {
-        state.login_failures.forgive(&key, now);
-        return Ok(admin);
+    // only a wrong password stays counted: a check that couldn't run says nothing about the guess
+    match passwords::verify(password, admin.password_hash.clone()).await {
+        Ok(true) => {
+            state.login_failures.forgive(&key, now);
+            Ok(admin)
+        }
+        Ok(false) => {
+            tracing::warn!(admin = %admin.username, %ip, "wrong password when changing account settings");
+            Err(ApiError::invalid_credentials())
+        }
+        Err(error) => {
+            state.login_failures.forgive(&key, now);
+            Err(ApiError::internal(error))
+        }
     }
-    tracing::warn!(admin = %admin.username, %ip, "wrong password when changing account settings");
-    Err(ApiError::invalid_credentials())
 }
 
 /// The same key login uses, so both kinds of failure share one limit.

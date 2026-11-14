@@ -2,7 +2,7 @@
 // again every two minutes, and on Check again), approved with its key and Copy, rejected with the
 // administrator's reason, or withdrawn.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../shared/components/Button";
 import { CopyButton } from "../shared/components/Copy";
 import { Loading } from "../shared/components/Notice";
@@ -57,15 +57,20 @@ export function StatusView({ secret, justSent }: { secret: string; justSent: boo
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  // the timer and Check again can ask at once: only the latest question's answer is shown
+  const asked = useRef(0);
   const ask = useCallback(async () => {
+    const asking = ++asked.current;
     setBusy(true);
     try {
-      setStatus(await askStatus(secret));
+      const answer = await askStatus(secret);
+      if (asking !== asked.current) return;
+      setStatus(answer);
       setError(null);
     } catch (failure) {
-      setError(failure);
+      if (asking === asked.current) setError(failure);
     } finally {
-      setBusy(false);
+      if (asking === asked.current) setBusy(false);
     }
   }, [secret]);
 

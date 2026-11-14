@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.495003
-//+ Revised: 	2026/11/12 23:57:44.816016
+//+ Revised: 	2026/11/14 11:38:24.118744
 // -----------------------------------------------------------------------------
 
 //! Changing licences after issuing: editing every field but the product (customer, expiry, notes,
@@ -12,163 +12,19 @@
 use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::json;
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-use super::{MAX_BATCH, MAX_NOTES, MAX_REASON, State, repository};
+use super::{MAX_BATCH, MAX_REASON, State, repository, writes};
 use crate::activations::{self, RevocationReason};
 use crate::audit::{self, Actor};
-use crate::customers::{self, CustomerChoice};
 use crate::http::AppState;
 use crate::http::error::ApiError;
 use crate::http::fields;
-use crate::http::patch::Patch;
-use crate::money::Price;
 
-const ENTITY: &str = "licence";
-
-/// The fields of a licence an admin can change; the product, key, state and dates can't be.
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-pub struct LicenceChanges {
-    /// An existing customer's ID, a new customer typed in place, or `null` for none.
-    pub customer: Patch<CustomerChoice>,
-    /// `null` makes the licence permanent; a past date ends it now.
-    pub expires_at: Patch<DateTime<Utc>>,
-    pub internal_notes: Patch<String>,
-    /// Only a revoked licence has one.
-    pub revocation_reason: Patch<String>,
-    /// What the key was charged; a test licence has none.
-    pub price: Patch<Price>,
-}
-
-/// What to do with test licences when a price is set: a single edit refuses, a bulk one leaves
-/// them unpriced and counts them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OnTestLicence {
-    Refuse,
-    Skip,
-}
-
-/// What an edit changed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct Edited {
-    /// How many licences changed.
-    pub updated: usize,
-    /// How many test licences were left without the price asked for.
-    pub kept_test: usize,
-}
-
-/// [`LicenceChanges`] checked: the changes for the database, with the customer still to resolve.
-#[derive(Debug)]
-struct Parsed {
-    customer: Option<Option<CustomerChoice>>,
-    changes: repository::Changes,
-    fields: Vec<&'static str>,
-}
-
-fn text(field: &str, patch: Patch<String>, max: usize) -> Result<Option<Option<String>>, ApiError> {
-    match patch {
-        Patch::Keep => Ok(None),
-        Patch::Clear => Ok(Some(None)),
-        Patch::Set(text) => Ok(Some(fields::optional(field, Some(&text), max)?)),
-    }
-}
-
-fn parse(changes: LicenceChanges) -> Result<Parsed, ApiError> {
-    let customer = match changes.customer {
-        Patch::Keep => None,
-        Patch::Clear => Some(None),
-        Patch::Set(choice) => Some(Some(choice)),
-    };
-    let expires_at = if changes.expires_at.is_keep() { None } else { Some(changes.expires_at.apply(None)) };
-    let changes = repository::Changes {
-        customer_id: None,
-        expires_at,
-        internal_notes: text("internal_notes", changes.internal_notes, MAX_NOTES)?,
-        revocation_reason: text("revocation_reason", changes.revocation_reason, MAX_REASON)?,
-        price: if changes.price.is_keep() { None } else { Some(changes.price.apply(None)) },
-    };
-    let asked = [
-        customer.is_some(),
-        changes.expires_at.is_some(),
-        changes.internal_notes.is_some(),
-        changes.revocation_reason.is_some(),
-        changes.price.is_some(),
-    ];
-    let fields: Vec<&'static str> =
-        CHANGEABLE.into_iter().zip(asked).filter_map(|(field, on)| on.then_some(field)).collect();
-    if fields.is_empty() {
-        return Err(ApiError::invalid_request(
-            "give at least one of customer, expires_at, internal_notes, revocation_reason, price",
-        ));
-    }
-    Ok(Parsed { customer, changes, fields })
-}
-
-/// Applies `changes` to every licence in `ids` or to none; returns how many actually changed. A
-/// price set on test licences is refused or skipped as `on_test` says.
-pub async fn edit(
-    state: &AppState,
-    actor: &Actor,
-    ids: &[Uuid],
-    changes: LicenceChanges,
-    on_test: OnTestLicence,
-) -> Result<Edited, ApiError> {
-    check_batch(ids)?;
-    let Parsed { customer, mut changes, fields } = parse(changes)?;
-    let mut transaction = state.pool.begin().await?;
-    // the customer before the licences, in the order a customer's deletion locks them
-    changes.customer_id = match customer {
-        None => None,
-        Some(None) => Some(None),
-        Some(Some(choice)) => Some(Some(customers::choose(&mut transaction, actor, choice).await?.id)),
-    };
-    let revoked: HashSet<Uuid> = lock_existing(&mut transaction, ids).await?.into_iter().collect();
-    let live: Vec<Uuid> = ids.iter().filter(|id| !revoked.contains(id)).copied().collect();
-    if changes.revocation_reason.is_some() && !live.is_empty() {
-        return Err(
-            ApiError::conflict("licence_not_revoked", "only a revoked licence has a revocation reason").with_ids(live)
-        );
-    }
-    let pricing = matches!(changes.price, Some(Some(_)));
-    let tests = if pricing { repository::test_ids(&mut *transaction, ids).await? } else { Vec::new() };
-    if on_test == OnTestLicence::Refuse && !tests.is_empty() {
-        return Err(
-            ApiError::conflict("test_licence_price", "test licences can't have a price").with_ids(tests.clone())
-        );
-    }
-    let changed = repository::update(&mut *transaction, ids, &changes).await?;
-    // one audit entry per licence that changed, naming the fields that did
-    let mut by_fields: Vec<(Vec<&str>, Vec<Uuid>)> = Vec::new();
-    for (id, customer, expires_at, notes, reason, price) in changed.iter().copied() {
-        let names: Vec<&str> = CHANGEABLE
-            .iter()
-            .zip([customer, expires_at, notes, reason, price])
-            .filter_map(|(name, on)| on.then_some(*name))
-            .collect();
-        match by_fields.iter_mut().find(|(group, _)| *group == names) {
-            Some((_, group_ids)) => group_ids.push(id),
-            None => by_fields.push((names, vec![id])),
-        }
-    }
-    for (names, group_ids) in &by_fields {
-        let metadata = json!({ "fields": names });
-        audit::record_for_each(&mut *transaction, actor, "licence.updated", ENTITY, group_ids, metadata).await?;
-    }
-    transaction.commit().await?;
-    tracing::info!(asked = ids.len(), changed = changed.len(), ?fields, "licences updated");
-    let priced: Vec<Uuid> = changed.iter().filter(|changed| changed.5).map(|changed| changed.0).collect();
-    if !priced.is_empty() {
-        tracing::info!(target: "clavren::licences", licences = ?priced, kept_test = tests.len(), "licence prices changed");
-    }
-    Ok(Edited { updated: changed.len(), kept_test: tests.len() })
-}
-
-/// The fields [`repository::update`] reports on, in its order.
-const CHANGEABLE: [&str; 5] = ["customer", "expires_at", "internal_notes", "revocation_reason", "price"];
+pub(super) const ENTITY: &str = "licence";
 
 /// Revokes for good: the keys are deleted, and the computers using them lock at their next check.
 pub async fn revoke(state: &AppState, actor: &Actor, ids: &[Uuid], reason: Option<&str>) -> Result<(), ApiError> {
@@ -179,7 +35,7 @@ pub async fn revoke(state: &AppState, actor: &Actor, ids: &[Uuid], reason: Optio
     if !revoked.is_empty() {
         return Err(ApiError::conflict("licence_revoked", "some licences are already revoked").with_ids(revoked));
     }
-    repository::revoke(&mut transaction, ids, reason.as_deref(), actor.at).await?;
+    writes::revoke(&mut transaction, ids, reason.as_deref(), actor.at).await?;
     let deactivated =
         activations::repository::revoke_active(&mut *transaction, ids, RevocationReason::LicenceRevoked, actor.at)
             .await?;
@@ -225,7 +81,7 @@ pub async fn delete_locked(
     if dry_run {
         return Ok(deleted);
     }
-    repository::delete(connection, ids).await?;
+    writes::delete(connection, ids).await?;
     for was in [State::Unused, State::Redeemed, State::Revoked] {
         let of_state: Vec<Uuid> = states.iter().filter(|(_, state)| state == was.as_str()).map(|(id, _)| *id).collect();
         if !of_state.is_empty() {
@@ -284,7 +140,7 @@ async fn end_computers(
 }
 
 /// Locks the licences; fails naming any that don't exist. Returns the ones already revoked.
-async fn lock_existing(connection: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Uuid>, ApiError> {
+pub(super) async fn lock_existing(connection: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Uuid>, ApiError> {
     let found = repository::lock(connection, ids).await?;
     let existing: HashSet<Uuid> = found.iter().map(|(id, _)| *id).collect();
     let missing: Vec<Uuid> = ids.iter().filter(|id| !existing.contains(id)).copied().collect();
@@ -294,7 +150,7 @@ async fn lock_existing(connection: &mut PgConnection, ids: &[Uuid]) -> Result<Ve
     Ok(found.into_iter().filter_map(|(id, revoked)| revoked.then_some(id)).collect())
 }
 
-fn check_batch(ids: &[Uuid]) -> Result<(), ApiError> {
+pub(super) fn check_batch(ids: &[Uuid]) -> Result<(), ApiError> {
     if ids.is_empty() || ids.len() > MAX_BATCH {
         return Err(ApiError::invalid_request(format!("ids must list 1 to {MAX_BATCH} licences")));
     }
@@ -303,55 +159,4 @@ fn check_batch(ids: &[Uuid]) -> Result<(), ApiError> {
         return Err(ApiError::invalid_request("ids lists a licence more than once"));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn changes(json: &str) -> LicenceChanges {
-        serde_json::from_str(json).unwrap()
-    }
-
-    #[test]
-    fn an_empty_change_is_refused() {
-        assert_eq!(parse(changes("{}")).unwrap_err().code(), "invalid_request");
-    }
-
-    #[test]
-    fn removing_the_customer_alone_is_a_change() {
-        let parsed = parse(changes(r#"{"customer": null}"#)).unwrap();
-        assert!(matches!(parsed.customer, Some(None)));
-        assert_eq!(parsed.fields, ["customer"]);
-    }
-
-    #[test]
-    fn every_field_is_named_and_text_tidied() {
-        let parsed = parse(changes(
-            r#"{"customer": {"name": "Bea"}, "expires_at": null, "internal_notes": " ", "revocation_reason": " dup "}"#,
-        ))
-        .unwrap();
-        assert_eq!(parsed.fields, ["customer", "expires_at", "internal_notes", "revocation_reason"]);
-        let priced = parse(changes(r#"{"price": {"amount": 1999, "currency": "EUR"}}"#)).unwrap();
-        assert_eq!(priced.fields, ["price"]);
-        assert!(matches!(priced.changes.price, Some(Some(_))));
-        assert_eq!(parse(changes(r#"{"price": null}"#)).unwrap().changes.price, Some(None));
-        assert_eq!(parsed.changes.expires_at, Some(None));
-        assert_eq!(parsed.changes.internal_notes, Some(None), "blank notes clear them");
-        assert_eq!(parsed.changes.revocation_reason, Some(Some("dup".into())));
-    }
-
-    #[test]
-    fn an_over_long_reason_is_refused() {
-        let body = format!(r#"{{"revocation_reason": "{}"}}"#, "x".repeat(MAX_REASON + 1));
-        assert_eq!(parse(changes(&body)).unwrap_err().code(), "invalid_request");
-    }
-
-    #[test]
-    fn read_only_fields_are_unknown() {
-        for field in ["product", "key", "state", "created_at", "revoked_at"] {
-            let body = format!(r#"{{"{field}": null}}"#);
-            assert!(serde_json::from_str::<LicenceChanges>(&body).is_err(), "{field}");
-        }
-    }
 }

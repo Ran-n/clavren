@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:54.981076 )
-[//]: # (+ Revised: 	2026/11/13 12:58:10.189191 )
+[//]: # (+ Revised: 	2026/11/14 17:26:04.856692 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Changelog
@@ -11,6 +11,37 @@ All notable changes to this project will be documented in this file.
 This project adheres to [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Added
+
+- `clavren-client`: `SecretStore::save_if_unchanged` (with a default, so a store written outside the crate keeps working) and `StoreError::ChangedElsewhere`.
+- API errors `method_not_allowed` (405) and `request_timeout` (408), in the same shape as every other error.
+- `BACKLOG.md`, where the payment items wait until it is decided how to take payments.
+
+### Changed
+
+- Deleting a customer now also deletes every licence application sent from their email address (waiting, rejected, or approved for a licence deleted since), so no name or email of theirs is left.
+- Confirmation strips open with the keyboard on Cancel, not on Confirm: pressing Enter twice on Delete or Revoke no longer goes through with it.
+- Issued, Added and "ended" days are shown in the browser's time zone, like every other time; expiry dates stay whole days in UTC.
+- `clavren-client`: `apply()` answers `AlreadyPending`, sending nothing, while an application from this computer still waits.
+- `clavren-admin` shows the recovery codes before it saves the account: when they can't be written (stdout closed), nothing is changed.
+- Every source, test and style file over about 200 lines is split by what changes together, with no change in behaviour: unit tests moved to `tests.rs` beside their module, long integration tests turned into folders (same test binary names), the dashboard's stylesheet into one file per component. The two deploy scripts that must run as one file stay whole (`docs/design-decisions.md`).
+- The end-to-end tests wait for what they depend on (the saved settings, the dashboard's own timers) instead of a fixed time.
+
+### Fixed
+
+- `clavren-client`: a copy of the application left at the key prompt saved its empty state over the licence another copy had just activated; a copy now takes what the other saved.
+- `clavren-client`: a device key that couldn't be saved stayed in memory and was sent with the next activation, binding the licence to a key forgotten at the next start.
+- `clavren-client`: a huge `Retry-After` ended the background checker's thread; waits are now at most a day.
+- `clavren-client`: an empty or over-long device name made every activation fail as "unreachable"; it is trimmed, cut to 200 characters and never empty.
+- A cursor from one list (or one order) given to another returned a wrong page instead of `invalid_request`, on products, activations, applications and the audit log.
+- A check arriving in the same moment as its licence's revoke could be refused with `activation_revoked` instead of `licence_revoked`.
+- A 405 or a 408 from the API had an empty body.
+- A wrong password while changing account settings stayed counted towards the sign-in limit when the check itself failed.
+- The CSV export wrote an empty key for a licence that isn't revoked but has no stored key; it now fails and logs it.
+- The issue answer's message could name the key of a licence another admin deleted in the same moment.
+- The root updater could delete `request.json` through a link before checking the updates folder, when started by hand during a running update.
+- Dashboard: an update that stopped being reported showed "restarting" for five minutes instead of the server's error; closing an inline editor or a confirmation strip with the keyboard lost the place in the page; a late answer could replace a newer one (per-field saves, the application status page, the approve form's customer lookup); Export, bulk Delete and Reject, product Delete, Check now and Download CSV showed nothing while working; a mangled status link broke the page; the bold part of a customer name could land on the wrong letters.
 
 ## [0.6.0] - 2026-11-13
 

@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.155237 )
-[//]: # (+ Revised: 	2026/11/12 23:57:46.511513 )
+[//]: # (+ Revised: 	2026/11/14 12:10:35.314040 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Design decisions
@@ -188,7 +188,9 @@ in without accounts:
   never deadlock.
 - **History stays, until you delete it.** Decided applications are kept, so every approval and
   rejection can be looked back on; nothing deletes them by itself. Deleting a customer also
-  deletes the applications whose licence is theirs. The audit log refers to applications by ID
+  deletes the applications whose licence is theirs, and the ones sent from their email address:
+  a waiting or rejected one, or an approved one whose licence was deleted since, has no licence
+  to find it by, and would keep the name and email the deletion is meant to erase. The audit log refers to applications by ID
   only.
 - **Withdrawn** is what the applicant sees when the approved licence was revoked or deleted since:
   there is no key to give, and "approved" would be misleading. The dashboard keeps the decision as
@@ -342,6 +344,15 @@ treats an update still "running" after 20 minutes (the service times out at 15) 
 
 A BLAKE3 checksum next to the bundle only catches a broken download, not a compromised forge
 account. Signing releases is a separate step, not taken yet.
+
+## The install and update scripts are one file each
+
+`deploy/install.sh` and `deploy/clavren-update.sh` are longer than the 200 lines other files keep
+to, on purpose. `install.sh` runs from the unpacked bundle and copies a fixed list of files; the
+updater is replaced by `install.sh` while it may be running, which is why bash reads it whole (all
+of it is in `main`) before running any of it. A helper file sourced by either could be replaced
+on its own and leave two versions running together, so each stays the one file that is copied
+and run.
 
 ## The dashboard's tests run against a frozen clock
 

@@ -2,7 +2,7 @@
 // for Light, a moon for Dark); each click moves to the next one, System → Light → Dark → System.
 
 import type { ReactNode } from "react";
-import type { Theme } from "../shared/preferences";
+import type { Theme } from "../shared/preferenceTypes";
 
 function Icon({ children }: { children: ReactNode }) {
   return (

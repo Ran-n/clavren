@@ -1,0 +1,78 @@
+/* Keys, badges, stacked lists and the stat tiles. */
+
+.key {
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.key--gone {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+.key-field {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+.badge {
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.badge--good {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+.badge--bad {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+.badge--neutral {
+  background: var(--color-surface-raised);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+.badge--test {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+.badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  vertical-align: middle;
+}
+.stacked {
+  display: flex;
+  flex-direction: column;
+}
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(9.5rem, 100%), 1fr));
+  gap: 0.9rem;
+}
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 1rem 1.1rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  color: var(--color-text);
+  text-decoration: none;
+}
+.stat--link:hover {
+  border-color: var(--color-primary);
+}
+.stat__value {
+  font-size: 1.8rem;
+  font-weight: 700;
+}
+.stat__label {
+  color: var(--color-text-muted);
+}

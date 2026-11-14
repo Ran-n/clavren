@@ -2,7 +2,7 @@
 # ------------------------------------------------------------------------------
 #+ Authors: 	Ran# <ran.hash@proton.me>
 #+ Created: 	2026/11/09 09:57:46.001976
-#+ Revised: 	2026/11/09 11:10:33.592132
+#+ Revised: 	2026/11/14 00:39:01.370194
 # ------------------------------------------------------------------------------
 
 # Installs a newer Clavren release when the dashboard asks for one. Runs as root, started by
@@ -54,16 +54,21 @@ main() {
     # started by hand.
     install -d -m 0755 "$STATUS_DIR"
     exec 9>"$LOCK"
-    if ! flock -n 9; then
-        say "another update is running; this request is dropped"
-        rm -f -- "$updates_dir/request.json"
-        exit 1
-    fi
+    local busy=0
+    flock -n 9 || busy=1
 
     # The folder belongs to the clavren user: refuse a link, then work inside it by relative names.
-    [[ -d $updates_dir && ! -L $updates_dir ]] || refuse "$updates_dir is not a folder."
-    cd -P -- "$updates_dir"
-    [[ $(pwd -P) == "$updates_dir" ]] || refuse "$updates_dir is not where it should be."
+    # Nothing in it is touched before this, a request dropped because an update is running included:
+    # root must never delete through a link the clavren user put there.
+    if [[ ! -d $updates_dir || -L $updates_dir ]] || ! cd -P -- "$updates_dir" || [[ $(pwd -P) != "$updates_dir" ]]; then
+        ((busy)) && { say "another update is running, and $updates_dir is not a plain folder"; exit 1; }
+        refuse "$updates_dir is not a folder where it should be."
+    fi
+    if ((busy)); then
+        say "another update is running; this request is dropped"
+        rm -f -- request.json
+        exit 1
+    fi
     if [[ ! -e request.json ]]; then
         say "there is no update request; nothing to do"
         exit 0

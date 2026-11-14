@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:13.128612
-//+ Revised: 	2026/11/09 22:30:54.487327
+//+ Revised: 	2026/11/14 00:38:43.075694
 // -----------------------------------------------------------------------------
 
 //! `GET /api/admin/audit`: who did what, when, from where; newest first.
@@ -81,7 +81,7 @@ async fn list(
 ) -> Result<Json<Page<Entry>>, ApiError> {
     expand.check(&["admin_user"])?;
     let page = PageParams { limit: params.limit, after: params.after };
-    let (limit, cursor) = (page.limit()?, page.cursor()?);
+    let (limit, cursor) = (page.limit()?, page.cursor_by_id()?);
     let action = params.action.as_deref().map(str::trim).filter(|action| !action.is_empty());
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT id, admin_user_id, action, entity_type, entity_id, metadata, host(ip_address) AS ip_address, created_at

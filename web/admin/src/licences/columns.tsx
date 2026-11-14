@@ -5,7 +5,7 @@ import { LicenceBadges } from "../shared/components/Badge";
 import { KeyField } from "../shared/components/Copy";
 import type { Column } from "../shared/components/DataTable";
 import { InlineText } from "../shared/components/InlineText";
-import { formatDate, formatDateTime, fromDateInput, toDateInput } from "../shared/format";
+import { formatDate, formatDateTime, formatDay, fromDateInput, toDateInput } from "../shared/format";
 import { Link } from "../shared/router";
 import { expanded, type Licence } from "../shared/types";
 import { CustomerField } from "./CustomerField";
@@ -71,7 +71,7 @@ export function licenceColumns(onChange: Replace): Column<Licence>[] {
     { key: "product", label: "Product", optional: true, render: (licence) => expanded(licence.product)?.name ?? "—" },
     { key: "customer", label: "Customer", optional: true, render: (licence) => <CustomerField compact licence={licence} onChange={onChange} /> },
     { key: "state", label: "State", render: (licence) => <LicenceBadges state={licence.state} test={licence.is_test} /> },
-    { key: "issued", className: "table__nowrap", label: "Issued", optional: true, render: (licence) => formatDate(licence.created_at) },
+    { key: "issued", className: "table__nowrap", label: "Issued", optional: true, render: (licence) => formatDay(licence.created_at) },
     { key: "redeemed", label: "Activated", optional: true, render: (licence) => formatDateTime(expanded(licence.active_activation)?.activated_at) },
     { key: "last_check", label: "Last check", optional: true, render: (licence) => formatDateTime(expanded(licence.active_activation)?.last_checked_at) },
     { key: "expiry", className: "table__nowrap", label: "Expires", optional: true, render: (licence) => <ExpiryField licence={licence} onChange={onChange} /> },

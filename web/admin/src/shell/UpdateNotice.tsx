@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { Button } from "../shared/components/Button";
 import { ConfirmStrip } from "../shared/components/ConfirmStrip";
-import { Notice } from "../shared/components/Notice";
+import { ErrorNotice, Notice } from "../shared/components/Notice";
 import type { UpdateStage, Updates } from "../shared/types";
 import { useUpdates, type Installing } from "../shared/updates";
 
@@ -41,7 +41,7 @@ function whyNot(updates: Updates): string | null {
 }
 
 export function UpdateNotice() {
-  const { updates, installing, install, updatedTo } = useUpdates();
+  const { updates, error, installing, install, updatedTo } = useUpdates();
   const [confirming, setConfirming] = useState(false);
 
   if (updatedTo && updates?.running_version === updatedTo) {
@@ -49,6 +49,8 @@ export function UpdateNotice() {
   }
   if (!updates) return null;
   if (installing) return <Progress installing={installing} stage={updates.update?.stage ?? null} />;
+  // an update was running and the server stopped answering about it: say why, on every page
+  if (error !== null && updates.update?.state === "running") return <ErrorNotice error={error} />;
   const available = updates.available;
   if (!available) return null;
 

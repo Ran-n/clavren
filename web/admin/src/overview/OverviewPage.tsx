@@ -121,7 +121,7 @@ function Server() {
         <Button
           size="small"
           variant="quiet"
-          busy={check === "waiting"}
+          busy={check === "asking" || check === "waiting"}
           disabledReason={updates.checking === "off" ? "Checking for updates is off" : null}
           onClick={() => {
             setCheckError(null);

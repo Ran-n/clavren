@@ -28,14 +28,18 @@
 //! # }
 //! ```
 
+mod activating;
 mod applying;
 mod background;
 mod client;
 pub mod clock;
+mod config;
 #[cfg(windows)]
 mod dpapi;
+mod due;
 mod online;
 mod outcome;
+mod persist;
 mod state;
 pub mod store;
 pub mod transport;
@@ -46,7 +50,8 @@ use ed25519_dalek::VerifyingKey;
 
 pub use applying::Applicant;
 pub use background::{BACKOFF, Background};
-pub use client::{Client, Config, ROLLBACK_TOLERANCE};
+pub use client::{Client, ROLLBACK_TOLERANCE};
+pub use config::Config;
 #[cfg(windows)]
 pub use dpapi::Dpapi;
 pub use outcome::{Applied, Outcome, Temporary};

@@ -33,11 +33,10 @@ export function ApplyForm({ product: fixed, onSent }: { product?: string; onSent
     // its applications closed between loading the key page and the form
     return <p className="notice notice--info">This product doesn't take applications at the moment.</p>;
   }
-  if (!form.products[0]) {
+  const first = form.products[0];
+  if (!first) {
     return <p className="notice notice--info">No product takes licence applications at the moment.</p>;
   }
-  const first = form.products[0];
-  if (!first) return null;
   const chosen = form.products.some((option) => option.code === product) ? product : first.code;
   const description = form.products.find((option) => option.code === chosen)?.description;
   const needsCheck = form.turnstile_site_key !== null && answer === null;

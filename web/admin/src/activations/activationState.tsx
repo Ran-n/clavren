@@ -1,7 +1,7 @@
 // An activation's state in words: in use, or why it stopped.
 
 import { Badge } from "../shared/components/Badge";
-import { formatDate } from "../shared/format";
+import { formatDay } from "../shared/format";
 import type { Activation } from "../shared/types";
 
 const REASONS: Record<string, string> = {
@@ -12,5 +12,5 @@ const REASONS: Record<string, string> = {
 export function activationState(activation: Activation) {
   if (!activation.revoked_at) return <Badge tone="good">In use</Badge>;
   const reason = REASONS[activation.revocation_reason ?? ""] ?? "Ended";
-  return <Badge tone="neutral">{`${reason} ${formatDate(activation.revoked_at)}`}</Badge>;
+  return <Badge tone="neutral">{`${reason} ${formatDay(activation.revoked_at)}`}</Badge>;
 }

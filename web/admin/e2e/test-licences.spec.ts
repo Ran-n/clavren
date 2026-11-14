@@ -32,7 +32,8 @@ test("a new product shows its test licence's key, which copies and is stored as 
 
   await notice.getByRole("link", { name: "Open it" }).click();
   await expect(admin.getByRole("heading", { name: /Licence/ })).toContainText("Test");
-  await admin.goto("/products");
+  await admin.getByRole("navigation").getByRole("link", { name: "Products" }).click();
+  await expect(admin.getByRole("heading", { name: "Products" })).toBeVisible();
   await expect(admin.getByText(`${name} was created with a test licence`)).toHaveCount(0); // gone once the page is left
 });
 

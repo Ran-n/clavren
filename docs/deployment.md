@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/03 04:54:17.627908 )
-[//]: # (+ Revised: 	2026/11/12 23:57:46.441619 )
+[//]: # (+ Revised: 	2026/11/14 00:38:46.097785 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Deployment
@@ -452,7 +452,7 @@ HTTPS-only.
 | Restart | `sudo systemctl restart clavren` |
 | Back up now | `sudo systemctl start clavren-backup` |
 | Check for an update now | **Check now** on the Overview, or `sudo systemctl start clavren-update-check` |
-| See recent backups | `journalctl -u clavren-backup -n 20`, or the dashboard's Backups page |
+| See recent backups | `journalctl -u clavren-backup -n 20`, or the dashboard's Overview (**Backups**) |
 | List admins | `clavren-admin list-admins` |
 | Add an admin | `clavren-new-admin` (nothing stays on screen), or `clavren-admin create-admin NAME` |
 | Forgotten password or lost phone | `clavren-admin reset-password NAME` (new password, new authenticator, new recovery codes) |
@@ -564,6 +564,7 @@ All settings live in `/etc/clavren/clavren.env`. After changing it, run
 | `CLAVREN_TURNSTILE_SITE_KEY` | (none) | The licence application form's [Cloudflare Turnstile](#the-application-forms-human-check) site key. Set both or neither |
 | `CLAVREN_TURNSTILE_SECRET` | (none) | Its secret key |
 | `CLAVREN_UPDATE_SOURCE` | GitHub's latest release of `Ran-n/clavren` | Where to look for a new release (any https:// address that answers in GitHub's release format, such as Codeberg's `/api/v1/repos/Ran-n/clavren/releases/latest`), or `off`: no checks and no Update button |
+| `CLAVREN_UPDATE_STATUS` | `/var/lib/clavren-update/status.json` | Where the root updater reports how an update went, read by the server. Leave it alone: its folder must be one only root can write |
 
 **Another backup folder**: change `CLAVREN_BACKUP_DIR`, and change both `/mnt/clavren-backups`
 paths in `/etc/systemd/system/clavren-backup.service` to match (the install script does this for

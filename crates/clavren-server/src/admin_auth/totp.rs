@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:35.493531
-//+ Revised: 	2026/11/09 22:30:54.407163
+//+ Revised: 	2026/11/14 17:13:09.143652
 // -----------------------------------------------------------------------------
 
 //! Authenticator-app codes (TOTP, RFC 6238): SHA-1, 6 digits, 30-second steps, one step of
@@ -134,6 +134,13 @@ mod tests {
         for code in ["", "12345", "1234567", "12a456", " 123456"] {
             assert_eq!(matching_step(&secret, "ran", code, at), None, "{code:?} accepted");
         }
+    }
+
+    /// A stored secret too short to make codes from is logged and matches nothing.
+    #[test]
+    fn a_secret_that_cannot_make_codes_accepts_none() {
+        let at = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+        assert_eq!(matching_step(&[7; 4], "ran", "123456", at), None);
     }
 
     #[test]

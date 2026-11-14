@@ -1,12 +1,15 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.926414
-//+ Revised: 	2026/11/12 23:57:43.609154
+//+ Revised: 	2026/11/14 18:09:54.724971
 // -----------------------------------------------------------------------------
 
 //! A licence server in memory: answers the public API as Clavren does, with tokens signed by a
 //! test key, and can be told to refuse, fail or go offline. It takes licence applications too,
 //! and answers how one went as the test decides.
+
+mod applications;
+mod scripted;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -20,6 +23,9 @@ use clavren_protocol::token::{self, Claims, TrustedKeys};
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use serde_json::{Value, json};
 use uuid::Uuid;
+
+#[allow(unused_imports)] // not every test binary scripts an answer
+pub use scripted::Scripted;
 
 pub const PRODUCT: &str = "avalio-lite";
 /// The ID and secret of every application the server takes.
@@ -66,6 +72,8 @@ pub struct FakeServer {
     /// Added to the unsigned `server_time` of every answer (something in between changing it).
     pub server_time_shift: Mutex<chrono::Duration>,
     pub decision: Mutex<Decision>,
+    /// What the paths ending in a suffix answer instead of the usual: see [`Self::script`].
+    scripted: Mutex<Vec<(&'static str, Scripted)>>,
     /// The applications sent: their bodies.
     pub applications: Mutex<Vec<Value>>,
     /// The keys activated, in order.
@@ -85,6 +93,7 @@ impl FakeServer {
             test_licence: Mutex::new(false),
             server_time_shift: Mutex::new(chrono::Duration::zero()),
             decision: Mutex::new(Decision::Pending),
+            scripted: Mutex::new(Vec::new()),
             applications: Mutex::new(Vec::new()),
             activated_keys: Mutex::new(Vec::new()),
             signing: SigningKey::from_bytes(&[42; 32]),
@@ -99,6 +108,12 @@ impl FakeServer {
 
     pub fn set_mode(&self, mode: Mode) {
         *self.mode.lock().unwrap() = mode;
+    }
+
+    /// From now on, the paths ending in `suffix` answer `scripted`; the others stay as they are.
+    #[allow(dead_code)] // not every test binary scripts an answer
+    pub fn script(&self, suffix: &'static str, scripted: Scripted) {
+        self.scripted.lock().unwrap().push((suffix, scripted));
     }
 
     fn token(&self, device: &[u8; 32]) -> Value {
@@ -132,35 +147,6 @@ impl FakeServer {
     }
 }
 
-impl FakeServer {
-    fn application_status(&self, now: DateTime<Utc>) -> Answer {
-        let decision = self.decision.lock().unwrap().clone();
-        let (status, key, reason) = match decision {
-            Decision::Unknown => {
-                return answer(404, json!({ "error": "application_unknown", "message": "no", "server_time": now }));
-            }
-            Decision::Pending => ("pending", None, None),
-            Decision::Approved => ("approved", Some(APPROVED_KEY), None),
-            Decision::Rejected(reason) => ("rejected", None, reason),
-            Decision::Withdrawn => ("withdrawn", None, None),
-        };
-        answer(
-            200,
-            json!({
-                "application": APPLICATION,
-                "product": PRODUCT,
-                "status": status,
-                "created_at": now,
-                "decided_at": if status == "pending" { Value::Null } else { json!(now) },
-                "reason": reason,
-                "key": key,
-                "licence_expires_at": null,
-                "server_time": now,
-            }),
-        )
-    }
-}
-
 fn answer(status: u16, body: Value) -> Answer {
     Answer { status, body, retry_after: if status == 429 { Some(120) } else { None } }
 }
@@ -180,6 +166,10 @@ impl Transport for FakeServer {
             }
             Mode::Garbage => return Ok(answer(200, Value::Null)),
             Mode::Normal | Mode::UntrustedToken => {}
+        }
+        let scripted = self.scripted.lock().unwrap().iter().find(|(suffix, _)| path.ends_with(suffix)).cloned();
+        if let Some((_, scripted)) = scripted {
+            return scripted.answer();
         }
         if path == "/api/v1/applications" {
             assert_eq!((&body["product"], &body["source"]), (&json!(PRODUCT), &json!("app")));

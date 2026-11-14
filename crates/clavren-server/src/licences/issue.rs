@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:15.199013
-//+ Revised: 	2026/11/12 23:57:44.721394
+//+ Revised: 	2026/11/14 11:42:03.226060
 // -----------------------------------------------------------------------------
 
 //! Issuing licences: up to 1,000 keys for one product and (optionally) one customer, existing or
@@ -12,13 +12,13 @@
 use chrono::{DateTime, Utc};
 use clavren_protocol::licence_key::LicenceKey;
 use serde::Deserialize;
-use serde_json::json;
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-use super::repository::{self, NewLicences};
+use super::batch::{Batch, insert_audited};
 use super::{MAX_BATCH, MAX_NOTES, secrets};
-use crate::audit::{self, Actor};
+use crate::audit::Actor;
+use crate::crypto::random::RandomError;
 use crate::customers::{self, Customer, CustomerChoice};
 use crate::http::AppState;
 use crate::http::error::ApiError;
@@ -26,9 +26,6 @@ use crate::http::fields;
 use crate::http::patch::Patch;
 use crate::money::Price;
 use crate::products::{self, Product};
-
-/// How many times a batch is retried for keys whose hash already existed.
-const KEY_ATTEMPTS: usize = 3;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -68,6 +65,10 @@ pub async fn issue(state: &AppState, actor: &Actor, request: IssueRequest) -> Re
     Ok(issued)
 }
 
+/// Where new keys come from: the operating system's random numbers, except in tests of what
+/// happens when a key already exists.
+pub type KeySource<'a> = &'a mut (dyn FnMut() -> Result<LicenceKey, RandomError> + Send);
+
 /// [`issue`], in the caller's transaction (approving a licence application issues its licence and
 /// records the approval together).
 pub async fn issue_in(
@@ -75,6 +76,17 @@ pub async fn issue_in(
     connection: &mut PgConnection,
     actor: &Actor,
     request: IssueRequest,
+) -> Result<Issued, ApiError> {
+    issue_with_keys(state, connection, actor, request, &mut secrets::generate).await
+}
+
+/// [`issue_in`], with the keys from `generate`.
+pub async fn issue_with_keys(
+    state: &AppState,
+    connection: &mut PgConnection,
+    actor: &Actor,
+    request: IssueRequest,
+    generate: KeySource<'_>,
 ) -> Result<Issued, ApiError> {
     if !(1..=MAX_BATCH).contains(&request.quantity) {
         return Err(ApiError::invalid_request(format!("quantity must be between 1 and {MAX_BATCH}")));
@@ -110,7 +122,7 @@ pub async fn issue_in(
         is_test: request.test,
         price: price.as_ref(),
     };
-    let keys = insert_audited(state, connection, actor, &new, request.quantity).await?;
+    let keys = insert_audited(state, connection, actor, &new, request.quantity, generate).await?;
     Ok(Issued { keys, product, customer })
 }
 
@@ -122,89 +134,6 @@ pub async fn issue_test_licence(
     product: &Product,
 ) -> Result<(Uuid, LicenceKey), ApiError> {
     let new = Batch { product, customer: None, expires_at: None, notes: None, is_test: true, price: None };
-    let mut keys = insert_audited(state, connection, actor, &new, 1).await?;
+    let mut keys = insert_audited(state, connection, actor, &new, 1, &mut secrets::generate).await?;
     keys.pop().ok_or_else(|| ApiError::internal("the test licence wasn't issued"))
-}
-
-struct Batch<'a> {
-    product: &'a Product,
-    customer: Option<&'a Customer>,
-    expires_at: Option<DateTime<Utc>>,
-    notes: Option<&'a str>,
-    is_test: bool,
-    price: Option<&'a Price>,
-}
-
-/// [`insert_licences`], with one `licence.issued` audit entry per licence.
-async fn insert_audited(
-    state: &AppState,
-    connection: &mut PgConnection,
-    actor: &Actor,
-    batch: &Batch<'_>,
-    quantity: usize,
-) -> Result<Vec<(Uuid, LicenceKey)>, ApiError> {
-    let keys = insert_licences(state, connection, actor, batch, quantity).await?;
-    let ids: Vec<Uuid> = keys.iter().map(|(id, _)| *id).collect();
-    let metadata = json!({
-        "product": batch.product.id,
-        "customer": batch.customer.map(|customer| customer.id),
-        "test": batch.is_test,
-    });
-    audit::record_for_each(&mut *connection, actor, "licence.issued", "licence", &ids, metadata).await?;
-    Ok(keys)
-}
-
-async fn insert_licences(
-    state: &AppState,
-    connection: &mut PgConnection,
-    actor: &Actor,
-    batch: &Batch<'_>,
-    quantity: usize,
-) -> Result<Vec<(Uuid, LicenceKey)>, ApiError> {
-    let mut pending: Vec<Uuid> = (0..quantity).map(|_| Uuid::now_v7()).collect();
-    let mut issued = Vec::with_capacity(quantity);
-    for _ in 0..KEY_ATTEMPTS {
-        let keys: Vec<LicenceKey> =
-            pending.iter().map(|_| secrets::generate()).collect::<Result<_, _>>().map_err(ApiError::internal)?;
-        let hashes: Vec<Vec<u8>> = keys.iter().map(|key| secrets::lookup_hash(&state.keys, key).to_vec()).collect();
-        let new = NewLicences {
-            ids: &pending,
-            key_hashes: &hashes,
-            product_id: batch.product.id,
-            customer_id: batch.customer.map(|customer| customer.id),
-            created_at: actor.at,
-            expires_at: batch.expires_at,
-            internal_notes: batch.notes,
-            is_test: batch.is_test,
-            price: batch.price,
-        };
-        let inserted = repository::insert(&mut *connection, &new).await?;
-        let (done, retry): (Vec<_>, Vec<_>) = pending.into_iter().zip(keys).partition(|(id, _)| inserted.contains(id));
-        store_keys(state, connection, batch.product.id, &done).await?;
-        issued.extend(done);
-        if retry.is_empty() {
-            return Ok(issued);
-        }
-        tracing::warn!(count = retry.len(), "generated keys collided with existing ones; generating them again");
-        pending = retry.into_iter().map(|(id, _)| id).collect();
-    }
-    Err(ApiError::internal("licence keys kept colliding with existing ones"))
-}
-
-async fn store_keys(
-    state: &AppState,
-    connection: &mut PgConnection,
-    product_id: Uuid,
-    keys: &[(Uuid, LicenceKey)],
-) -> Result<(), ApiError> {
-    let mut ids = Vec::with_capacity(keys.len());
-    let (mut ciphertexts, mut nonces) = (Vec::with_capacity(keys.len()), Vec::with_capacity(keys.len()));
-    for (id, key) in keys {
-        let sealed = secrets::seal(&state.keys, key, *id, product_id).map_err(ApiError::internal)?;
-        ids.push(*id);
-        ciphertexts.push(sealed.ciphertext);
-        nonces.push(sealed.nonce.to_vec());
-    }
-    repository::insert_secrets(connection, &ids, &ciphertexts, &nonces, secrets::ENCRYPTION_VERSION).await?;
-    Ok(())
 }

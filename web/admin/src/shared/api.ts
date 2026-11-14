@@ -1,7 +1,7 @@
 // The admin API client: JSON in and out, the session's CSRF token on every change, and one error
 // type for everything that can go wrong, network included.
 
-import type { Session } from "./types";
+import type { Page, Session } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -129,6 +129,45 @@ export async function api<T>(method: Method, path: string, body?: unknown): Prom
 
 export function get<T>(path: string): Promise<T> {
   return api<T>("GET", path);
+}
+
+/** The most rows a list answers at once. */
+const LARGEST_PAGE = 100;
+
+/**
+ * Every row of the list at `path` (which holds its filters), page after page. Stops once more
+ * than `atMost` rows came, for callers that refuse more than that anyway.
+ */
+export async function getAll<T>(path: string, atMost = Number.POSITIVE_INFINITY): Promise<T[]> {
+  const rows: T[] = [];
+  let after: string | null = null;
+  do {
+    const cursor: string = after ? `&after=${encodeURIComponent(after)}` : "";
+    const page: Page<T> = await get(`${path}${path.includes("?") ? "&" : "?"}limit=${LARGEST_PAGE}${cursor}`);
+    rows.push(...page.data);
+    after = page.next_cursor;
+  } while (after && rows.length <= atMost);
+  return rows;
+}
+
+const turns = new Map<string, Promise<unknown>>();
+
+/**
+ * Runs `change` once every earlier change to the same `record` has been answered. Each answer is
+ * the whole record and replaces the one on screen, so two changes sent together could otherwise
+ * be answered out of order and leave the older record showing.
+ */
+export function inTurn<T>(record: string, change: () => Promise<T>): Promise<T> {
+  const mine = (turns.get(record) ?? Promise.resolve()).then(change, change);
+  const settled = mine.then(
+    () => undefined,
+    () => undefined,
+  );
+  turns.set(record, settled);
+  void settled.then(() => {
+    if (turns.get(record) === settled) turns.delete(record);
+  });
+  return mine;
 }
 
 /** POSTs `body` and saves the answer as a file named `filename`. */

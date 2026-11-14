@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/03 04:54:17.447469 )
-[//]: # (+ Revised: 	2026/11/12 23:57:46.367779 )
+[//]: # (+ Revised: 	2026/11/14 00:38:46.013379 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Client integration
@@ -21,7 +21,10 @@ protocol in [api.md](api.md#application-api).
   `APPDATA` isn't set), protected with Windows DPAPI for the current user. A copied file is
   useless on another computer or account. Every write goes to a temporary file of its own and
   replaces the old one whole, under a lock (`licence.lock`), so two copies of the application
-  never leave half a file.
+  never leave half a file. A copy never saves over what another copy saved since it last read
+  the file: it takes what the other saved instead, and whatever it was doing answers
+  `StoreError::ChangedElsewhere` (trying again works), so a copy left at the key prompt can't
+  undo the licence another copy just activated.
 - **Works offline** for its product's offline days after its last successful check (30 unless
   the administrator set 2 to 3,650 on the Products page): the cached token is signed by
   Clavren and verified locally against the public keys the application embeds.
@@ -148,6 +151,7 @@ use clavren_client::{Applicant, Applied};
 let applicant = Applicant { name, email, message: Some(message) };
 match client.apply(&applicant)? {
     Applied::Sent => { /* "Sent. The licence is activated here once it is approved." */ }
+    // also when this computer already sent one: set it aside (dismiss_application) to apply again
     Applied::AlreadyPending => { /* "This address already has an application waiting." */ }
     Applied::InvalidDetails => { /* "Check the name and email." */ }
     Applied::ProductUnavailable => { /* "Applications are closed." */ }
@@ -240,8 +244,10 @@ on Windows, the keychain on macOS, the Secret Service on Linux). On Windows, use
 CurrentUser scope with `clavren:<product code>` as the entropy, as the crate does, so that one
 product's file can't stand in for another's. Replace the file whole on every save: write a
 temporary file with a random name, then rename it over the old one. When several copies of the
-application can run at once, also hold a lock while saving. A single-instance application
-doesn't need one.
+application can run at once, also hold a lock while saving, and under that lock read the file
+again first: when it isn't what this copy last read or saved, another copy changed it, so load
+that instead of saving over it (otherwise a copy left at the key prompt saves its empty state
+over the licence another copy just activated). A single-instance application needs neither.
 
 | Field | What it is |
 |-------|------------|

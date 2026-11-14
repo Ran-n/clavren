@@ -1,9 +1,9 @@
 // The application calls the page shares: the list address for the current filters, and the IDs
 // of every application matching a filter (for bulk actions on "all that match").
 
-import { ApiError, get, query } from "../shared/api";
+import { ApiError, getAll, query } from "../shared/api";
 import { formatNumber } from "../shared/format";
-import type { Id, Licence, Page, Product, Related } from "../shared/types";
+import type { Id, Licence, Product, Related } from "../shared/types";
 
 export const MAX_BATCH = 1000;
 export const APPLICATION_EXPAND = "product,licence.customer";
@@ -25,7 +25,7 @@ export type Application = {
   key_collected_at: string | null;
 };
 
-export type ApplicationFilters = { state?: string; product?: string; q?: string };
+type ApplicationFilters = { state?: string; product?: string; q?: string };
 
 function filterQuery(filters: ApplicationFilters) {
   return { state: filters.state === "all" ? undefined : filters.state, product: filters.product, q: filters.q?.trim() };
@@ -37,13 +37,8 @@ export function listPath(filters: ApplicationFilters): string {
 
 /** Every application ID the filter matches, up to MAX_BATCH; more is an error the admin can act on. */
 export async function matchingIds(filters: ApplicationFilters): Promise<string[]> {
-  const ids: string[] = [];
-  let after: string | null = null;
-  do {
-    const page: Page<Application> = await get(`/applications${query({ ...filterQuery(filters), limit: 100, after })}`);
-    ids.push(...page.data.map((application) => application.id));
-    after = page.next_cursor;
-  } while (after && ids.length <= MAX_BATCH);
+  const matching = await getAll<Application>(`/applications${query(filterQuery(filters))}`, MAX_BATCH);
+  const ids = matching.map((application) => application.id);
   if (ids.length > MAX_BATCH) {
     throw new ApiError("invalid_request", `more than ${formatNumber(MAX_BATCH)} applications match: narrow the filter, or work in parts`, 400);
   }

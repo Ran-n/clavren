@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.910282
-//+ Revised: 	2026/11/09 22:30:56.032679
+//+ Revised: 	2026/11/14 17:13:09.432888
 // -----------------------------------------------------------------------------
 
 //! `/api/admin/customers` against a real database: creating, searching, editing and deleting
@@ -51,6 +51,20 @@ async fn a_customer_is_created_read_and_edited(pool: PgPool) {
     assert_eq!(edited.status, StatusCode::OK);
     assert_eq!((edited.body["email"].clone(), edited.body["notes"].as_str()), (Value::Null, Some("Paid by transfer")));
     assert_eq!(edited.body["name"], "Ana López");
+}
+
+#[sqlx::test(migrator = "clavren::database::MIGRATOR")]
+async fn an_edit_that_changes_nothing_leaves_no_trace(pool: PgPool) {
+    let admin = Admin::new(pool).await;
+    let customer = create(&admin, json!({ "name": "Ana López", "email": "ana@example.com" })).await;
+    let same = json!({ "name": " Ana López ", "email": "ana@example.com" });
+    let edited = admin.call(Method::PATCH, &path_of(&customer), Some(same)).await;
+    assert_eq!((edited.status, &edited.body), (StatusCode::OK, &customer), "as it was, updated_at included");
+    let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_logs WHERE action = 'customer.updated'")
+        .fetch_one(admin.pool())
+        .await
+        .unwrap();
+    assert_eq!(audited, 0);
 }
 
 #[sqlx::test(migrator = "clavren::database::MIGRATOR")]

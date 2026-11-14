@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/11 16:32:48.902546
-//+ Revised: 	2026/11/11 17:53:39.444323
+//+ Revised: 	2026/11/14 00:38:42.988967
 // -----------------------------------------------------------------------------
 
 //! Database access for licence applications.
@@ -159,11 +159,15 @@ pub async fn mark_collected(executor: impl PgExecutor<'_>, id: Uuid, at: DateTim
     Ok(updated.rows_affected() == 1)
 }
 
-/// Deletes the applications whose licence belongs to `customer`: deleting a customer erases the
-/// name and email they applied with too.
+/// Deletes the applications whose licence belongs to `customer`, and the ones sent from their
+/// email address (a waiting or rejected one, or an approved one whose licence was deleted since,
+/// has no licence to find it by): deleting a customer erases the name and email they applied with
+/// too.
 pub async fn delete_of_customer(executor: impl PgExecutor<'_>, customer: Uuid) -> Result<u64, sqlx::Error> {
     let deleted = sqlx::query(
-        "DELETE FROM license_applications WHERE license_id IN (SELECT id FROM licenses WHERE customer_id = $1)",
+        "DELETE FROM license_applications
+         WHERE license_id IN (SELECT id FROM licenses WHERE customer_id = $1)
+            OR lower(email) = (SELECT lower(email) FROM customers WHERE id = $1)",
     )
     .bind(customer)
     .execute(executor)

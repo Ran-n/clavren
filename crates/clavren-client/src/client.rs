@@ -1,23 +1,23 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:10.584826
-//+ Revised: 	2026/11/12 23:57:43.253979
+//+ Revised: 	2026/11/14 11:48:57.790856
 // -----------------------------------------------------------------------------
 
 //! The licence of one application on this computer: its offline status, and when to check online.
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use clavren_protocol::check::device_hash;
 use clavren_protocol::encoding;
-use clavren_protocol::token::{self, Claims, TrustedKeys};
+use clavren_protocol::token::{self, Claims};
 use ed25519_dalek::SigningKey;
-use zeroize::Zeroize;
 
 use crate::clock::Clock;
+use crate::config::Config;
 use crate::outcome::Outcome;
+use crate::persist::{Seen, Stored, parse_state};
 use crate::state::{Application, Refusal, State};
 use crate::store::{SecretStore, StoreError};
 use crate::transport::Transport;
@@ -26,43 +26,6 @@ use crate::transport::Transport;
 /// small steps count together) since the last check, counts as set back (more than normal
 /// adjustments), so the cached token isn't trusted until an online check.
 pub const ROLLBACK_TOLERANCE: TimeDelta = TimeDelta::hours(1);
-/// [`Client::save_time_seen`] saves the time seen once it moved this far: a few minutes are
-/// nothing next to [`ROLLBACK_TOLERANCE`].
-const SEEN_SAVE_STEP: TimeDelta = TimeDelta::minutes(10);
-
-pub struct Config {
-    /// The product code, as in Clavren.
-    pub product: String,
-    /// The token-signing public keys this build trusts (`clavren-admin show-public-key`).
-    pub trusted_keys: TrustedKeys,
-    pub app_version: String,
-    /// Shown to the administrator, e.g. the computer's name.
-    pub device_name: String,
-    pub platform: String,
-    /// Check online once this long has passed since the last successful check.
-    pub check_interval: Duration,
-    /// While a licence application waits, ask how it went this often.
-    pub application_check_interval: Duration,
-}
-
-impl Config {
-    /// Checks daily (every 15 minutes while an application waits); names the device after the
-    /// computer.
-    pub fn new(product: &str, trusted_keys: TrustedKeys, app_version: &str) -> Self {
-        Self {
-            product: product.to_string(),
-            trusted_keys,
-            app_version: app_version.to_string(),
-            device_name: std::env::var("COMPUTERNAME")
-                .or_else(|_| std::env::var("HOSTNAME"))
-                .unwrap_or_else(|_| "computer".into()),
-            platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
-            check_interval: Duration::from_secs(24 * 3600),
-            application_check_interval: Duration::from_secs(15 * 60),
-        }
-    }
-}
-
 pub struct Client {
     pub(crate) config: Config,
     pub(crate) store: Box<dyn SecretStore>,
@@ -73,7 +36,9 @@ pub struct Client {
     /// when it is missing, damaged or another user's): then nothing is saved over it.
     pub(crate) unreadable: Option<String>,
     /// The latest time seen and the total set back, as they were last saved.
-    saved_seen: Mutex<Seen>,
+    pub(crate) saved_seen: Mutex<Seen>,
+    /// What the store held when this program last loaded or saved it.
+    pub(crate) stored: Mutex<Stored>,
 }
 
 /// `value` percent-encoded for a query string: everything but letters, digits and `-._~`.
@@ -99,28 +64,22 @@ impl Client {
         clock: Box<dyn Clock>,
     ) -> Self {
         let mut unreadable = None;
-        let state = match store.load() {
-            Ok(Some(mut bytes)) => {
-                let state = serde_json::from_slice(&bytes).unwrap_or_else(|error| {
-                    log::warn!("the saved licence state is damaged ({error}); starting over");
-                    State::default()
-                });
-                bytes.zeroize();
-                state
-            }
-            Ok(None) => State::default(),
+        let (state, stored) = match store.load() {
+            Ok(Some(bytes)) => (parse_state(&bytes), Stored::Known(Some(bytes))),
+            Ok(None) => (State::default(), Stored::Known(None)),
             Err(error @ StoreError::Io { .. }) => {
                 log::error!("the saved licence state can't be read ({error}); it won't be overwritten");
                 unreadable = Some(error.to_string());
-                State::default()
+                (State::default(), Stored::Unknown)
             }
             Err(error) => {
                 log::warn!("the saved licence state can't be read ({error}); starting over");
-                State::default()
+                (State::default(), Stored::Unknown)
             }
         };
         let saved_seen = Mutex::new(Seen::of(&state));
-        Self { config, store, transport, clock, state: Mutex::new(state), unreadable, saved_seen }
+        let stored = Mutex::new(stored);
+        Self { config, store, transport, clock, state: Mutex::new(state), unreadable, saved_seen, stored }
     }
 
     /// The address of this product's "how to get a key" page on the licence server,
@@ -146,21 +105,7 @@ impl Client {
         outcome
     }
 
-    /// Saves the latest time seen once it moved [`SEEN_SAVE_STEP`] past the saved one, and any
-    /// step back of the clock, so a clock set back between runs is noticed too. The background
-    /// checker calls it every few minutes and when it stops; an application without one calls it
-    /// off the UI thread.
-    pub fn save_time_seen(&self) -> Result<(), StoreError> {
-        let state = self.lock();
-        let saved = *self.saved_seen.lock().unwrap_or_else(PoisonError::into_inner);
-        let moved = match (state.latest_seen, saved.latest) {
-            (Some(latest), Some(saved)) => latest - saved >= SEEN_SAVE_STEP,
-            (latest, saved) => latest.is_some() && saved.is_none(),
-        };
-        if moved || state.rewound_seconds != saved.rewound_seconds { self.save(&state) } else { Ok(()) }
-    }
-
-    fn offline_outcome(&self, state: &State, now: DateTime<Utc>) -> Outcome {
+    pub(crate) fn offline_outcome(&self, state: &State, now: DateTime<Utc>) -> Outcome {
         if let Some(refusal) = state.refusal {
             return refusal_outcome(refusal);
         }
@@ -214,71 +159,8 @@ impl Client {
         Ok(claims)
     }
 
-    /// Whether an online check is due: the last successful one is older than the interval, or
-    /// there is nothing valid to run on, or a waiting licence application is due to be asked
-    /// about. A revoked licence is never checked again.
-    pub fn needs_check(&self) -> bool {
-        self.time_until_due().is_zero()
-    }
-
-    /// How long until the next online check is due (zero when it is due now).
-    pub fn time_until_due(&self) -> Duration {
-        let now = self.clock.now();
-        let state = self.lock();
-        if state.activation.is_none() {
-            return match &state.application {
-                Some(Application::Pending { last_check: Some(last), .. }) => {
-                    until(*last, self.config.application_check_interval, now)
-                }
-                Some(Application::Pending { last_check: None, .. }) => Duration::ZERO,
-                _ => Duration::MAX,
-            };
-        }
-        let licensed = self.offline_outcome(&state, now).is_licensed();
-        match state.last_check {
-            // a refusal is an answer too: ask again at the usual pace (an expiry may be extended)
-            Some(last) if licensed || state.refusal.is_some() => until(last, self.config.check_interval, now),
-            _ => Duration::ZERO,
-        }
-    }
-
     pub(crate) fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    pub(crate) fn save(&self, state: &State) -> Result<(), StoreError> {
-        if let Some(reason) = &self.unreadable {
-            return Err(StoreError::Unreadable(reason.clone()));
-        }
-        let mut bytes = serde_json::to_vec(state).map_err(|_| StoreError::Corrupt)?;
-        let saved = self.store.save(&bytes);
-        bytes.zeroize();
-        if saved.is_ok() {
-            *self.saved_seen.lock().unwrap_or_else(PoisonError::into_inner) = Seen::of(state);
-        }
-        saved
-    }
-}
-
-/// How long from `now` until `interval` has passed since `last` (zero when it has).
-fn until(last: DateTime<Utc>, interval: Duration, now: DateTime<Utc>) -> Duration {
-    // an interval too long for the calendar means "not again"
-    let Some(due) = TimeDelta::from_std(interval).ok().and_then(|interval| last.checked_add_signed(interval)) else {
-        return Duration::MAX;
-    };
-    (due - now).to_std().unwrap_or(Duration::ZERO)
-}
-
-/// What [`Client::save_time_seen`] compares with the state to decide whether to save.
-#[derive(Clone, Copy)]
-struct Seen {
-    latest: Option<DateTime<Utc>>,
-    rewound_seconds: i64,
-}
-
-impl Seen {
-    fn of(state: &State) -> Self {
-        Self { latest: state.latest_seen, rewound_seconds: state.rewound_seconds }
     }
 }
 

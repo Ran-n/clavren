@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:36.454128
-//+ Revised: 	2026/11/03 04:54:22.981761
+//+ Revised: 	2026/11/14 00:38:45.447858
 // -----------------------------------------------------------------------------
 
 //! Creating admins the way a person would: through the real CLI commands, with a scripted
@@ -38,13 +38,22 @@ pub struct ScriptedTerminal {
     answers: VecDeque<Answer>,
     pub output: String,
     pub prompts: Vec<String>,
+    /// Stdout closed: what must be read (`show`) can't be written.
+    pub output_closed: bool,
     username: String,
     clock: Arc<ManualClock>,
 }
 
 impl ScriptedTerminal {
     pub fn new(username: &str, clock: Arc<ManualClock>, answers: Vec<Answer>) -> Self {
-        Self { answers: answers.into(), output: String::new(), prompts: Vec::new(), username: username.into(), clock }
+        Self {
+            answers: answers.into(),
+            output: String::new(),
+            prompts: Vec::new(),
+            output_closed: false,
+            username: username.into(),
+            clock,
+        }
     }
 
     /// The Base32 secret the CLI printed for typing in by hand.
@@ -82,6 +91,14 @@ impl Terminal for ScriptedTerminal {
     fn say(&mut self, text: &str) {
         self.output.push_str(text);
         self.output.push('\n');
+    }
+
+    fn show(&mut self, text: &str) -> io::Result<()> {
+        if self.output_closed {
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "stdout is closed"));
+        }
+        self.say(text);
+        Ok(())
     }
 
     fn ask(&mut self, prompt: &str) -> io::Result<String> {

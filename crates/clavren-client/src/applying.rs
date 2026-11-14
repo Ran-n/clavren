@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/11 16:32:48.289637
-//+ Revised: 	2026/11/11 17:53:42.650663
+//+ Revised: 	2026/11/14 00:38:40.943204
 // -----------------------------------------------------------------------------
 
 //! Applying for a licence from inside the application: send the applicant's name, address and an
@@ -32,13 +32,19 @@ pub struct Applicant {
 impl Client {
     /// Sends a licence application for this product. Once sent, [`Self::status`] says
     /// [`Outcome::ApplicationPending`], and [`Self::check`] (so the background checker) asks how
-    /// it went every 15 minutes. Sending one sets aside the licence this computer had, if it was
-    /// locked (revoked, expired or withdrawn). `Err` when the server took the application but its
+    /// it went every 15 minutes. With one already waiting from this computer, nothing is sent
+    /// ([`Applied::AlreadyPending`]): set it aside first to apply again. Sending one sets aside the
+    /// licence this computer had (one that is locked or needs a check; a valid one sends nothing).
+    /// `Err` when the server took the application but its
     /// secret couldn't be saved: sending again then answers [`Applied::AlreadyPending`] until the
     /// administrator decides, since only the lost secret could ask how it went.
     pub fn apply(&self, applicant: &Applicant) -> Result<Applied, StoreError> {
         if self.status().is_licensed() {
             return Ok(Applied::AlreadyLicensed);
+        }
+        // a second one would replace the first one's secret, and its approval would never arrive
+        if self.pending().is_some() {
+            return Ok(Applied::AlreadyPending);
         }
         let body = json!({
             "product": self.config.product,
@@ -73,12 +79,11 @@ impl Client {
         let mut state = self.lock();
         let mut sent = state.clone();
         sent.application = Some(Application::Pending { id: application, secret, last_check: None });
-        // a locked licence is over: the application replaces it
+        // the licence this computer had isn't valid (checked above): the application replaces it
         sent.refusal = None;
         sent.activation = None;
         sent.token = None;
-        self.save(&sent)?;
-        *state = sent;
+        self.commit(&mut state, sent)?;
         log::info!("licence application sent");
         Ok(Applied::Sent)
     }
@@ -128,9 +133,7 @@ impl Client {
         }
         let mut dismissed = state.clone();
         dismissed.application = None;
-        self.save(&dismissed)?;
-        *state = dismissed;
-        Ok(())
+        self.commit(&mut state, dismissed)
     }
 
     /// The waiting application's ID and secret.
@@ -186,8 +189,7 @@ impl Client {
             Some(application) if current => change(application),
             _ => return Err(Temporary::Server("the application changed while asking about it".into())),
         }
-        self.save(&updated)?;
-        *state = updated;
+        self.commit(&mut state, updated)?;
         Ok(())
     }
 }

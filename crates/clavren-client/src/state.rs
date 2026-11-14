@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:11.617928
-//+ Revised: 	2026/11/11 16:32:49.948771
+//+ Revised: 	2026/11/14 17:01:17.282442
 // -----------------------------------------------------------------------------
 
 //! What the client keeps between runs: the device key, the activation, the cached token, the
@@ -33,7 +33,7 @@ pub struct State {
     pub rewound_seconds: i64,
     /// Server time minus system-clock time at the last successful answer, in seconds. Tokens are
     /// judged by the server's time (the system clock plus this), so a clock set back before a
-    /// check doesn't stretch the token past its 30 days.
+    /// check doesn't stretch the token past its offline days.
     #[serde(default)]
     pub clock_offset_seconds: i64,
     pub last_check: Option<DateTime<Utc>>,
@@ -174,5 +174,7 @@ mod tests {
         for secret in ["secret-key", "secret-token", "secret-ask"] {
             assert!(!printed.contains(secret), "{printed}");
         }
+        let rejected = Application::Rejected { reason: Some("Only for schools".into()) };
+        assert!(format!("{rejected:?}").contains("Only for schools"), "a reason is no secret");
     }
 }

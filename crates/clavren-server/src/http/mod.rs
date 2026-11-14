@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 14:53:29.794899
-//+ Revised: 	2026/11/11 16:32:50.971210
+//+ Revised: 	2026/11/14 11:36:31.223762
 // -----------------------------------------------------------------------------
 
 //! The HTTP side: the router, its shared state and the layers every request goes through.
@@ -21,11 +21,12 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::{HeaderName, HeaderValue, Request, StatusCode, header};
+use axum::http::{HeaderName, HeaderValue, Request, header};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use sqlx::PgPool;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::set_header::SetResponseHeaderLayer;
-use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing::Span;
 
@@ -37,6 +38,7 @@ use crate::{
     activations, admin_auth, admin_preferences, applications, audit, backups, customers, dashboard, licences, overview,
     products, updates,
 };
+use error::ApiError;
 use rate_limit::{FailureLimiter, PublicLimits};
 
 /// A request that takes longer is answered with 408, so shutdown never waits on it for long.
@@ -106,13 +108,39 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(health::routes())
         .nest("/api/admin", admin_routes())
-        .nest("/api/v1", activations::public_routes::routes().merge(applications::public_routes()).layer(no_store()))
+        .nest("/api/v1", public_routes())
         .fallback(dashboard::serve)
         .with_state(state)
-        .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, REQUEST_TIMEOUT))
+        .layer(middleware::from_fn(|request, next| time_limited(REQUEST_TIMEOUT, request, next)))
         .layer(PropagateRequestIdLayer::new(request_id.clone()))
         .layer(TraceLayer::new_for_http().make_span_with(request_span))
         .layer(SetRequestIdLayer::new(request_id, MakeRequestUuid))
+}
+
+/// Answers 408 in the API's error shape when the rest of the stack takes longer than `limit`.
+async fn time_limited(limit: Duration, request: Request<Body>, next: Next) -> Response {
+    let path = request.uri().path().to_string();
+    match tokio::time::timeout(limit, next.run(request)).await {
+        Ok(response) => response,
+        Err(_) => {
+            tracing::warn!(%path, "request timed out");
+            ApiError::timed_out().into_response()
+        }
+    }
+}
+
+/// A known address asked with a method it doesn't take: 405 in the API's error shape, not axum's
+/// empty answer.
+async fn method_not_allowed() -> ApiError {
+    ApiError::method_not_allowed()
+}
+
+/// Everything under `/api/v1`: what applications and the application form use.
+fn public_routes() -> Router<AppState> {
+    activations::public_routes::routes()
+        .merge(applications::public_routes())
+        .method_not_allowed_fallback(method_not_allowed)
+        .layer(no_store())
 }
 
 /// Everything under `/api/admin`. No response may be cached anywhere: they hold CSRF tokens,
@@ -129,6 +157,7 @@ fn admin_routes() -> Router<AppState> {
         .merge(overview::routes())
         .merge(admin_preferences::routes())
         .merge(updates::routes())
+        .method_not_allowed_fallback(method_not_allowed)
         .layer(no_store())
 }
 
@@ -143,3 +172,6 @@ fn request_span(request: &Request<Body>) -> Span {
     let request_id = request.headers().get(REQUEST_ID_HEADER).and_then(|value| value.to_str().ok()).unwrap_or("-");
     tracing::info_span!("request", method = %request.method(), path = %request.uri().path(), request_id)
 }
+
+#[cfg(test)]
+mod tests;

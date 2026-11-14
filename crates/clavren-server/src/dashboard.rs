@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.251546
-//+ Revised: 	2026/11/11 16:32:50.802771
+//+ Revised: 	2026/11/14 17:13:09.036972
 // -----------------------------------------------------------------------------
 
 //! The admin dashboard and the public licence application form, embedded in the binary by
@@ -115,6 +115,12 @@ mod tests {
         assert_eq!(content_type("assets/index-3f2a.js"), "text/javascript; charset=utf-8");
         assert_eq!(content_type("assets/index-3f2a.css"), "text/css; charset=utf-8");
         assert_eq!(content_type("favicon.svg"), "image/svg+xml");
+        assert_eq!(content_type("icon-192.png"), "image/png");
+        assert_eq!(content_type("favicon.ico"), "image/x-icon");
+        assert_eq!(content_type("assets/inter.woff2"), "font/woff2");
+        assert_eq!(content_type("site.webmanifest"), "application/json");
+        assert_eq!(content_type("assets/data.json"), "application/json");
+        assert_eq!(content_type("robots.txt"), "text/plain; charset=utf-8");
         assert_eq!(content_type("README"), "application/octet-stream");
     }
 }

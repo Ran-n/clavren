@@ -9,21 +9,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ApiError, api, get, signedInAdmin } from "./api";
 import { describe } from "./errors";
-import { looksLikeKey } from "./keys";
-
-export type Theme = "system" | "light" | "dark";
-export type TableName = "licences" | "customers" | "products" | "activations" | "applications" | "audit" | "backups";
-export type TablePreferences = {
-  filters?: Record<string, string>;
-  search?: string;
-  order?: string;
-  page_size?: number;
-  columns?: string[];
-  /** The Issue panel (licences only): never its customer or notes. */
-  issue?: IssueDraft;
-};
-export type IssueDraft = { open: boolean; product?: string; quantity?: number; expires_at?: string };
-export type Preferences = { version: 1; theme: Theme; last_page?: string; tables: Partial<Record<TableName, TablePreferences>> };
+import { merged, noteChanges, nothingChanged, storable, type Changed } from "./preferenceChanges";
+import type { Preferences, TableName, TablePreferences } from "./preferenceTypes";
+import { applyTheme } from "./themeStorage";
 
 const SAVE_DELAY_MS = 400;
 
@@ -36,77 +24,6 @@ type PreferencesContext = {
 };
 
 const Context = createContext<PreferencesContext | null>(null);
-
-/** This browser's copy of the last theme, applied before the saved settings arrive. */
-const THEME_KEY = "clavren-theme";
-
-export function applyTheme(theme: Theme): void {
-  if (theme === "system") delete document.documentElement.dataset.theme;
-  else document.documentElement.dataset.theme = theme;
-  try {
-    localStorage.setItem(THEME_KEY, theme);
-  } catch {
-    // storage blocked: the theme still applies, from the saved settings, a moment later
-  }
-}
-
-/** The theme this browser used last, so the page doesn't flash another one while loading. */
-export function applyLastTheme(): void {
-  let last: string | null = null;
-  try {
-    last = localStorage.getItem(THEME_KEY);
-  } catch {
-    return; // storage blocked: the system theme until the saved settings arrive
-  }
-  if (last === "light" || last === "dark" || last === "system") applyTheme(last);
-}
-
-/** The parts of the settings a page changed since its last save. */
-type Changed = { theme: boolean; last_page: boolean; tables: Set<TableName> };
-
-const nothingChanged = (): Changed => ({ theme: false, last_page: false, tables: new Set() });
-
-/** What changed from `before` to `after`, added to `changed`; false when nothing did. */
-export function noteChanges(before: Preferences, after: Preferences, changed: Changed): boolean {
-  let any = false;
-  if (before.theme !== after.theme) changed.theme = any = true;
-  if (before.last_page !== after.last_page) changed.last_page = any = true;
-  const names = new Set([...Object.keys(before.tables), ...Object.keys(after.tables)] as TableName[]);
-  for (const name of names) {
-    if (JSON.stringify(before.tables[name]) !== JSON.stringify(after.tables[name])) {
-      changed.tables.add(name);
-      any = true;
-    }
-  }
-  return any;
-}
-
-/** `saved` with the parts `changed` taken from `local`. */
-export function merged(saved: Preferences, local: Preferences, changed: Changed): Preferences {
-  const tables: Preferences["tables"] = { ...(saved.tables ?? {}) };
-  for (const name of changed.tables) {
-    if (local.tables[name] === undefined) delete tables[name];
-    else tables[name] = local.tables[name];
-  }
-  return {
-    ...saved,
-    version: 1,
-    theme: changed.theme ? local.theme : saved.theme,
-    last_page: changed.last_page ? local.last_page : saved.last_page,
-    tables,
-  };
-}
-
-/** What may be stored: everything but values that could be a licence key. */
-export function storable(preferences: Preferences): Preferences {
-  const tables: Preferences["tables"] = {};
-  for (const [name, table] of Object.entries(preferences.tables) as [TableName, TablePreferences][]) {
-    const filters = Object.fromEntries(Object.entries(table.filters ?? {}).filter(([, value]) => value && !looksLikeKey(value)));
-    const search = table.search && !looksLikeKey(table.search) ? table.search : undefined;
-    tables[name] = { ...table, filters, search };
-  }
-  return { ...preferences, tables };
-}
 
 export function PreferencesProvider({ children, loading }: { children: ReactNode; loading: ReactNode }) {
   const [preferences, setPreferences] = useState<Preferences | null>(null);

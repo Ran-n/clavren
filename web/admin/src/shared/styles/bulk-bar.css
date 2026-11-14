@@ -1,0 +1,38 @@
+/* The bulk action bar above a table, and the bulk customer editor. */
+
+.bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 0.9rem;
+  /* The same height with buttons or with the last result, so the table below never moves. */
+  min-height: 3.4rem;
+  background: var(--color-primary-soft);
+  border-radius: var(--radius-small);
+}
+.bulk-bar--done {
+  background: var(--color-success-soft);
+}
+.bulk-bar__count {
+  font-weight: 600;
+}
+.bulk-bar .confirm-strip {
+  flex-basis: 100%;
+  margin: 0;
+}
+.bulk-edit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+.bulk-edit__customer {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+.bulk-edit__customer .combobox,
+.bulk-edit__customer .field {
+  margin-bottom: 0;
+}

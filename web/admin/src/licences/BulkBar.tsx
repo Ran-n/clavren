@@ -9,7 +9,7 @@ import { ConfirmStrip } from "../shared/components/ConfirmStrip";
 import { ErrorNotice } from "../shared/components/Notice";
 import { inUseWarning, plural } from "../shared/errors";
 import { fromDateInput } from "../shared/format";
-import type { Selection } from "../shared/hooks";
+import type { Selection } from "../shared/selection";
 import { CustomerEditor, PriceEditor, ValueEditor, type ValueField } from "./BulkEditors";
 import { csvName, filterBody, matchingIds, type LicenceChanges, type LicenceFilters } from "./licenceApi";
 
@@ -34,6 +34,8 @@ export function BulkBar({ selection, filters, onDone }: Props) {
   const [error, setError] = useState<unknown>(null);
   const [done, setDone] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<{ ids: string[]; counts: Deleted } | null>(null);
+  /** What is being fetched before anything shows: the count for the delete warning, or the CSV. */
+  const [working, setWorking] = useState<"delete" | "export" | null>(null);
   const count = selection.allMatching ? null : selection.ids.size;
   useEffect(() => {
     if (count !== 0) setDone(null); // a new selection replaces the last result
@@ -61,6 +63,7 @@ export function BulkBar({ selection, filters, onDone }: Props) {
   }
   async function startDelete() {
     setError(null);
+    setWorking("delete");
     try {
       const chosen = await ids();
       const counts = await api<Deleted>("POST", "/licences/bulk/delete", { ids: chosen, dry_run: true });
@@ -68,6 +71,8 @@ export function BulkBar({ selection, filters, onDone }: Props) {
       setMode("delete");
     } catch (failure) {
       setError(failure); // no warning with guessed counts
+    } finally {
+      setWorking(null);
     }
   }
   async function remove() {
@@ -77,12 +82,14 @@ export function BulkBar({ selection, filters, onDone }: Props) {
   }
   function exportCsv() {
     setError(null);
+    setWorking("export");
     // the server applies a filter by itself; rows unticked from it are left out by listing the rest
     const body = async () =>
       selection.allMatching && selection.excluded.size === 0 ? { filter: filterBody(filters) } : { ids: await ids() };
     body()
       .then((chosen) => download("/licences/export", chosen, csvName()))
-      .catch(setError);
+      .catch(setError)
+      .finally(() => setWorking(null));
   }
 
   // The result sits where the bar was, the same size, so ticking the next row doesn't move the table.
@@ -103,9 +110,9 @@ export function BulkBar({ selection, filters, onDone }: Props) {
           <Button size="small" onClick={() => setMode("notes")}>Edit notes</Button>
           <Button size="small" onClick={() => setMode("price")}>Edit price</Button>
           <Button size="small" onClick={() => setMode("reason")}>Edit reason</Button>
-          <Button size="small" onClick={exportCsv}>Export CSV</Button>
+          <Button size="small" busy={working === "export"} disabled={working !== null} onClick={exportCsv}>Export CSV</Button>
           <Button size="small" variant="danger" onClick={() => setMode("revoke")}>Revoke</Button>
-          <Button size="small" variant="danger" onClick={() => void startDelete()}>Delete</Button>
+          <Button size="small" variant="danger" busy={working === "delete"} disabled={working !== null} onClick={() => void startDelete()}>Delete</Button>
           <Button size="small" variant="quiet" onClick={selection.clear}>Clear selection</Button>
         </span>
       )}

@@ -1,0 +1,41 @@
+/* Form fields, cards and panels. */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.85rem;
+  max-width: 32rem;
+  position: relative;
+}
+.field--narrow {
+  max-width: 12rem;
+}
+.field--inline {
+  margin: 0;
+}
+.field__label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.field__help {
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.25rem;
+}
+.panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+.panel h2 {
+  margin-top: 0;
+}

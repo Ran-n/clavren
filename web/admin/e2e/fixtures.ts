@@ -101,4 +101,18 @@ export const test = base.extend<Fixtures>({
   },
 });
 
+export type SavedSettings = { theme: string; last_page?: string; tables: Record<string, { filters?: Record<string, string> } | undefined> };
+
+/** Waits until the server holds what the dashboard shows (it saves a moment after each change),
+ * so the next request is the test's own. */
+export async function settingsSaved(api: AdminApi, saved: (settings: SavedSettings) => boolean): Promise<void> {
+  await expect.poll(async () => saved(await api.get<SavedSettings>("/preferences")), { message: "the dashboard saves its settings" }).toBe(true);
+}
+
+/** Waits until the page the dashboard is on is the saved last page. */
+export const lastPageSaved = (api: AdminApi, page: string) => settingsSaved(api, (settings) => settings.last_page === page);
+
+/** The toolbar's Product filter (the column picker has a "Product" checkbox too). */
+export const productFilter = (page: Page) => page.getByRole("combobox", { name: /^Product/ });
+
 export { expect };

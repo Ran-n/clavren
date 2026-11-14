@@ -1,10 +1,12 @@
-// Dates, sizes and prices as people read them. Times are shown in the browser's time zone; expiry dates
-// are whole days in UTC, as the server stores them.
+// Dates, sizes and prices as people read them. Moments (issued, added, revoked) are shown in the
+// browser's time zone, with the time or as the day alone; expiry dates are whole days in UTC, as
+// the server stores them.
 
 /** The dashboard is in English only: every date and number is written the same way. */
-export const LOCALE = "en-GB";
+const LOCALE = "en-GB";
 
 const dateTime = new Intl.DateTimeFormat(LOCALE, { dateStyle: "medium", timeStyle: "short" });
+const day = new Intl.DateTimeFormat(LOCALE, { dateStyle: "medium" });
 const date = new Intl.DateTimeFormat(LOCALE, { dateStyle: "medium", timeZone: "UTC" });
 const number = new Intl.NumberFormat(LOCALE);
 
@@ -16,6 +18,12 @@ export function formatDateTime(value: string | null | undefined): string {
   return value ? dateTime.format(new Date(value)) : "—";
 }
 
+/** The day a moment fell on, where the browser is. */
+export function formatDay(value: string | null | undefined): string {
+  return value ? day.format(new Date(value)) : "—";
+}
+
+/** An expiry date: the whole day in UTC it names. */
 export function formatDate(value: string | null | undefined): string {
   return value ? date.format(new Date(value)) : "—";
 }
@@ -31,7 +39,7 @@ export function fromDateInput(value: string): string | null {
 }
 
 /** The largest amount a price takes, in minor units (just under a million euros). */
-export const MAX_PRICE_AMOUNT = 99_999_999;
+const MAX_PRICE_AMOUNT = 99_999_999;
 
 /** How many decimals `currency`'s minor unit has (2 for EUR, 0 for JPY, 3 for KWD). */
 export function currencyDigits(currency: string): number {

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.407002
-//+ Revised: 	2026/11/10 17:59:19.531054
+//+ Revised: 	2026/11/14 00:38:41.898076
 // -----------------------------------------------------------------------------
 
 //! Activation tokens: JWTs signed with Ed25519 (`alg` `EdDSA`), which applications check offline
@@ -35,7 +35,8 @@ pub struct Claims {
     #[serde(skip_serializing_if = "is_false", default)]
     pub test: bool,
     pub iat: i64,
-    /// When the token expires: 30 days after issuing, or the licence expiry if sooner.
+    /// When the token expires: the product's offline days after issuing, or the licence expiry if
+    /// sooner.
     pub exp: i64,
     pub jti: Uuid,
 }

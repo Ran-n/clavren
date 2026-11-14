@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/02 19:43:35.553798
-//+ Revised: 	2026/11/08 14:55:44.434834
+//+ Revised: 	2026/11/14 00:38:42.424799
 // -----------------------------------------------------------------------------
 
 //! The `clavren-admin` commands.
@@ -33,9 +33,9 @@ pub async fn create_admin(context: &CliContext, terminal: &mut dyn Terminal, use
     repository::insert(&mut *transaction, id, username, &credentials, now).await?;
     repository::replace_recovery_codes(&mut transaction, id, &credentials.recovery_code_hashes).await?;
     audit::record(&mut *transaction, AuditEntry::admin_account("admin.created", None, Some(id), None, now)).await?;
+    enrolment::show_recovery_codes(terminal, &enrolment.recovery_codes)?;
     transaction.commit().await?;
     tracing::info!(admin = %username, "admin created with the CLI");
-    enrolment::show_recovery_codes(terminal, &enrolment.recovery_codes);
     terminal.say(&format!("\nAdmin {username} created. Sign in to the dashboard with the password and an app code."));
     Ok(())
 }
@@ -62,9 +62,9 @@ pub async fn reset_password(context: &CliContext, terminal: &mut dyn Terminal, u
     let entry = AuditEntry::admin_account("admin.password_reset", None, Some(admin.id), None, now)
         .with_metadata(json!({ "sessions_revoked": revoked }));
     audit::record(&mut *transaction, entry).await?;
+    enrolment::show_recovery_codes(terminal, &enrolment.recovery_codes)?;
     transaction.commit().await?;
     tracing::info!(admin = %admin.username, "admin credentials reset with the CLI");
-    enrolment::show_recovery_codes(terminal, &enrolment.recovery_codes);
     terminal.say(&format!("\n{} has a new password and authenticator, and was signed out everywhere.", admin.username));
     Ok(())
 }

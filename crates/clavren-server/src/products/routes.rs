@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:16.129982
-//+ Revised: 	2026/11/12 23:57:45.498952
+//+ Revised: 	2026/11/14 00:38:44.865786
 // -----------------------------------------------------------------------------
 
 //! `/api/admin/products`: list, create, read, edit, and delete products (with their licences), and
@@ -51,7 +51,7 @@ async fn list(
     ApiQuery(params): ApiQuery<ListParams>,
 ) -> Result<Json<Page<Product>>, ApiError> {
     let page = PageParams { limit: params.limit, after: params.after };
-    let (limit, cursor) = (page.limit()?, page.cursor()?);
+    let (limit, cursor) = (page.limit()?, page.cursor_by_key()?);
     let rows = repository::page(&state.pool, params.active, cursor.as_ref(), fetch_count(limit)).await?;
     Ok(Json(Page::from_rows(rows, limit, repository::cursor_after)))
 }

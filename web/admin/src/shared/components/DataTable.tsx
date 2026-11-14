@@ -1,10 +1,10 @@
 // A table of records: the visible columns, optional row checkboxes with "select all matching",
 // an optional editable first row for creating a record, and rows that can unfold below
 // themselves (an inline confirmation, say). On a phone each row becomes a card, one field per line
-// (components.css), so nothing scrolls sideways.
+// (responsive.css), so nothing scrolls sideways.
 
 import { Fragment, type ReactNode } from "react";
-import type { Selection } from "../hooks";
+import type { Selection } from "../selection";
 
 export type Column<T> = {
   key: string;

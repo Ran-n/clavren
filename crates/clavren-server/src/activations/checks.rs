@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 //+ Authors: 	Ran# <ran.hash@proton.me>
 //+ Created: 	2026/11/03 04:54:12.712018
-//+ Revised: 	2026/11/12 23:57:43.877804
+//+ Revised: 	2026/11/14 22:41:06.747737
 // -----------------------------------------------------------------------------
 
 //! The daily check: the application asks for a challenge, signs it with its device key, and gets a
@@ -19,8 +19,10 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use serde_json::json;
 use uuid::Uuid;
 
+use super::RevocationReason;
 use super::activate::MAX_TEXT;
-use super::repository::{self, CheckTarget};
+use super::check_repository::{self, CheckTarget};
+use super::repository;
 use super::tokens::{self, Subject};
 use crate::audit::{self, AuditEntry};
 use crate::crypto::random::random_bytes;
@@ -42,7 +44,7 @@ pub async fn challenge(state: &AppState, activation_id: Uuid, now: DateTime<Utc>
     }
     let nonce = random_bytes::<NONCE_LENGTH>().map_err(ApiError::internal)?;
     let challenge = Challenge { id: Uuid::now_v7(), nonce, expires_at: now + CHALLENGE_LIFETIME };
-    repository::insert_challenge(
+    check_repository::insert_challenge(
         &state.pool,
         challenge.id,
         activation_id,
@@ -69,8 +71,9 @@ pub async fn check(
     let app_version = fields::required("app_version", &request.app_version, MAX_TEXT)?;
     let invalid =
         || ApiError::refused(ErrorCode::ChallengeInvalid, "the challenge is unknown, used, expired or wrongly signed");
-    let nonce_hash =
-        repository::consume_challenge(&state.pool, request.challenge, activation_id, now).await?.ok_or_else(invalid)?;
+    let nonce_hash = check_repository::consume_challenge(&state.pool, request.challenge, activation_id, now)
+        .await?
+        .ok_or_else(invalid)?;
     // Counted only once a challenge this activation asked for is used: made-up activation IDs
     // never reach here, so they add no counters (the limiter keeps one per ID in memory).
     state.public_limits.checks_per_activation.hit(&activation_id.to_string(), now).map_err(ApiError::rate_limited)?;
@@ -79,7 +82,7 @@ pub async fn check(
         return Err(invalid());
     }
     let mut transaction = state.pool.begin().await?;
-    let target = repository::check_target(&mut transaction, activation_id).await?.ok_or_else(invalid)?;
+    let target = check_repository::check_target(&mut transaction, activation_id).await?.ok_or_else(invalid)?;
     let device_public_key: [u8; 32] = target.device_public_key.as_slice().try_into().map_err(|_| invalid())?;
     if !signature_matches(
         &device_public_key,
@@ -95,10 +98,10 @@ pub async fn check(
         transaction.commit().await?;
         return Err(refusal);
     }
-    repository::record_check(&mut *transaction, activation_id, &app_version, now).await?;
+    check_repository::record_check(&mut *transaction, activation_id, &app_version, now).await?;
     // the Overview's numbers leave test licences out
     if !target.licence_is_test {
-        repository::count_check(&mut *transaction, now).await?;
+        check_repository::count_check(&mut *transaction, now).await?;
     }
     transaction.commit().await?;
     let subject = Subject {
@@ -123,9 +126,12 @@ fn signature_matches(device_public_key: &[u8; 32], message: &str, signature: &st
 }
 
 /// Why this computer may no longer use the licence, if it may not. A revoked licence also ended
-/// its activation; the application is told the licence was revoked, not just this computer.
+/// its activation; the application is told the licence was revoked, not just this computer. A
+/// check that waited for a revoke to finish sees the ended activation next to the licence as it
+/// was before (the lock re-reads only the activation), so the activation's reason counts too.
 fn refuse_unusable(target: &CheckTarget, now: DateTime<Utc>) -> Result<(), ApiError> {
-    if target.licence_revoked_at.is_some() {
+    let ended_by_revoke = target.revocation_reason.as_deref() == Some(RevocationReason::LicenceRevoked.as_str());
+    if target.licence_revoked_at.is_some() || ended_by_revoke {
         return Err(ApiError::refused(ErrorCode::LicenceRevoked, "the licence was revoked"));
     }
     if target.revoked_at.is_some() {
@@ -143,3 +149,6 @@ fn refuse_unusable(target: &CheckTarget, now: DateTime<Utc>) -> Result<(), ApiEr
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

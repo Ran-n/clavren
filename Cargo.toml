@@ -11,7 +11,8 @@ license-file = "LICENSE"
 publish = false
 
 [workspace.lints.rust]
-# Only the client's Windows DPAPI adapter needs unsafe; it opts in locally with a written reason.
+# Only the client's Windows DPAPI adapter and xtask's Windows job object need unsafe; each opts in
+# locally with a written reason.
 unsafe_code = "deny"
 
 [workspace.lints.clippy]

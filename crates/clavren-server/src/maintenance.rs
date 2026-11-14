@@ -30,8 +30,8 @@ pub struct Cleaned {
 pub async fn run_once(state: &AppState) -> Result<Cleaned, sqlx::Error> {
     let now = state.clock.now();
     let sessions = sessions::delete_finished(&state.pool, now, &state.settings.admin).await?;
-    let challenges = activations::repository::delete_finished_challenges(&state.pool, now).await?;
-    let check_counts = activations::repository::delete_old_check_counts(&state.pool, now).await?;
+    let challenges = activations::check_repository::delete_finished_challenges(&state.pool, now).await?;
+    let check_counts = activations::check_repository::delete_old_check_counts(&state.pool, now).await?;
     state.login_failures.prune(now);
     state.public_limits.prune(now);
     Ok(Cleaned { sessions, challenges, check_counts })
