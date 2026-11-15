@@ -22,6 +22,12 @@ jobs:
     env:
       DATABASE_URL: postgres://clavren_local@postgres:5432/postgres
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      # actions/checkout runs on Node, which the Rust image doesn't have; the repository is public
+      - name: checkout
+        run: |
+          git init -q
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git fetch -q --depth 1 origin "$GITHUB_SHA"
+          git checkout -q FETCH_HEAD
       - run: bash scripts/ci-setup.sh
       - run: bash scripts/ci.sh
