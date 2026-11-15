@@ -4,6 +4,8 @@
 on:
   push:
   pull_request:
+  # Run workflow on the Actions page, to check again without a push
+  workflow_dispatch:
 jobs:
   checks:
     runs-on: codeberg-medium
