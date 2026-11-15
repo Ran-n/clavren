@@ -1,7 +1,7 @@
 [//]: # ( ---------------------------------------------------------------------- )
 [//]: # (+ Authors: 	Ran# <ran.hash@proton.me> )
 [//]: # (+ Created: 	2026/11/02 14:18:55.213599 )
-[//]: # (+ Revised: 	2026/11/14 12:10:22.548859 )
+[//]: # (+ Revised: 	2026/11/15 13:33:23.722357 )
 [//]: # ( ---------------------------------------------------------------------- )
 
 # Development
@@ -43,12 +43,13 @@ cargo test
 .\scripts\coverage.ps1   # the full suite under coverage, with the line gate
 ```
 
-**On every push** the same checks run on GitHub (`.github/workflows/checks.yml`), GitLab
-(`.gitlab-ci.yml`) and Codeberg (`.forgejo/workflows/checks.yml`; Actions must be enabled in the
-repository's settings). All three run `scripts/ci-setup.sh` (Node.js 22 and the PostgreSQL 17
-client on Debian or Ubuntu) and then `scripts/ci.sh`: the dashboard's `npm ci`, type check and
-build, then `cargo fmt --check`, clippy and `cargo test --workspace` against a PostgreSQL 17
-service. The end-to-end tests and the coverage gate stay local: run them before a release.
+**On every push** the same checks run on GitHub (`.github/workflows/checks.yml`) and GitLab
+(`.gitlab-ci.yml`). Codeberg runs none: its hosted runners stop every job after 10 minutes, less
+than the build and tests take, and are meant for free/libre-licensed projects. Both run
+`scripts/ci-setup.sh` (Node.js 22 and the PostgreSQL 17 client on Debian or Ubuntu) and then
+`scripts/ci.sh`: the dashboard's `npm ci`, type check and build, then `cargo fmt --check`, clippy
+and `cargo test --workspace` against a PostgreSQL 17 service. The end-to-end tests and the coverage
+gate stay local: run them before a release.
 
 ## Tests
 

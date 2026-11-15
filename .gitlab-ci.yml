@@ -1,5 +1,5 @@
 # Formatting, lints, tests and the dashboard's type check on every push; the steps are in
-# scripts/ci.sh, shared with GitHub and Codeberg.
+# scripts/ci.sh, shared with GitHub.
 checks:
   image: rust:1.99-bookworm
   services:

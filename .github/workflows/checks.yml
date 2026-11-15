@@ -1,5 +1,5 @@
 # Formatting, lints, tests and the dashboard's type check on every push; the steps are in
-# scripts/ci.sh, shared with GitLab and Codeberg.
+# scripts/ci.sh, shared with GitLab.
 name: checks
 on:
   push:
